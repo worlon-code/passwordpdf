@@ -3,7 +3,9 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import '../../../services/logging_service.dart';
+import '../../settings/services/settings_service.dart';
 import '../../../services/document_service.dart';
 import '../../../services/pdf_password_service.dart';
 import '../../../models/document_item_model.dart';
@@ -45,6 +47,69 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         _isLoading = false;
         _isInitialized = true;
       });
+      // Check mandatory settings
+      if (mounted) _checkDownloadLocation();
+    }
+  }
+
+  Future<void> _checkDownloadLocation() async {
+    final settings = context.read<SettingsService>();
+    if (settings.exportPath == null) {
+      await Future.delayed(Duration.zero); // Ensure build complete
+      if (!mounted) return;
+      
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Setup Required'),
+          content: const Text(
+            'Please select a location where exported PDF files (unlocked, merged, etc.) will be saved.',
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Select Folder'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted) return;
+      
+      String? dir;
+      while (dir == null) {
+        dir = await FilePicker.platform.getDirectoryPath(
+          dialogTitle: 'Select Download Location',
+        );
+        
+        if (dir == null) {
+          if (!mounted) return;
+          // Show retry dialog
+          final retry = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              title: const Text('Location Required'),
+              content: const Text('You must select a download location to continue.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false), // Exit/Cancel? No, mandatory.
+                  child: const Text('Retry'), // Actually just closes logic loop
+                ),
+              ],
+            ),
+          );
+          // Loop continues...
+        }
+      }
+      
+      await settings.setExportPath(dir);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download location set to: $dir')),
+        );
+      }
     }
   }
 
@@ -379,19 +444,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         throw Exception('Failed to create ZIP');
       }
 
-      // Save to Downloads directory
-      Directory? downloadsDir;
-      if (Platform.isAndroid) {
-        downloadsDir = Directory('/storage/emulated/0/Download');
-        if (!downloadsDir.existsSync()) {
-          downloadsDir = await getExternalStorageDirectory();
-        }
-      } else {
-        downloadsDir = await getDownloadsDirectory();
+      // Save to configured export path
+      final settings = context.read<SettingsService>();
+      final exportPath = settings.exportPath;
+      
+      if (exportPath == null) {
+        throw Exception('Export path not configured');
       }
-
-      if (downloadsDir == null) {
-        throw Exception('Could not access Downloads directory');
+      
+      final downloadsDir = Directory(exportPath);
+      if (!downloadsDir.existsSync()) {
+        try {
+          downloadsDir.createSync(recursive: true);
+        } catch (e) {
+             throw Exception('Could not access export directory: $exportPath');
+        }
       }
 
       // Create unique filename
@@ -404,7 +471,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Exported ${archive.files.length} file(s) to Downloads/$zipFileName'),
+            content: Text('Exported ${archive.files.length} file(s) to .../${outputFile.path.split(Platform.pathSeparator).last}'),
             duration: const Duration(seconds: 4),
             action: SnackBarAction(
               label: 'OK',

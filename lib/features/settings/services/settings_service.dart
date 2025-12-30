@@ -193,10 +193,5 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Clear export path (revert to default Downloads)
-  Future<void> clearExportPath() async {
-    await _prefs?.remove('export_path');
-    _log.info('SettingsService', 'Export path cleared, using default');
-    notifyListeners();
-  }
+
 }

@@ -255,6 +255,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           
           const SizedBox(height: 24),
+
+          // Downloads Section
+          _buildSectionHeader('Downloads'),
+          Card(
+            child: Consumer<SettingsService>(
+              builder: (context, settings, child) {
+                final path = settings.exportPath ?? 'Default (Source Folder)';
+                return ListTile(
+                  leading: const Icon(Icons.download),
+                  title: const Text('Download Location'),
+                  subtitle: Text(path),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    final dir = await FilePicker.platform.getDirectoryPath(
+                      dialogTitle: 'Select Download Location',
+                    );
+                    if (dir != null) {
+                      await settings.setExportPath(dir);
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+          
+          const SizedBox(height: 24),
           
           // Security Section
           _buildSectionHeader('Security'),
@@ -415,7 +441,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: Icon(Icons.info),
                   title: Text('App Version'),
-                  subtitle: Text('0.0.22'),
+                  subtitle: Text('0.0.23'),
                 ),
                 Divider(height: 1),
                 ListTile(

@@ -7,6 +7,7 @@ import '../widgets/reorder_pages_dialog.dart';
 import '../widgets/split_pdf_dialog.dart';
 import '../widgets/password_selection_dialog.dart';
 import 'package:file_picker/file_picker.dart';
+import '../../settings/services/settings_service.dart';
 
 /// PDF Viewer Screen - displays PDF files with zoom and scroll
 class PdfViewerScreen extends StatefulWidget {
@@ -216,6 +217,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       final newPath = await tools.removePassword(
         filePath: widget.filePath,
         password: widget.password ?? '',
+        outputDir: SettingsService().exportPath,
       );
       
       // Close loading
@@ -270,6 +272,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         filePath: widget.filePath,
         password: widget.password ?? '',
         pageOrder: newOrder,
+        outputDir: SettingsService().exportPath,
       );
       
       if (mounted) {
@@ -320,6 +323,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         filePath: widget.filePath,
         password: widget.password ?? '',
         pageIndices: pages,
+        outputDir: SettingsService().exportPath,
       );
       
       if (mounted) {
@@ -370,6 +374,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         sourcePassword: widget.password ?? '',
         otherPath: otherPath,
         otherPassword: otherPwd,
+        outputDir: SettingsService().exportPath,
       );
       
       if (mounted) {

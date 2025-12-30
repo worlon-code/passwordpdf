@@ -2,15 +2,19 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.22 - Advanced PDF Tools
+## Version 0.0.23 - Customizable Download Location
 
-### 🛠️ New Features
+### 🚀 New Features
+
+#### Download Location Management (v0.0.23)
+- **Centralized Exports**: All saved files (Unlocked PDFs, Merged/Split Files, Zipped Folders, Debug Logs) now go to a single, user-defined location.
+- **Mandatory Setup**: Enforced on first launch (post-auth) to ensure you always know where your files are going.
+- **Settings**: Change the location anytime in `Settings > Downloads`.
 
 #### PDF Manipulation Suite (v0.0.22)
-- **Split PDF**: Extract specific pages (e.g., "1,3,5") or ranges (e.g., "1-10").
-- **Merge PDF**: Combine current document with external PDFs. 
-  - *Smart Merge*: Automatically prompts to unlock external files if protected.
-- **Reorder Pages**: Drag-and-drop interface to rearrange page sequence.
+- **Split PDF**: Extract specific pages or ranges.
+- **Merge PDF**: Combine with external files (smart password handling).
+- **Reorder Pages**: Drag-and-drop page sorting.
 - **Remove Password**: Decrypts the current file (using session password) and saves a copy.
 
 #### Smart PDF Security (v0.0.20-21)
