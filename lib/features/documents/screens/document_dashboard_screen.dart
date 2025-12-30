@@ -855,28 +855,43 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         subtitle: Text(fileExists ? '$fileSizeKb KB' : 'File not found'),
-        trailing: IconButton(
-          icon: Icon(isSelected ? Icons.check_circle : Icons.more_vert),
-          color: isSelected ? Theme.of(context).colorScheme.primary : null,
-          onPressed: () async {
-            if (isSelected) {
-              _toggleFileSelection(file.id);
-            } else {
-              // Get the position of the button for menu positioning
-              final RenderBox button = context.findRenderObject() as RenderBox;
-              final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
-              final RelativeRect position = RelativeRect.fromRect(
-                Rect.fromPoints(
-                  button.localToGlobal(Offset.zero, ancestor: overlay),
-                  button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
-                ),
-                Offset.zero & overlay.size,
-              );
-
-              final value = await showMenu<String>(
-                context: context,
-                position: position,
-                items: [
+        trailing: isSelected
+            ? IconButton(
+                icon: const Icon(Icons.check_circle),
+                color: Theme.of(context).colorScheme.primary,
+                onPressed: () => _toggleFileSelection(file.id),
+              )
+            : PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) async {
+                  if (value == 'info') {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => FileInfoScreen(file: file),
+                      ),
+                    );
+                    if (result == 'open' && file.isPdf && mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => PdfViewerScreen(
+                            filePath: file.filePath!,
+                            fileName: file.name,
+                          ),
+                        ),
+                      );
+                    }
+                  } else if (value == 'select') {
+                    _toggleFileSelection(file.id);
+                  } else if (value == 'rename') {
+                    await _renameItem(file);
+                  } else if (value == 'delete') {
+                    await _docService.deleteItem(file.id);
+                    setState(() {});
+                  }
+                },
+                itemBuilder: (context) => [
                   const PopupMenuItem(
                     value: 'info',
                     child: Row(
@@ -918,38 +933,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     ),
                   ),
                 ],
-              );
-
-              if (value == 'info') {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => FileInfoScreen(file: file),
-                  ),
-                );
-                // If user tapped "Open" from info screen, open PDF
-                if (result == 'open' && file.isPdf && mounted) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => PdfViewerScreen(
-                        filePath: file.filePath!,
-                        fileName: file.name,
-                      ),
-                    ),
-                  );
-                }
-              } else if (value == 'select') {
-                _toggleFileSelection(file.id);
-              } else if (value == 'rename') {
-                await _renameItem(file);
-              } else if (value == 'delete') {
-                await _docService.deleteItem(file.id);
-                setState(() {});
-              }
-            }
-          },
-        ),
+              ),
         onTap: () {
           if (_selectedFileIds.isNotEmpty) {
             // In selection/move mode - toggle selection
