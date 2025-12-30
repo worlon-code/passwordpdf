@@ -7,6 +7,7 @@ import '../../../services/logging_service.dart';
 import '../../../services/document_service.dart';
 import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
+import 'file_info_screen.dart';
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -794,38 +795,35 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         trailing: IconButton(
           icon: Icon(isSelected ? Icons.check_circle : Icons.more_vert),
           color: isSelected ? Theme.of(context).colorScheme.primary : null,
-          onPressed: () {
-            final items = [
-              if (!isSelected)
-                const PopupMenuItem(
-                  value: 'select',
-                  child: Row(
-                    children: [
-                      Icon(Icons.check_circle_outline),
-                      SizedBox(width: 8),
-                      Text('Select'),
-                    ],
-                  ),
-                ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Delete', style: TextStyle(color: Colors.red)),
-                  ],
-                ),
-              ),
-            ];
-
+          onPressed: () async {
             if (isSelected) {
               _toggleFileSelection(file.id);
             } else {
-              showMenu(
+              // Get the position of the button for menu positioning
+              final RenderBox button = context.findRenderObject() as RenderBox;
+              final RenderBox overlay = Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+              final RelativeRect position = RelativeRect.fromRect(
+                Rect.fromPoints(
+                  button.localToGlobal(Offset.zero, ancestor: overlay),
+                  button.localToGlobal(button.size.bottomRight(Offset.zero), ancestor: overlay),
+                ),
+                Offset.zero & overlay.size,
+              );
+
+              final value = await showMenu<String>(
                 context: context,
-                position: const RelativeRect.fromLTRB(100, 100, 0, 0),
+                position: position,
                 items: [
+                  const PopupMenuItem(
+                    value: 'info',
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline),
+                        SizedBox(width: 8),
+                        Text('File Info'),
+                      ],
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'select',
                     child: Row(
@@ -857,22 +855,44 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     ),
                   ),
                 ],
-              ).then((value) async {
-                if (value == 'select') {
-                  _toggleFileSelection(file.id);
-                } else if (value == 'rename') {
-                  await _renameItem(file);
-                } else if (value == 'delete') {
-                  await _docService.deleteItem(file.id);
-                  setState(() {});
+              );
+
+              if (value == 'info') {
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => FileInfoScreen(file: file),
+                  ),
+                );
+                // If user tapped "Open" from info screen, open PDF
+                if (result == 'open' && file.isPdf && mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PdfViewerScreen(
+                        filePath: file.filePath!,
+                        fileName: file.name,
+                      ),
+                    ),
+                  );
                 }
-              });
+              } else if (value == 'select') {
+                _toggleFileSelection(file.id);
+              } else if (value == 'rename') {
+                await _renameItem(file);
+              } else if (value == 'delete') {
+                await _docService.deleteItem(file.id);
+                setState(() {});
+              }
             }
           },
         ),
         onTap: () {
-          if (file.isPdf) {
-            // Open PDF viewer
+          if (_selectedFileIds.isNotEmpty) {
+            // In selection/move mode - toggle selection
+            _toggleFileSelection(file.id);
+          } else if (file.isPdf) {
+            // Not in move mode and is PDF - open viewer
             Navigator.push(
               context,
               MaterialPageRoute(
@@ -882,12 +902,24 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 ),
               ),
             );
-          } else {
-            // Toggle selection for non-PDF files
-            _toggleFileSelection(file.id);
+          }
+          // For non-PDF files when not in move mode - do nothing on tap
+        },
+        onLongPress: () {
+          // Long-press enters move mode by selecting this file
+          setState(() {
+            _selectedFileIds.add(file.id);
+          });
+          // Show snackbar to indicate move mode
+          if (_selectedFileIds.length == 1) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Tap more files to select, then tap Move icon'),
+                duration: Duration(seconds: 2),
+              ),
+            );
           }
         },
-        onLongPress: () => _toggleFileSelection(file.id),
       ),
     );
   }
@@ -927,11 +959,57 @@ class _MoveDialogWithTreeState extends State<_MoveDialogWithTree> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('Move ${widget.fileCount} file(s) to...'),
-      content: SingleChildScrollView(
+      title: Row(
+        children: [
+          Icon(
+            Icons.drive_file_move,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Move Files'),
+                Text(
+                  '${widget.fileCount} file(s) selected',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
+      content: Container(
+        width: double.maxFinite,
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: _buildFolderTree(null, 0),
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'Select destination folder',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _buildFolderTree(null, 0),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       actions: [
