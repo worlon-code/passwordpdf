@@ -8,6 +8,8 @@ import '../widgets/split_pdf_dialog.dart';
 import '../widgets/password_selection_dialog.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../settings/services/settings_service.dart';
+import '../../common/utils/file_conflict_resolver.dart';
+import 'package:path/path.dart' as path;
 
 /// PDF Viewer Screen - displays PDF files with zoom and scroll
 class PdfViewerScreen extends StatefulWidget {
@@ -205,6 +207,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     if (confirm != true || !mounted) return;
 
     try {
+      final exportPath = SettingsService().exportPath;
+      final dir = exportPath ?? path.dirname(widget.filePath);
+      final filename = path.basenameWithoutExtension(widget.filePath);
+      final ext = path.extension(widget.filePath);
+      final defaultPath = path.join(dir, '${filename}_unlocked$ext');
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return; // Users cancelled
+
       // Show loading
       if (mounted) {
         showDialog(
@@ -217,7 +232,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       final newPath = await tools.removePassword(
         filePath: widget.filePath,
         password: widget.password ?? '',
-        outputDir: SettingsService().exportPath,
+        savePath: savePath,
       );
       
       // Close loading
@@ -260,6 +275,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
     final tools = PdfToolsService();
     try {
+      final exportPath = SettingsService().exportPath;
+      final dir = exportPath ?? path.dirname(widget.filePath);
+      final filename = path.basenameWithoutExtension(widget.filePath);
+      final ext = path.extension(widget.filePath);
+      final defaultPath = path.join(dir, '${filename}_reordered$ext');
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return; // User cancelled
+
       if (mounted) {
         showDialog(
           context: context,
@@ -272,7 +300,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         filePath: widget.filePath,
         password: widget.password ?? '',
         pageOrder: newOrder,
-        outputDir: SettingsService().exportPath,
+        savePath: savePath,
       );
       
       if (mounted) {
@@ -311,6 +339,20 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
     final tools = PdfToolsService();
     try {
+      final exportPath = SettingsService().exportPath;
+      final dir = exportPath ?? path.dirname(widget.filePath);
+      final filename = path.basenameWithoutExtension(widget.filePath);
+      final ext = path.extension(widget.filePath);
+      final suffix = pages.length > 2 ? '${pages.first+1}-${pages.last+1}' : 'split';
+      final defaultPath = path.join(dir, '${filename}_split_$suffix$ext');
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return;
+
       if (mounted) {
         showDialog(
           context: context,
@@ -323,7 +365,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         filePath: widget.filePath,
         password: widget.password ?? '',
         pageIndices: pages,
-        outputDir: SettingsService().exportPath,
+        savePath: savePath,
       );
       
       if (mounted) {
@@ -361,6 +403,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   Future<void> _performMerge(BuildContext context, String otherPath, String otherPwd) async {
     final tools = PdfToolsService();
     try {
+      final exportPath = SettingsService().exportPath;
+      final dir = exportPath ?? path.dirname(widget.filePath);
+      final filename = path.basenameWithoutExtension(widget.filePath);
+      final ext = path.extension(widget.filePath);
+      final defaultPath = path.join(dir, '${filename}_merged$ext');
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return;
+
       if (mounted) {
         showDialog(
           context: context,
@@ -374,7 +429,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         sourcePassword: widget.password ?? '',
         otherPath: otherPath,
         otherPassword: otherPwd,
-        outputDir: SettingsService().exportPath,
+        savePath: savePath,
       );
       
       if (mounted) {

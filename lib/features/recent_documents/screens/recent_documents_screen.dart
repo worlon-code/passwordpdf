@@ -3,7 +3,7 @@ import '../../../models/recent_document_model.dart';
 import '../services/recent_service.dart';
 import 'dart:io';
 import 'package:intl/intl.dart';
-import '../../pdf_tools/screens/pdf_viewer_screen.dart';
+import '../../documents/screens/pdf_viewer_screen.dart';
 
 /// Recent documents screen
 class RecentDocumentsScreen extends StatefulWidget {
@@ -69,6 +69,7 @@ class _RecentDocumentsScreenState extends State<RecentDocumentsScreen> {
       MaterialPageRoute(
         builder: (context) => PdfViewerScreen(
           filePath: document.filePath,
+          fileName: document.fileName,
           password: '',
         ),
       ),

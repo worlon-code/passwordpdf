@@ -12,6 +12,7 @@ import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
 import '../widgets/password_selection_dialog.dart';
+import '../../common/utils/file_conflict_resolver.dart';
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -28,6 +29,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   bool _isInitialized = false;
   String? _currentFolderId; // null = show all folders
   final Set<String> _selectedFileIds = {};
+  String _filterType = 'All'; // All, PDF, DOC, Excel
 
   @override
   void initState() {
@@ -313,6 +315,185 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
+  /// Import entire folder with recursive structure
+  Future<void> _importFolder() async {
+    // Pick directory
+    final dirPath = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Select Folder to Import',
+    );
+    
+    if (dirPath == null) return;
+    
+    final sourceDir = Directory(dirPath);
+    if (!sourceDir.existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selected folder does not exist'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    final folderName = sourceDir.path.split(Platform.pathSeparator).last;
+    
+    // Check if folder name already exists in current location
+    final existingFolders = _currentFolderId != null 
+        ? _docService.getSubfolders(_currentFolderId!)
+        : _docService.getRootFolders();
+    String finalFolderName = folderName;
+    
+    if (existingFolders.any((f) => f.name.toLowerCase() == folderName.toLowerCase())) {
+      // Prompt for rename
+      final newName = await _showFolderConflictDialog(folderName);
+      if (newName == null) return; // Cancelled
+      finalFolderName = newName;
+    }
+
+    // Show progress dialog
+    int totalFiles = 0;
+    int processedFiles = 0;
+    
+    // Count files first
+    await for (final entity in sourceDir.list(recursive: true)) {
+      if (entity is File) {
+        final ext = entity.path.split('.').last.toLowerCase();
+        if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+          totalFiles++;
+        }
+      }
+    }
+
+    if (totalFiles == 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No supported files found in folder')),
+        );
+      }
+      return;
+    }
+
+    // Show progress dialog
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Importing Folder'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(value: totalFiles > 0 ? processedFiles / totalFiles : 0),
+                const SizedBox(height: 16),
+                Text('Importing $processedFiles / $totalFiles files...'),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+
+    try {
+      // Create root folder in current location
+      final rootFolder = await _docService.createFolder(
+        finalFolderName,
+        parentId: _currentFolderId,
+      );
+      
+      // Map of source path -> app folder ID
+      final folderMap = <String, String>{sourceDir.path: rootFolder.id};
+      
+      // Process recursively
+      await for (final entity in sourceDir.list(recursive: true)) {
+        if (entity is Directory) {
+          // Create corresponding folder
+          final parentPath = entity.parent.path;
+          final parentId = folderMap[parentPath];
+          
+          if (parentId != null) {
+            final subName = entity.path.split(Platform.pathSeparator).last;
+            final newFolder = await _docService.createFolder(subName, parentId: parentId);
+            folderMap[entity.path] = newFolder.id;
+          }
+        } else if (entity is File) {
+          final ext = entity.path.split('.').last.toLowerCase();
+          if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+            final parentPath = entity.parent.path;
+            final parentId = folderMap[parentPath];
+            
+            await _docService.addFile(entity.path, folderId: parentId);
+            processedFiles++;
+            
+            // Update progress (rebuild dialog)
+            if (mounted) {
+              (context as Element).markNeedsBuild();
+            }
+          }
+        }
+      }
+
+      // Close progress dialog
+      if (mounted) {
+        Navigator.pop(context);
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Imported $processedFiles files into "$finalFolderName"'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      _log.error('DocumentDashboard', 'Folder import error', e);
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Import failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Show dialog for folder name conflict
+  Future<String?> _showFolderConflictDialog(String originalName) async {
+    final controller = TextEditingController(text: '${originalName}_imported');
+    
+    return await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Folder Already Exists'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('A folder named "$originalName" already exists.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'New folder name',
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Rename & Import'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _showDuplicateDialog(String fileName) async {
     return await showDialog<String>(
       context: context,
@@ -464,7 +645,17 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       // Create unique filename
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final zipFileName = '${folder.name}_$timestamp.zip';
-      final outputFile = File('${downloadsDir.path}/$zipFileName');
+      
+      final defaultPath = '${downloadsDir.path}/$zipFileName';
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return;
+      
+      final outputFile = File(savePath);
       
       await outputFile.writeAsBytes(zipData);
       
@@ -711,6 +902,20 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
+  void _navigateUp() {
+    if (_currentFolderId != null) {
+      final currentFolder = _docService.getAllItems().firstWhere(
+        (item) => item.id == _currentFolderId,
+        orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.folder),
+      );
+      
+      setState(() {
+        _currentFolderId = currentFolder.parentId;
+        _selectedFileIds.clear();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -725,9 +930,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           } 
           // If inside a folder (and not in selection mode), go back to parent
           else if (_currentFolderId != null) {
-            setState(() {
-              _currentFolderId = null;
-            });
+            _navigateUp();
           }
         }
       },
@@ -737,10 +940,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           leading: _currentFolderId != null
               ? IconButton(
                   icon: const Icon(Icons.arrow_back),
-                  onPressed: () => setState(() {
-                    _currentFolderId = null;
-                    _selectedFileIds.clear();
-                  }),
+                  onPressed: _navigateUp,
                 )
               : null,
           actions: [
@@ -761,7 +961,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             ] else ...[
               if (_currentFolderId != null)
                 IconButton(
-                  icon: const Icon(Icons.file_upload),
+                  icon: const Icon(Icons.folder_zip),
                   onPressed: () {
                     final folder = _docService.getAllItems().firstWhere(
                           (item) => item.id == _currentFolderId,
@@ -769,6 +969,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     _exportFolderAsZip(folder);
                   },
                   tooltip: 'Export as ZIP',
+                ),
+               IconButton(
+                  icon: const Icon(Icons.create_new_folder),
+                  onPressed: _importFolder,
+                  tooltip: 'Import Folder',
                 ),
               PopupMenuButton<String>(
                 onSelected: (value) {
@@ -817,71 +1022,182 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Widget _buildContent() {
     if (_currentFolderId == null) {
       // Show root folders view
-      final folders = _docService.getRootFolders();
-      final unorganizedFiles = _docService.getUnorganizedFiles();
+      var folders = _docService.getRootFolders();
+      var unorganizedFiles = _docService.getUnorganizedFiles();
+      
+      // Apply file type filter
+      folders = _applyFolderFilter(folders);
+      unorganizedFiles = _applyFileFilter(unorganizedFiles);
 
-      if (folders.isEmpty && unorganizedFiles.isEmpty) {
+      if (folders.isEmpty && unorganizedFiles.isEmpty && _filterType == 'All') {
         return _buildEmptyState();
       }
 
-      return ListView(
-        padding: const EdgeInsets.all(16),
+      return Column(
         children: [
-          if (folders.isNotEmpty) ...[
-            Text(
-              'Folders',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+          // Filter bar
+          _buildFilterBar(),
+          // Content
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                if (folders.isNotEmpty) ...[
+                  Text(
+                    'Folders',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
-            ),
-            const SizedBox(height: 8),
-            ...folders.map((folder) => _buildFolderCard(folder)),
-            const SizedBox(height: 24),
-          ],
-          if (unorganizedFiles.isNotEmpty) ...[
-            Text(
-              'Unorganized Files',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+                  const SizedBox(height: 8),
+                  ...folders.map((folder) => _buildFolderCard(folder)),
+                  const SizedBox(height: 24),
+                ],
+                if (unorganizedFiles.isNotEmpty) ...[
+                  Text(
+                    'Unorganized Files',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
+                  const SizedBox(height: 8),
+                  ...unorganizedFiles.map((file) => _buildFileCard(file)),
+                ] else if (_filterType != 'All') ...[
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text('No $_filterType files found'),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 8),
-            ...unorganizedFiles.map((file) => _buildFileCard(file)),
-          ],
+          ),
         ],
       );
     } else {
       // Show folder contents (subfolders + files)
-      final subfolders = _docService.getSubfolders(_currentFolderId!);
-      final files = _docService.getFilesInFolder(_currentFolderId!);
+      var subfolders = _docService.getSubfolders(_currentFolderId!);
+      var files = _docService.getFilesInFolder(_currentFolderId!);
+      
+      // Apply filters
+      subfolders = _applyFolderFilter(subfolders);
+      files = _applyFileFilter(files);
       
       if (subfolders.isEmpty && files.isEmpty) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.folder_open,
-                size: 80,
-                color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+        return Column(
+          children: [
+            _buildFilterBar(),
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.folder_open,
+                      size: 80,
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(_filterType == 'All' ? 'Folder is empty' : 'No $_filterType files found'),
+                    const SizedBox(height: 8),
+                    if (_filterType == 'All')
+                      const Text('Use the button below to add files or create folders'),
+                  ],
+                ),
               ),
-              const SizedBox(height: 16),
-              const Text('Folder is empty'),
-              const SizedBox(height: 8),
-              const Text('Use the button below to add files or create folders'),
-            ],
-          ),
+            ),
+          ],
         );
       }
 
-      return ListView(
-        padding: const EdgeInsets.all(16),
+      return Column(
         children: [
-          ...subfolders.map((folder) => _buildFolderCard(folder)),
-          ...files.map((file) => _buildFileCard(file)),
+          _buildFilterBar(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                ...subfolders.map((folder) => _buildFolderCard(folder)),
+                ...files.map((file) => _buildFileCard(file)),
+              ],
+            ),
+          ),
         ],
       );
     }
+  }
+
+  /// Build filter bar with file type chips
+  Widget _buildFilterBar() {
+    final filters = ['All', 'PDF', 'DOC', 'Excel'];
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: filters.map((type) {
+            final isSelected = _filterType == type;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                label: Text(type),
+                selected: isSelected,
+                onSelected: (selected) {
+                  setState(() => _filterType = type);
+                },
+                selectedColor: Theme.of(context).colorScheme.primaryContainer,
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  /// Apply file type filter to list of files
+  List<DocumentItem> _applyFileFilter(List<DocumentItem> files) {
+    if (_filterType == 'All') return files;
+    
+    return files.where((file) {
+      final ext = file.name.toLowerCase();
+      switch (_filterType) {
+        case 'PDF':
+          return ext.endsWith('.pdf');
+        case 'DOC':
+          return ext.endsWith('.doc') || ext.endsWith('.docx');
+        case 'Excel':
+          return ext.endsWith('.xls') || ext.endsWith('.xlsx');
+        default:
+          return true;
+      }
+    }).toList();
+  }
+
+  /// Check if a folder contains files matching the current filter (recursively)
+  bool _folderContainsMatchingFiles(String folderId) {
+    if (_filterType == 'All') return true;
+    
+    // Check direct files
+    final files = _docService.getFilesInFolder(folderId);
+    final matchingFiles = _applyFileFilter(files);
+    if (matchingFiles.isNotEmpty) return true;
+    
+    // Check subfolders recursively
+    final subfolders = _docService.getSubfolders(folderId);
+    for (final subfolder in subfolders) {
+      if (_folderContainsMatchingFiles(subfolder.id)) return true;
+    }
+    
+    return false;
+  }
+
+  /// Filter folders to only show those containing matching files
+  List<DocumentItem> _applyFolderFilter(List<DocumentItem> folders) {
+    if (_filterType == 'All') return folders;
+    return folders.where((folder) => _folderContainsMatchingFiles(folder.id)).toList();
   }
 
   Widget _buildEmptyState() {
@@ -913,7 +1229,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Widget _buildFolderCard(DocumentItem folder) {
-    final fileCount = _docService.getFilesInFolder(folder.id).length;
+    // Calculate file count based on filter
+    final allFiles = _docService.getFilesInFolder(folder.id);
+    final fileCount = _applyFileFilter(allFiles).length;
     
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -955,7 +1273,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               value: 'export',
               child: Row(
                 children: [
-                  Icon(Icons.file_upload),
+                  Icon(Icons.folder_zip, color: Colors.grey),
                   SizedBox(width: 8),
                   Text('Export as ZIP'),
                 ],

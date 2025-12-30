@@ -10,6 +10,7 @@ class PdfToolsService {
     required String filePath,
     required String password,
     String? outputDir,
+    String? savePath,
   }) async {
     final file = File(filePath);
     if (!file.existsSync()) throw Exception('File not found');
@@ -17,27 +18,23 @@ class PdfToolsService {
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
     
-    // To remove password, we create a new document and copy content
-    // Because just saving the protected one might keep security settings
-    // depending on internal flags.
-    // Explicitly creating new doc checks out.
-    
     final newDocument = PdfDocument();
     
-    // Copy all pages
     for (int i = 0; i < document.pages.count; i++) {
-      // Create template from source page
       final template = document.pages[i].createTemplate();
-      // Add page to new doc
       final page = newDocument.pages.add();
-      // Draw template
       page.graphics.drawPdfTemplate(template, const Offset(0, 0));
     }
     
-    final dir = outputDir ?? path.dirname(filePath);
-    final filename = path.basenameWithoutExtension(filePath);
-    final ext = path.extension(filePath);
-    final newPath = path.join(dir, '${filename}_unlocked$ext');
+    String newPath;
+    if (savePath != null) {
+      newPath = savePath;
+    } else {
+      final dir = outputDir ?? path.dirname(filePath);
+      final filename = path.basenameWithoutExtension(filePath);
+      final ext = path.extension(filePath);
+      newPath = path.join(dir, '${filename}_unlocked$ext');
+    }
     
     final newBytes = await newDocument.save();
     document.dispose();
@@ -53,6 +50,7 @@ class PdfToolsService {
     required String password,
     required List<int> pageOrder, // 0-based indices
     String? outputDir,
+    String? savePath,
   }) async {
     final file = File(filePath);
     if (!file.existsSync()) throw Exception('File not found');
@@ -70,10 +68,15 @@ class PdfToolsService {
       }
     }
     
-    final dir = outputDir ?? path.dirname(filePath);
-    final filename = path.basenameWithoutExtension(filePath);
-    final ext = path.extension(filePath);
-    final newPath = path.join(dir, '${filename}_reordered$ext');
+    String newPath;
+    if (savePath != null) {
+      newPath = savePath;
+    } else {
+      final dir = outputDir ?? path.dirname(filePath);
+      final filename = path.basenameWithoutExtension(filePath);
+      final ext = path.extension(filePath);
+      newPath = path.join(dir, '${filename}_reordered$ext');
+    }
     
     final newBytes = await newDocument.save();
     document.dispose();
@@ -89,6 +92,7 @@ class PdfToolsService {
     required String password,
     required List<int> pageIndices,
     String? outputDir,
+    String? savePath,
   }) async {
     final file = File(filePath);
     final bytes = await file.readAsBytes();
@@ -104,11 +108,16 @@ class PdfToolsService {
       }
     }
     
-    final dir = outputDir ?? path.dirname(filePath);
-    final filename = path.basenameWithoutExtension(filePath);
-    final ext = path.extension(filePath);
-    final suffix = pageIndices.length > 2 ? '${pageIndices.first+1}-${pageIndices.last+1}' : 'split';
-    final newPath = path.join(dir, '${filename}_split_$suffix$ext');
+    String newPath;
+    if (savePath != null) {
+      newPath = savePath;
+    } else {
+      final dir = outputDir ?? path.dirname(filePath);
+      final filename = path.basenameWithoutExtension(filePath);
+      final ext = path.extension(filePath);
+      final suffix = pageIndices.length > 2 ? '${pageIndices.first+1}-${pageIndices.last+1}' : 'split';
+      newPath = path.join(dir, '${filename}_split_$suffix$ext');
+    }
     
     final newBytes = await newDocument.save();
     document.dispose();
@@ -125,6 +134,7 @@ class PdfToolsService {
     required String otherPath,
     required String otherPassword,
     String? outputDir,
+    String? savePath,
   }) async {
     // We create a new document to hold the result
     final newDocument = PdfDocument();
@@ -150,10 +160,15 @@ class PdfToolsService {
     final otherDoc = PdfDocument(inputBytes: otherBytes, password: otherPassword);
     copyPages(otherDoc);
     
-    final dir = outputDir ?? path.dirname(sourcePath);
-    final filename = path.basenameWithoutExtension(sourcePath);
-    final ext = path.extension(sourcePath);
-    final newPath = path.join(dir, '${filename}_merged$ext');
+    String newPath;
+    if (savePath != null) {
+      newPath = savePath;
+    } else {
+      final dir = outputDir ?? path.dirname(sourcePath);
+      final filename = path.basenameWithoutExtension(sourcePath);
+      final ext = path.extension(sourcePath);
+      newPath = path.join(dir, '${filename}_merged$ext');
+    }
     
     final newBytes = await newDocument.save();
     sourceDoc.dispose();

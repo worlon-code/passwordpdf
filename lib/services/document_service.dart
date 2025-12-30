@@ -160,21 +160,48 @@ class DocumentService {
     _log.info('DocumentService', 'Moved ${fileIds.length} files to folder');
   }
 
-  /// Delete item
+  /// Delete item (recursively deletes folder contents)
   Future<void> deleteItem(String itemId) async {
-    _items.removeWhere((item) => item.id == itemId);
+    final item = _items.firstWhere(
+      (i) => i.id == itemId,
+      orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+    );
     
-    // Remove from folders if it was a file
+    if (item.id.isEmpty) return;
+    
+    // If it's a folder, recursively delete all contents first
+    if (item.isFolder) {
+      // Delete all files in this folder
+      final filesInFolder = getFilesInFolder(itemId);
+      for (final file in filesInFolder) {
+        _items.removeWhere((i) => i.id == file.id);
+      }
+      
+      // Recursively delete subfolders
+      final subfolders = getSubfolders(itemId);
+      for (final subfolder in subfolders) {
+        await deleteItem(subfolder.id);
+      }
+      
+      _log.info('DocumentService', 'Cascade deleted folder contents: ${item.name}');
+    }
+    
+    // Now delete the item itself
+    _items.removeWhere((i) => i.id == itemId);
+    
+    // Clean up any references in parent folders
     for (final folder in getFolders()) {
       if (folder.fileIds.contains(itemId)) {
-        final index = _items.indexWhere((item) => item.id == folder.id);
-        final newFileIds = folder.fileIds.where((id) => id != itemId).toList();
-        _items[index] = folder.copyWith(fileIds: newFileIds);
+        final index = _items.indexWhere((i) => i.id == folder.id);
+        if (index != -1) {
+          final newFileIds = folder.fileIds.where((id) => id != itemId).toList();
+          _items[index] = folder.copyWith(fileIds: newFileIds);
+        }
       }
     }
     
     await _saveDocuments();
-    _log.info('DocumentService', 'Deleted item');
+    _log.info('DocumentService', 'Deleted item: ${item.name}');
   }
 
   /// Rename item

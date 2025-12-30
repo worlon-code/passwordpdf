@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../../services/logging_service.dart';
 import '../../settings/services/settings_service.dart';
+import '../../common/utils/file_conflict_resolver.dart';
 
 /// Debug Logs screen for viewing app logs
 class DebugLogsScreen extends StatefulWidget {
@@ -111,7 +112,16 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
       }
 
       final fileName = 'debug_logs_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
-      final file = File('${exportDir.path}/$fileName');
+      final defaultPath = '${exportDir.path}/$fileName';
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
+      );
+
+      if (savePath == null) return;
+
+      final file = File(savePath);
       await file.writeAsString(buffer.toString());
 
       if (mounted) {

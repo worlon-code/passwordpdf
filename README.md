@@ -2,9 +2,25 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.23 - Customizable Download Location
+## Version 0.0.24 - Dashboard & Folder Enhancements
 
 ### 🚀 New Features
+
+#### Document Dashboard Filter (v0.0.24)
+- **File Type Filters**: Filter by All, PDF, DOC, Excel.
+- **Smart Folder View**: Folders are filtered to only show those containing matching files (recursively).
+- **In-Folder Filtering**: Filter bar persists inside folders, applying filters to subfolders and files.
+- **Filtered Counts**: Folder cards display the count of files matching the active filter.
+
+#### Enhanced Folder Import (v0.0.24)
+- **Context-Aware Import**: Imports folders directly into the current viewing directory (not always root).
+- **Import Progress**: Recursive import with progress dialog for large folders.
+- **Conflict Resolution**: Smart prompts when folder names conflict in the specific import location.
+
+#### Folder Management Improvements (v0.0.24)
+- **Cascade Delete**: Deleting a folder now properly deletes all its contents (files and subfolders).
+- **Hierarchical Navigation**: Android back button and UI back arrow now navigate up one level in the folder structure.
+- **Improved Icons**: Distinct icons for "Import Folder" (Create New) and "Export to Zip" (Folder Zip).
 
 #### Download Location Management (v0.0.23)
 - **Centralized Exports**: All saved files (Unlocked PDFs, Merged/Split Files, Zipped Folders, Debug Logs) now go to a single, user-defined location.
@@ -194,5 +210,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.19 (Build 19)  
-**Last Updated**: December 30, 2024
+**Current Version**: 0.0.24 (Build 24)  
+**Last Updated**: December 31, 2024
