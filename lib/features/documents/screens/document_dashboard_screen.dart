@@ -158,9 +158,28 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   if (newName == null || newName.isEmpty) {
                     continue; // User cancelled rename
                   }
-                  // Add with new name
-                  await _docService.addFile(file.path!, folderId: folderId, customName: newName);
-                  addedCount++;
+                  
+                  // Copy the original file with new name
+                  try {
+                    final originalFile = File(file.path!);
+                    final directory = originalFile.parent;
+                    final newFilePath = '${directory.path}/$newName';
+                    
+                    // Copy file to new path
+                    await originalFile.copy(newFilePath);
+                    
+                    // Add the copied file (not the original)
+                    await _docService.addFile(newFilePath, folderId: folderId);
+                    addedCount++;
+                    _log.info('DocumentDashboard', 'Copied file $fileName to $newName');
+                  } catch (e) {
+                    _log.error('DocumentDashboard', 'Failed to copy file', e);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to copy file: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  }
                   continue;
                 }
               }
@@ -511,13 +530,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _currentFolderId == null,
+      canPop: _currentFolderId == null && _selectedFileIds.isEmpty,
       onPopInvoked: (didPop) {
-        if (!didPop && _currentFolderId != null) {
-          setState(() {
-            _currentFolderId = null;
-            _selectedFileIds.clear();
-          });
+        if (!didPop) {
+          // If in move/selection mode, clear selection first
+          if (_selectedFileIds.isNotEmpty) {
+            setState(() {
+              _selectedFileIds.clear();
+            });
+          } 
+          // If inside a folder (and not in selection mode), go back to parent
+          else if (_currentFolderId != null) {
+            setState(() {
+              _currentFolderId = null;
+            });
+          }
         }
       },
       child: Scaffold(
