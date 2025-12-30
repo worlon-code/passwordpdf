@@ -1,16 +1,159 @@
-# passwordpdf_manager
+# Password PDF Manager
 
-A new Flutter project.
+A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Getting Started
+## Version 0.0.9 - Release Notes
 
-This project is a starting point for a Flutter application.
+### 🎯 Key Features
 
-A few resources to get you started if this is your first Flutter project:
+#### Nested Folder Management
+- **Create Folders Within Folders**: Unlimited nested folder hierarchy
+- **Folder Validation**: Real-time validation prevents duplicate folder names
+- **Visual Hierarchy**: Clean UI showing folder structure without category labels
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+#### Advanced File Operations
+- **Duplicate Detection**: Automatic duplicate file detection when:
+  - Adding files to folders
+  - Moving files between folders
+- **Smart Rename Dialog**: Option to rename or skip duplicate files
+- **Expandable Move Dialog**: Tree view showing only root folders initially, click to expand subfolders
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+#### Export & Backup
+- **Recursive ZIP Export**: Export entire folder structure including all subfolders
+- **Preserved Directory Structure**: Maintains folder hierarchy in exported ZIP files
+- **File Count Display**: Shows total files exported (e.g., "Exported 25 file(s) to Downloads/...")
+
+#### Navigation & UX
+- **Android Back Button**: Properly navigates through folder hierarchy instead of closing app
+- **PopScope Implementation**: Uses modern Flutter navigation API
+- **Clean Empty States**: Simple, clear messages without redundant buttons
+- **Context-Aware UI**: Different behavior based on current location (root vs inside folder)
+
+### 🔧 Technical Improvements
+
+#### Model Updates
+- Added `parentId` field to `DocumentItem` model for nested structure
+- Updated `copyWith`, `toJson`, and `fromJson` methods
+
+#### Service Layer
+- `DocumentService.createFolder()`: Now accepts optional `parentId` parameter
+- `getRootFolders()`: Retrieves only top-level folders
+- `getSubfolders(String folderId)`: Gets folders within a specific parent
+- Duplicate name validation scoped to parent folder
+
+#### UI Components
+- Custom `_MoveDialogWithTree` widget with expandable/collapsible folders
+- Stateful tree management for folder expansion state
+- Indented hierarchy display (24px per depth level)
+
+### 🐛 Bug Fixes
+
+1. **Android Back Button** (v0.0.7-0.0.9)
+   - Fixed: App closing when pressing back inside folders
+   - Solution: Implemented `PopScope` with `canPop` and `onPopInvoked`
+
+2. **Duplicate File Dialog** (v0.0.7)
+   - Fixed: Files still added when canceling duplicate dialog
+   - Solution: Proper null checking and action handling
+
+3. **Export Ignoring Subfolders** (v0.0.9)
+   - Fixed: Only exported files in main folder
+   - Solution: Recursive `addFolderToArchive()` function
+
+4. **Move Dialog Showing All Folders** (v0.0.9)
+   - Fixed: Flat list showing all folders including nested ones
+   - Solution: Expandable tree view with on-demand subfolder loading
+
+### 🎨 UI/UX Enhancements
+
+- Removed redundant "Subfolders" and "Files" section headers
+- Simplified empty folder state to single message
+- Added visual indicators for expandable folders (chevron icons)
+- Color-coded folder depth (lighter blue for deeper levels)
+- Improved folder and file count displays
+
+### 📋 Version History
+
+- **v0.0.9**: Expandable move dialog, recursive export, move duplicate checking
+- **v0.0.8**: PopScope for Android back, improved empty folder UI, hierarchical display fixes
+- **v0.0.7**: Nested folder support, duplicate detection, folder name validation
+- **v0.0.6**: Initial nested folder model implementation
+- **v0.0.1-0.0.5**: Core features, authentication, document management
+
+### 🔐 Security Features
+
+- **Encryption**: AES encryption for stored passwords
+- **Authentication**: 
+  - Fingerprint/Biometric support
+  - PIN lock option
+  - Developer password for sensitive operations
+- **Local Storage**: All data stored locally, no external servers
+
+### 📱 Installation
+
+1. Download APK from releases
+2. Enable "Install from Unknown Sources" on Android
+3. Install the APK
+4. Grant required permissions
+
+### 🚀 Usage
+
+#### Creating Nested Folders
+1. Tap 3-dot menu → "New Folder"
+2. Enter folder name (validation prevents duplicates)
+3. Open the folder
+4. Create another folder inside → Creates nested structure
+
+#### Moving Files
+1. Select files by tapping or long-pressing
+2. Tap move icon in toolbar
+3. See root folders listed
+4. Tap chevron (▶️) to expand and see subfolders
+5. Tap folder name to select destination
+
+#### Exporting Folders
+1. Open folder or tap folder card's menu
+2. Select "Export as ZIP"
+3. Includes all subfolders and files
+4. Check Downloads folder for ZIP file
+
+#### Handling Duplicates
+- When adding/moving files with existing names:
+  - Dialog shows: "Skip This File" or "Rename & Add"
+  - Choose to skip or provide new name
+  - Original file preserved
+
+### 🛠️ Development
+
+**Framework**: Flutter 3.5.3  
+**Language**: Dart 3.5.3  
+**Platform**: Android (SDK 35)
+
+**Key Dependencies**:
+- `file_picker`: File selection
+- `archive`: ZIP creation
+- `local_auth`: Biometric authentication
+- `shared_preferences`: Local data storage
+- `provider`: State management
+- `path_provider`: File system access
+
+### 📝 Git Workflow
+
+- **Main Branch**: `main`
+- **Release Branches**: `release/v0.0.X`
+- **Tags**: Version tags (e.g., `v0.0.9`)
+- Each release built on top of previous release branch
+
+### 🤝 Contributing
+
+This is a private project. For issues or feature requests, please contact the development team.
+
+### 📄 License
+
+Proprietary - All rights reserved
+
+---
+
+**Repository**: https://github.com/worlon-code/passwordpdf  
+**Current Version**: 0.0.9 (Build 9)  
+**Last Updated**: December 30, 2024
