@@ -5,6 +5,7 @@ import 'package:archive/archive_io.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/document_service.dart';
+import '../../../services/pdf_password_service.dart';
 import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
@@ -564,6 +565,85 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
+  /// Smart PDF open - checks stored password, tries without, then shows dialog
+  Future<void> _openPdfWithSmartPassword(String filePath, String fileName) async {
+    final pdfService = PdfPasswordService();
+    
+    // 1. Check for stored password
+    final storedPassword = await pdfService.getPasswordForDocument(filePath);
+    if (storedPassword != null) {
+      // Use stored password
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => PdfViewerScreen(
+              filePath: filePath,
+              fileName: fileName,
+              password: storedPassword,
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    // 2. Try opening without password first
+    if (mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PdfViewerScreen(
+            filePath: filePath,
+            fileName: fileName,
+            password: '',
+            onPasswordRequired: () async {
+              // 3. PDF needs password - show dialog
+              Navigator.pop(context);
+              await _showPasswordDialogAndOpen(filePath, fileName);
+            },
+            onSuccess: () {
+              // Save empty password (no password needed)
+              pdfService.saveDocumentPassword(filePath, '');
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showPasswordDialogAndOpen(String filePath, String fileName) async {
+    final pdfService = PdfPasswordService();
+    
+    final password = await showDialog<String>(
+      context: context,
+      builder: (context) => const PasswordSelectionDialog(),
+    );
+    
+    if (password != null && mounted) {
+      // Don't save password yet - wait for successful load
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PdfViewerScreen(
+            filePath: filePath,
+            fileName: fileName,
+            password: password,
+            onSuccess: () {
+              // Only save password after successful load
+              pdfService.saveDocumentPassword(filePath, password);
+            },
+            onPasswordRequired: () async {
+              // Wrong password - go back and show dialog again
+              Navigator.pop(context);
+              await _showPasswordDialogAndOpen(filePath, fileName);
+            },
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -873,24 +953,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       ),
                     );
                     if (result == 'open' && file.isPdf && mounted) {
-                      // Show password selection dialog
-                      final password = await showDialog<String>(
-                        context: context,
-                        builder: (context) => const PasswordSelectionDialog(),
-                      );
-                      
-                      if (password != null && mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => PdfViewerScreen(
-                              filePath: file.filePath!,
-                              fileName: file.name,
-                              password: password,
-                            ),
-                          ),
-                        );
-                      }
+                      // Smart PDF password handling
+                      await _openPdfWithSmartPassword(file.filePath!, file.name);
                     }
                   } else if (value == 'select') {
                     _toggleFileSelection(file.id);
@@ -949,24 +1013,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             // In selection/move mode - toggle selection
             _toggleFileSelection(file.id);
           } else if (file.isPdf) {
-            // Not in move mode and is PDF - show password dialog then open viewer
-            final password = await showDialog<String>(
-              context: context,
-              builder: (context) => const PasswordSelectionDialog(),
-            );
-            
-            if (password != null && mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PdfViewerScreen(
-                    filePath: file.filePath!,
-                    fileName: file.name,
-                    password: password,
-                  ),
-                ),
-              );
-            }
+            // Smart PDF password handling - checks stored, tries without, shows dialog if needed
+            await _openPdfWithSmartPassword(file.filePath!, file.name);
           }
           // For non-PDF files when not in move mode - do nothing on tap
         },

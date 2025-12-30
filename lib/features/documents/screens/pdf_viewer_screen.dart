@@ -7,12 +7,16 @@ class PdfViewerScreen extends StatefulWidget {
   final String filePath;
   final String fileName;
   final String? password;
+  final VoidCallback? onPasswordRequired;
+  final VoidCallback? onSuccess;
 
   const PdfViewerScreen({
     super.key,
     required this.filePath,
     required this.fileName,
     this.password,
+    this.onPasswordRequired,
+    this.onSuccess,
   });
 
   @override
@@ -21,6 +25,8 @@ class PdfViewerScreen extends StatefulWidget {
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
+  bool _hasCalledSuccess = false;
+  bool _hasCalledPasswordRequired = false;
 
   @override
   Widget build(BuildContext context) {
@@ -76,6 +82,30 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         canShowScrollStatus: true,
         canShowPaginationDialog: true,
         enableDoubleTapZooming: true,
+        canShowPasswordDialog: false, // Disable Syncfusion's password dialog
+        onDocumentLoaded: (details) {
+          // PDF loaded successfully
+          if (!_hasCalledSuccess && widget.onSuccess != null) {
+            _hasCalledSuccess = true;
+            widget.onSuccess!();
+          }
+        },
+        onDocumentLoadFailed: (details) {
+          // Check if password error
+          final desc = details.description.toLowerCase();
+          final err = details.error.toLowerCase();
+          if (desc.contains('password') || err.contains('password') ||
+              desc.contains('encrypted') || err.contains('encrypted')) {
+            // Password required - trigger callback
+            if (!_hasCalledPasswordRequired && widget.onPasswordRequired != null) {
+              _hasCalledPasswordRequired = true;
+              widget.onPasswordRequired!();
+            } else if (widget.onPasswordRequired == null) {
+              // No callback set - just go back
+              Navigator.pop(context);
+            }
+          }
+        },
       ),
     );
   }

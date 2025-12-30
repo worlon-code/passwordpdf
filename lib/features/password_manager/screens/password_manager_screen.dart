@@ -186,33 +186,44 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredPasswords.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.vpn_key_off,
-                              size: 100,
-                              color: Colors.grey.shade400,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _searchQuery.isEmpty 
-                                  ? 'No passwords saved yet'
-                                  : 'No passwords found',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            if (_searchQuery.isEmpty)
-                              Text(
-                                'Tap + to add a password',
-                                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Colors.grey.shade500,
+                    ? RefreshIndicator(
+                        onRefresh: _loadPasswords,
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => SingleChildScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            child: SizedBox(
+                              height: constraints.maxHeight,
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.vpn_key_off,
+                                      size: 100,
+                                      color: Colors.grey.shade400,
+                                    ),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      _searchQuery.isEmpty 
+                                          ? 'No passwords saved yet'
+                                          : 'No passwords found',
+                                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    if (_searchQuery.isEmpty)
+                                      Text(
+                                        'Tap + to add a password',
+                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                          color: Colors.grey.shade500,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
-                          ],
+                            ),
+                          ),
                         ),
                       )
                     : RefreshIndicator(
