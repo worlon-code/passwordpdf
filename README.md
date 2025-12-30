@@ -2,9 +2,27 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.15 - Password Management Integration
+## Version 0.0.19 - Password Manager Enhancements
 
 ### 🎉 New Features
+
+#### Password Manager Improvements
+- **Rename Password Keys**: Tap ••• menu on any password to rename
+- **Pull-to-Refresh**: Swipe down on password list to refresh
+- **Real-time Key Validation**: Shows red error when key name exists, disables save
+- **Duplicate Password Detection**: Shows popup with existing key if password already saved
+- **PDF Password Integration**: Password dialog appears when opening PDFs
+
+#### Validation Enhancements
+- Key name duplicate check in Add Password dialog (real-time)
+- Key name duplicate check in PDF Password Save (with button disable)
+- Password value duplicate check (shows existing key name in popup)
+
+### 🐛 Bug Fixes
+- Fixed rename dialog crash on cancel (removed improper controller.dispose)
+- Fixed PDF password dialog appearing for all PDFs
+
+### Previous Release: v0.0.15 - Password Management Integration
 
 #### Password Manager
 - **New "Passwords" Tab**: Dedicated password management screen in bottom navigation
@@ -157,5 +175,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.9 (Build 9)  
+**Current Version**: 0.0.19 (Build 19)  
 **Last Updated**: December 30, 2024

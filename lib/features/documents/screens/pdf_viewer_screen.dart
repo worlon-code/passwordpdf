@@ -6,11 +6,13 @@ import 'dart:io';
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
   final String fileName;
+  final String? password;
 
   const PdfViewerScreen({
     super.key,
     required this.filePath,
     required this.fileName,
+    this.password,
   });
 
   @override
@@ -69,6 +71,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       body: SfPdfViewer.file(
         file,
         key: _pdfViewerKey,
+        password: widget.password ?? '',
         canShowScrollHead: true,
         canShowScrollStatus: true,
         canShowPaginationDialog: true,

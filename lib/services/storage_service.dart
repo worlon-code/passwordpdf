@@ -122,6 +122,17 @@ class StorageService {
     return password != null;
   }
 
+  /// Rename a password key name
+  Future<int> renamePassword(int id, String newKeyName) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.passwordsTable,
+      {'key_name': newKeyName},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   // ==================== RECENT DOCUMENTS OPERATIONS ====================
 
   /// Insert or update a recent document

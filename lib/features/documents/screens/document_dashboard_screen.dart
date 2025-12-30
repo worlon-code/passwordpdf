@@ -8,6 +8,7 @@ import '../../../services/document_service.dart';
 import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
+import '../widgets/password_selection_dialog.dart';
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -872,15 +873,24 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       ),
                     );
                     if (result == 'open' && file.isPdf && mounted) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PdfViewerScreen(
-                            filePath: file.filePath!,
-                            fileName: file.name,
-                          ),
-                        ),
+                      // Show password selection dialog
+                      final password = await showDialog<String>(
+                        context: context,
+                        builder: (context) => const PasswordSelectionDialog(),
                       );
+                      
+                      if (password != null && mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => PdfViewerScreen(
+                              filePath: file.filePath!,
+                              fileName: file.name,
+                              password: password,
+                            ),
+                          ),
+                        );
+                      }
                     }
                   } else if (value == 'select') {
                     _toggleFileSelection(file.id);
@@ -934,21 +944,29 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   ),
                 ],
               ),
-        onTap: () {
+        onTap: () async {
           if (_selectedFileIds.isNotEmpty) {
             // In selection/move mode - toggle selection
             _toggleFileSelection(file.id);
           } else if (file.isPdf) {
-            // Not in move mode and is PDF - open viewer
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => PdfViewerScreen(
-                  filePath: file.filePath!,
-                  fileName: file.name,
-                ),
-              ),
+            // Not in move mode and is PDF - show password dialog then open viewer
+            final password = await showDialog<String>(
+              context: context,
+              builder: (context) => const PasswordSelectionDialog(),
             );
+            
+            if (password != null && mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PdfViewerScreen(
+                    filePath: file.filePath!,
+                    fileName: file.name,
+                    password: password,
+                  ),
+                ),
+              );
+            }
           }
           // For non-PDF files when not in move mode - do nothing on tap
         },

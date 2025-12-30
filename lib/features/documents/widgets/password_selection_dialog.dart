@@ -22,11 +22,29 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
   bool _showNewPasswordInput = false;
   bool _saveNewPassword = false;
   bool _obscurePassword = true;
+  String? _keyNameError; // For real-time key name validation
 
   @override
   void initState() {
     super.initState();
     _loadPasswords();
+    _keyNameController.addListener(_validateKeyName);
+  }
+
+  Future<void> _validateKeyName() async {
+    if (!_saveNewPassword) return; // Only validate when saving
+    final keyName = _keyNameController.text.trim();
+    if (keyName.isEmpty) {
+      setState(() => _keyNameError = null);
+      return;
+    }
+    
+    final exists = await _storageService.passwordKeyExists(keyName);
+    if (mounted) {
+      setState(() {
+        _keyNameError = exists ? 'Key name already exists' : null;
+      });
+    }
   }
 
   Future<void> _loadPasswords() async {
@@ -84,6 +102,37 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
           const SnackBar(content: Text('Key name already exists')),
         );
         return;
+      }
+
+      // Check if password value already exists
+      final allPasswords = await _storageService.getAllPasswords();
+      for (final pwd in allPasswords) {
+        final decrypted = await _encryptionService.decrypt(pwd.encryptedValue);
+        if (decrypted == password) {
+          // Password already exists - show popup
+          await showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.warning, color: Colors.orange),
+                  SizedBox(width: 8),
+                  Text('Password Exists'),
+                ],
+              ),
+              content: Text(
+                'This password already exists under key:\n\n"${pwd.keyName}"',
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
       }
 
       // Save encrypted password
@@ -217,6 +266,8 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
                   decoration: InputDecoration(
                     labelText: 'Key Name (label)',
                     hintText: 'e.g., Work Documents',
+                    errorText: _keyNameError,
+                    errorStyle: const TextStyle(color: Colors.red),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -243,7 +294,7 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
-                    onPressed: _useNewPassword,
+                    onPressed: (_saveNewPassword && _keyNameError != null) ? null : _useNewPassword,
                     child: const Text('Use Password'),
                   ),
                 ],
@@ -265,6 +316,7 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
 
   @override
   void dispose() {
+    _keyNameController.removeListener(_validateKeyName);
     _passwordController.dispose();
     _keyNameController.dispose();
     super.dispose();

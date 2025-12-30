@@ -96,6 +96,54 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
     );
   }
 
+  Future<void> _renamePassword(PasswordModel password) async {
+    final controller = TextEditingController(text: password.keyName);
+    
+    final newName = await showDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename Password Key'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'New Key Name',
+            hintText: 'e.g., Gmail Account',
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+
+    // Handle rename after dialog closes
+    if (newName != null && newName.isNotEmpty && newName != password.keyName) {
+      try {
+        // Check if new name already exists
+        final exists = await _storageService.passwordKeyExists(newName);
+        if (exists) {
+          _showError('A password with this key name already exists');
+          return;
+        }
+        
+        await _storageService.renamePassword(password.id!, newName);
+        _loadPasswords();
+        _showSuccess('Password key renamed');
+      } catch (e) {
+        _showError('Error renaming password: $e');
+      }
+    }
+  }
+
   List<PasswordModel> get _filteredPasswords {
     if (_searchQuery.isEmpty) return _passwords;
     return _passwords.where((pwd) {
@@ -167,9 +215,12 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                           ],
                         ),
                       )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _filteredPasswords.length,
+                    : RefreshIndicator(
+                        onRefresh: _loadPasswords,
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: _filteredPasswords.length,
                         itemBuilder: (context, index) {
                           final password = _filteredPasswords[index];
                           return Card(
@@ -193,14 +244,42 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                               subtitle: Text(
                                 'Created: ${password.createdAt.toString().split(' ')[0]}',
                               ),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () => _deletePassword(password),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (value) async {
+                                  if (value == 'rename') {
+                                    await _renamePassword(password);
+                                  } else if (value == 'delete') {
+                                    await _deletePassword(password);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  const PopupMenuItem(
+                                    value: 'rename',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.edit),
+                                        SizedBox(width: 8),
+                                        Text('Rename'),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.delete, color: Colors.red),
+                                        SizedBox(width: 8),
+                                        Text('Delete', style: TextStyle(color: Colors.red)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           );
                         },
                       ),
+                    ),
           ),
         ],
       ),
