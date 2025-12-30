@@ -363,27 +363,45 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Future<void> _moveSelectedFiles() async {
     if (_selectedFileIds.isEmpty) return;
 
-    final folders = _docService.getFolders();
-    if (folders.isEmpty) {
+    // Build nested folder tree for display
+    final allFolders = _docService.getFolders();
+    if (allFolders.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No folders available. Create a folder first.')),
       );
       return;
     }
 
+    // Helper to build folder hierarchy
+    List<Widget> buildFolderTree(String? parentId, int depth) {
+      final folders = parentId == null
+          ? _docService.getRootFolders()
+          : _docService.getSubfolders(parentId);
+      
+      return folders.expand((folder) {
+        return [
+          ListTile(
+            contentPadding: EdgeInsets.only(left: 16.0 + (depth * 24.0)),
+            leading: Icon(Icons.folder, 
+              color: depth == 0 ? Colors.blue : Colors.blue.withOpacity(0.7),
+            ),
+            title: Text(folder.name),
+            onTap: () => Navigator.pop(context, folder.id),
+          ),
+          ...buildFolderTree(folder.id, depth + 1),
+        ];
+      }).toList();
+    }
+
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Move ${_selectedFileIds.length} file(s) to...'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: folders.map((folder) {
-            return ListTile(
-              leading: const Icon(Icons.folder),
-              title: Text(folder.name),
-              onTap: () => Navigator.pop(context, folder.id),
-            );
-          }).toList(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: buildFolderTree(null, 0),
+          ),
         ),
         actions: [
           TextButton(
@@ -464,17 +482,15 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        // If inside a folder, go back to parent instead of exiting app
-        if (_currentFolderId != null) {
+    return PopScope(
+      canPop: _currentFolderId == null,
+      onPopInvoked: (didPop) {
+        if (!didPop && _currentFolderId != null) {
           setState(() {
             _currentFolderId = null;
             _selectedFileIds.clear();
           });
-          return false; // Don't exit app
         }
-        return true; // Allow exit app
       },
       child: Scaffold(
         appBar: AppBar(
@@ -613,22 +629,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               const SizedBox(height: 16),
               const Text('Folder is empty'),
               const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: _createFolder,
-                    icon: const Icon(Icons.create_new_folder),
-                    label: const Text('New Folder'),
-                  ),
-                  const SizedBox(width: 12),
-                  ElevatedButton.icon(
-                    onPressed: () => _pickFiles(folderId: _currentFolderId),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add Files'),
-                  ),
-                ],
-              ),
+              const Text('Use the button below to add files or create folders'),
             ],
           ),
         );
@@ -637,27 +638,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (subfolders.isNotEmpty) ...[
-            Text(
-              'Subfolders',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            ...subfolders.map((folder) => _buildFolderCard(folder)),
-            const SizedBox(height: 24),
-          ],
-          if (files.isNotEmpty) ...[
-            Text(
-              'Files',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            ...files.map((file) => _buildFileCard(file)),
-          ],
+          ...subfolders.map((folder) => _buildFolderCard(folder)),
+          ...files.map((file) => _buildFileCard(file)),
         ],
       );
     }
