@@ -40,7 +40,15 @@ class _AddPasswordDialogState extends State<AddPasswordDialog> {
       }
 
       // Encrypt password
-      final encryptedPassword = _encryptionService.encrypt(_passwordController.text);
+      final encryptedPassword = await _encryptionService.encrypt(_passwordController.text);
+      
+      if (encryptedPassword == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Encryption failed. Please set encryption key first.')),
+        );
+        setState(() => _isLoading = false);
+        return;
+      }
 
       // Save to database
       final passwordModel = PasswordModel(

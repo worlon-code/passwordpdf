@@ -4,6 +4,7 @@ import 'core/theme/app_theme.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
+import 'features/password_manager/screens/password_manager_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
 import 'services/permission_service.dart';
@@ -172,6 +173,7 @@ class _MainScreenState extends State<MainScreen> {
         index: _currentIndex,
         children: const [
           DocumentDashboardScreen(),
+          PasswordManagerScreen(),
           SettingsScreen(),
         ],
       ),
@@ -187,6 +189,11 @@ class _MainScreenState extends State<MainScreen> {
             icon: Icon(Icons.folder_outlined),
             selectedIcon: Icon(Icons.folder),
             label: 'Documents',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.vpn_key_outlined),
+            selectedIcon: Icon(Icons.vpn_key),
+            label: 'Passwords',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

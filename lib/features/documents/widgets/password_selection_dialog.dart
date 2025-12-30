@@ -43,7 +43,13 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
 
   Future<void> _useSelectedPassword(PasswordModel password) async {
     try {
-      final decryptedPassword = _encryptionService.decrypt(password.encryptedValue);
+      final decryptedPassword = await _encryptionService.decrypt(password.encryptedValue);
+      if (decryptedPassword == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to decrypt password')),
+        );
+        return;
+      }
       Navigator.of(context).pop(decryptedPassword);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -82,7 +88,14 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
 
       // Save encrypted password
       try {
-        final encryptedPassword = _encryptionService.encrypt(password);
+        final encryptedPassword = await _encryptionService.encrypt(password);
+        if (encryptedPassword == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to encrypt password')),
+          );
+          return;
+        }
+        
         final passwordModel = PasswordModel(
           keyName: keyName,
           encryptedValue: encryptedPassword,
