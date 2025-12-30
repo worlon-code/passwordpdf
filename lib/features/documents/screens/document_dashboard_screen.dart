@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/document_service.dart';
 import '../../../models/document_item_model.dart';
+import 'pdf_viewer_screen.dart';
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -869,7 +870,23 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             }
           },
         ),
-        onTap: () => _toggleFileSelection(file.id),
+        onTap: () {
+          if (file.isPdf) {
+            // Open PDF viewer
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => PdfViewerScreen(
+                  filePath: file.filePath!,
+                  fileName: file.name,
+                ),
+              ),
+            );
+          } else {
+            // Toggle selection for non-PDF files
+            _toggleFileSelection(file.id);
+          }
+        },
         onLongPress: () => _toggleFileSelection(file.id),
       ),
     );
