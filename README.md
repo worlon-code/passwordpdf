@@ -2,19 +2,24 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.21 - Smart PDF & Password Enhancements
+## Version 0.0.22 - Advanced PDF Tools
 
-### 🎉 New Features
+### 🛠️ New Features
+
+#### PDF Manipulation Suite (v0.0.22)
+- **Split PDF**: Extract specific pages (e.g., "1,3,5") or ranges (e.g., "1-10").
+- **Merge PDF**: Combine current document with external PDFs. 
+  - *Smart Merge*: Automatically prompts to unlock external files if protected.
+- **Reorder Pages**: Drag-and-drop interface to rearrange page sequence.
+- **Remove Password**: Decrypts the current file (using session password) and saves a copy.
 
 #### Smart PDF Security (v0.0.20-21)
-- **Smart Password Detection**: Automatically detects protected PDFs.
-- **Auto-Fill**: Remembers successful passwords for documents and uses them automatically on re-open.
-- **Improved UX**: Skips password dialog for non-protected files; only saves password after successful open.
-- **Integrated Access**: "Open File" from File Info screen now uses the same smart logic.
+- **Status Indicator**: File Info screen now shows if a PDF is "Password Protected".
+- **Smart Detection**: Skips password dialog for non-protected files.
+- **Auto-Fill**: Remembers successful passwords for seamless access.
 
-#### Password Manager (v0.0.21)
-- **Refresh Fix**: Pull-to-refresh now works even when password list is empty.
-- **Duplicate Checks**: Real-time validation for keys and values.
+#### Password Manager
+- **Refresh Fix**: Pull-to-refresh works on empty lists.
 
 #### Password Manager Improvements
 - **Rename Password Keys**: Tap ••• menu on any password to rename

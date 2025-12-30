@@ -2,15 +2,43 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import '../../../models/document_item_model.dart';
 import 'package:intl/intl.dart';
+import '../../../services/pdf_tools_service.dart';
 
 /// File Information Screen - shows detailed file metadata
-class FileInfoScreen extends StatelessWidget {
+class FileInfoScreen extends StatefulWidget {
   final DocumentItem file;
 
   const FileInfoScreen({
     super.key,
     required this.file,
   });
+
+  @override
+  State<FileInfoScreen> createState() => _FileInfoScreenState();
+}
+
+class _FileInfoScreenState extends State<FileInfoScreen> {
+  bool? _isProtected;
+  bool _isLoadingProtection = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkProtection();
+  }
+
+  Future<void> _checkProtection() async {
+    if (widget.file.isPdf && widget.file.filePath != null) {
+      if (mounted) setState(() => _isLoadingProtection = true);
+      final isProtected = await PdfToolsService().isProtected(widget.file.filePath!);
+      if (mounted) {
+        setState(() {
+          _isProtected = isProtected;
+          _isLoadingProtection = false;
+        });
+      }
+    }
+  }
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
@@ -25,6 +53,7 @@ class FileInfoScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final file = widget.file;
     final fileExists = file.filePath != null && File(file.filePath!).existsSync();
     final fileSize = fileExists ? File(file.filePath!).lengthSync() : 0;
     final extension = file.name.split('.').last.toUpperCase();
@@ -94,6 +123,15 @@ class FileInfoScreen extends StatelessWidget {
                 _buildInfoRow(context, 'Type', _getFileType()),
                 _buildInfoRow(context, 'Status', fileExists ? 'Available' : 'File Not Found',
                   valueColor: fileExists ? Colors.green : Colors.red),
+                if (file.isPdf && fileExists)
+                  _buildInfoRow(
+                    context, 
+                    'Security', 
+                    _isLoadingProtection 
+                        ? 'Checking...' 
+                        : (_isProtected == true ? 'Password Protected' : 'No Password'),
+                    valueColor: _isProtected == true ? Colors.orange : Colors.green,
+                  ),
               ],
             ),
 
@@ -204,23 +242,23 @@ class FileInfoScreen extends StatelessWidget {
   }
 
   IconData _getFileIcon() {
-    if (file.isPdf) return Icons.picture_as_pdf;
-    if (file.isDoc) return Icons.description;
-    if (file.isExcel) return Icons.table_chart;
+    if (widget.file.isPdf) return Icons.picture_as_pdf;
+    if (widget.file.isDoc) return Icons.description;
+    if (widget.file.isExcel) return Icons.table_chart;
     return Icons.insert_drive_file;
   }
 
   Color _getFileColor() {
-    if (file.isPdf) return Colors.red;
-    if (file.isDoc) return Colors.blue;
-    if (file.isExcel) return Colors.green;
+    if (widget.file.isPdf) return Colors.red;
+    if (widget.file.isDoc) return Colors.blue;
+    if (widget.file.isExcel) return Colors.green;
     return Colors.grey;
   }
 
   String _getFileType() {
-    if (file.isPdf) return 'PDF Document';
-    if (file.isDoc) return 'Word Document';
-    if (file.isExcel) return 'Excel Spreadsheet';
+    if (widget.file.isPdf) return 'PDF Document';
+    if (widget.file.isDoc) return 'Word Document';
+    if (widget.file.isExcel) return 'Excel Spreadsheet';
     return 'Document';
   }
 }

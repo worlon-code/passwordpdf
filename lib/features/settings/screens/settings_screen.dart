@@ -415,7 +415,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: Icon(Icons.info),
                   title: Text('App Version'),
-                  subtitle: Text('0.0.21'),
+                  subtitle: Text('0.0.22'),
                 ),
                 Divider(height: 1),
                 ListTile(
