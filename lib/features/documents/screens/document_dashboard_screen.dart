@@ -982,6 +982,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 tooltip: 'Delete selected',
               ),
               IconButton(
+                icon: const Icon(Icons.archive),
+                onPressed: _exportSelectedItems,
+                tooltip: 'Export selected as ZIP',
+              ),
+              IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => setState(() => _selectedFileIds.clear()),
                 tooltip: 'Clear selection',
@@ -1007,6 +1012,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 },
                 tooltip: 'Search',
               ),
+               IconButton(
+                  icon: const Icon(Icons.create_new_folder),
+                  onPressed: _importFolder,
+                  tooltip: 'Import Folder',
+                ),
               if (_currentFolderId != null) ...[
                 IconButton(
                   icon: const Icon(Icons.download),
@@ -1017,11 +1027,6 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     _exportFolderAsZip(folder);
                   },
                   tooltip: 'Export as ZIP',
-                ),
-               IconButton(
-                  icon: const Icon(Icons.create_new_folder),
-                  onPressed: _importFolder,
-                  tooltip: 'Import Folder',
                 ),
               PopupMenuButton<String>(
                 onSelected: (value) {
@@ -1581,6 +1586,98 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     setState(() {
       _selectedFileIds.clear();
     });
+  }
+
+  Future<void> _exportSelectedItems() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Export Selected Items'),
+        content: Text('Export ${_selectedFileIds.length} items as a ZIP file?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.archive),
+            onPressed: () => Navigator.pop(context, true),
+            label: const Text('Export'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      setState(() => _isLoading = true);
+      final archive = Archive();
+      
+      // Helper to match existing recursive logic
+      void addFolderToArchive(String folderId, String pathPrefix) {
+        final files = _docService.getFilesInFolder(folderId);
+        for (final fileItem in files) {
+          if (fileItem.filePath != null) {
+            final file = File(fileItem.filePath!);
+            if (file.existsSync()) {
+              final bytes = file.readAsBytesSync();
+              final archivePath = pathPrefix.isEmpty 
+                  ? fileItem.name 
+                  : '$pathPrefix/${fileItem.name}';
+              archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
+            }
+          }
+        }
+        final subfolders = _docService.getSubfolders(folderId);
+        for (final subfolder in subfolders) {
+          final newPrefix = pathPrefix.isEmpty 
+              ? subfolder.name 
+              : '$pathPrefix/${subfolder.name}';
+          addFolderToArchive(subfolder.id, newPrefix);
+        }
+      }
+
+      for (final id in _selectedFileIds) {
+        final item = _docService.getAllItems().firstWhere((e) => e.id == id);
+        if (item.isFolder) {
+          addFolderToArchive(item.id, item.name);
+        } else if (item.filePath != null) {
+          final file = File(item.filePath!);
+          if (file.existsSync()) {
+            final bytes = file.readAsBytesSync();
+            archive.addFile(ArchiveFile(item.name, bytes.length, bytes));
+          }
+        }
+      }
+
+      final zipEncoder = ZipEncoder();
+      final zipData = zipEncoder.encode(archive);
+      
+      if (zipData == null) throw Exception('Failed to encode ZIP');
+
+      final settings = context.read<SettingsService>();
+      final exportPath = settings.exportPath ?? (await getApplicationDocumentsDirectory()).path;
+      final fileName = 'bulk_export_${DateTime.now().millisecondsSinceEpoch}.zip';
+      final file = File('$exportPath/$fileName');
+      
+      await file.writeAsBytes(zipData);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Exported to ${file.path}')),
+        );
+        setState(() => _selectedFileIds.clear());
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 }
 
