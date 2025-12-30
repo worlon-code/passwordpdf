@@ -183,6 +183,42 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   continue;
                 }
               }
+            } else {
+              // Check for duplicates in unorganized files (main screen)
+              final unorganizedFiles = _docService.getUnorganizedFiles();
+              final duplicate = unorganizedFiles.where((f) => f.name == fileName).firstOrNull;
+              
+              if (duplicate != null) {
+                // Show duplicate dialog
+                final action = await _showDuplicateDialog(fileName);
+                
+                if (action == null || action == 'discard') {
+                  continue; // Skip this file
+                } else if (action == 'rename') {
+                  final newName = await _getNewFileName(fileName);
+                  if (newName == null || newName.isEmpty) {
+                    continue;
+                  }
+                  
+                  // Copy the original file with new name
+                  try {
+                    final originalFile = File(file.path!);
+                    final directory = originalFile.parent;
+                    final newFilePath = '${directory.path}/$newName';
+                    await originalFile.copy(newFilePath);
+                    await _docService.addFile(newFilePath);
+                    addedCount++;
+                  } catch (e) {
+                    _log.error('DocumentDashboard', 'Failed to copy file', e);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to copy file: $e'), backgroundColor: Colors.red),
+                      );
+                    }
+                  }
+                  continue;
+                }
+              }
             }
             
             await _docService.addFile(file.path!, folderId: folderId);
