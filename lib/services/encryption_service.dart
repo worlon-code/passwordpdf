@@ -1,0 +1,135 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'dart:convert';
+import 'dart:math';
+import 'logging_service.dart';
+
+/// Service for encryption key management
+class EncryptionService {
+  static final EncryptionService _instance = EncryptionService._internal();
+  factory EncryptionService() => _instance;
+  EncryptionService._internal();
+
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(
+      encryptedSharedPreferences: true,
+    ),
+  );
+  final LoggingService _log = LoggingService();
+  
+  // Developer password for accessing sensitive info
+  static const String _developerPassword = 'Portal123!';
+  String? _encryptionKey;
+
+  /// Check if encryption key is already set
+  Future<bool> isKeySet() async {
+    final key = await _secureStorage.read(key: 'encryption_key');
+    return key != null && key.isNotEmpty;
+  }
+
+  /// Set encryption key (one-time)
+  Future<bool> setEncryptionKey(String key) async {
+    try {
+      final existing = await _secureStorage.read(key: 'encryption_key');
+      if (existing != null && existing.isNotEmpty) {
+        _log.warn('EncryptionService', 'Encryption key already set');
+        return false; // Already set
+      }
+      
+      await _secureStorage.write(key: 'encryption_key', value: key);
+      _encryptionKey = key;
+      _log.info('EncryptionService', 'Encryption key set successfully');
+      return true;
+    } catch (e) {
+      _log.error('EncryptionService', 'Failed to set encryption key', e);
+      return false;
+    }
+  }
+
+  /// Get encryption key (requires developer password)
+  Future<String?> getEncryptionKey(String password) async {
+    if (password != _developerPassword) {
+      _log.warn('EncryptionService', 'Invalid developer password');
+      return null;
+    }
+    
+    try {
+      _encryptionKey = await _secureStorage.read(key: 'encryption_key');
+      _log.info('EncryptionService', 'Encryption key retrieved');
+      return _encryptionKey;
+    } catch (e) {
+      _log.error('EncryptionService', 'Failed to get encryption key', e);
+      return null;
+    }
+  }
+
+  /// Verify developer password
+  bool verifyDeveloperPassword(String password) {
+    final valid = password == _developerPassword;
+    _log.info('EncryptionService', 'Developer password verification: ${valid ? 'success' : 'failed'}');
+    return valid;
+  }
+
+  /// Generate a random encryption key
+  String generateRandomKey([int length = 32]) {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#\$%^&*';
+    final random = Random.secure();
+    final key = List.generate(length, (index) => chars[random.nextInt(chars.length)]).join();
+    _log.debug('EncryptionService', 'Generated new random key');
+    return key;
+  }
+
+  /// Encrypt a value using the stored key
+  Future<String?> encrypt(String plainText) async {
+    try {
+      if (_encryptionKey == null) {
+        _encryptionKey = await _secureStorage.read(key: 'encryption_key');
+      }
+      
+      if (_encryptionKey == null) {
+        _log.error('EncryptionService', 'No encryption key set');
+        return null;
+      }
+      
+      // Simple XOR encryption for demo (use proper AES in production)
+      final keyBytes = utf8.encode(_encryptionKey!);
+      final plainBytes = utf8.encode(plainText);
+      final encryptedBytes = <int>[];
+      
+      for (int i = 0; i < plainBytes.length; i++) {
+        encryptedBytes.add(plainBytes[i] ^ keyBytes[i % keyBytes.length]);
+      }
+      
+      return base64Encode(encryptedBytes);
+    } catch (e) {
+      _log.error('EncryptionService', 'Encryption failed', e);
+      return null;
+    }
+  }
+
+  /// Decrypt a value using the stored key
+  Future<String?> decrypt(String encryptedText) async {
+    try {
+      if (_encryptionKey == null) {
+        _encryptionKey = await _secureStorage.read(key: 'encryption_key');
+      }
+      
+      if (_encryptionKey == null) {
+        _log.error('EncryptionService', 'No encryption key set');
+        return null;
+      }
+      
+      final keyBytes = utf8.encode(_encryptionKey!);
+      final encryptedBytes = base64Decode(encryptedText);
+      final plainBytes = <int>[];
+      
+      for (int i = 0; i < encryptedBytes.length; i++) {
+        plainBytes.add(encryptedBytes[i] ^ keyBytes[i % keyBytes.length]);
+      }
+      
+      return utf8.decode(plainBytes);
+    } catch (e) {
+      _log.error('EncryptionService', 'Decryption failed', e);
+      return null;
+    }
+  }
+}
