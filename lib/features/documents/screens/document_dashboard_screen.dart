@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'document_search_delegate.dart';
 import 'dart:io';
 import 'package:archive/archive_io.dart';
 import 'package:path_provider/path_provider.dart';
@@ -569,6 +570,28 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _exportFolderAsZip(DocumentItem folder) async {
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Export Folder'),
+        content: Text('Do you want to export "${folder.name}" as a ZIP file?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.download),
+            onPressed: () => Navigator.pop(context, true),
+            label: const Text('Export'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
     try {
       setState(() => _isLoading = true);
       
@@ -954,14 +977,39 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 tooltip: 'Move files',
               ),
               IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: _deleteSelectedItems,
+                tooltip: 'Delete selected',
+              ),
+              IconButton(
                 icon: const Icon(Icons.close),
                 onPressed: () => setState(() => _selectedFileIds.clear()),
                 tooltip: 'Clear selection',
               ),
             ] else ...[
-              if (_currentFolderId != null)
+              IconButton(
+                icon: const Icon(Icons.search),
+                onPressed: () async {
+                  final result = await showSearch(
+                    context: context,
+                    delegate: DocumentSearchDelegate(_docService),
+                  );
+                  if (result != null) {
+                    if (result.isFolder) {
+                      setState(() => _currentFolderId = result.id);
+                    } else {
+                      // It's a file
+                      if (result.filePath != null) {
+                        _openDocument(result);
+                      }
+                    }
+                  }
+                },
+                tooltip: 'Search',
+              ),
+              if (_currentFolderId != null) ...[
                 IconButton(
-                  icon: const Icon(Icons.folder_zip),
+                  icon: const Icon(Icons.download),
                   onPressed: () {
                     final folder = _docService.getAllItems().firstWhere(
                           (item) => item.id == _currentFolderId,
@@ -996,11 +1044,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               ),
             ],
           ],
-        ),
+        ],
+      ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _isInitialized
-                ? _buildContent()
+            ? AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                transitionBuilder: (Widget child, Animation<double> animation) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                child: KeyedSubtree(
+                  key: ValueKey(_currentFolderId ?? 'root'),
+                  child: _buildContent(),
+                ),
+              )
                 : const Center(child: Text('Initializing...')),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: () => _pickFiles(folderId: _currentFolderId),
@@ -1233,18 +1291,66 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     final allFiles = _docService.getFilesInFolder(folder.id);
     final fileCount = _applyFileFilter(allFiles).length;
     
+    final isSelected = _selectedFileIds.contains(folder.id);
+    
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
+      color: isSelected ? Colors.blue.withOpacity(0.1) : null,
+      child: InkWell(
+        onLongPress: () {
+          setState(() {
+            if (isSelected) {
+              _selectedFileIds.remove(folder.id);
+            } else {
+              _selectedFileIds.add(folder.id);
+            }
+          });
+        },
+        onTap: () {
+          if (_selectedFileIds.isNotEmpty) {
+            setState(() {
+              if (isSelected) {
+                _selectedFileIds.remove(folder.id);
+              } else {
+                _selectedFileIds.add(folder.id);
+              }
+            });
+          } else {
+            // Check if folder contains any items before opening? 
+            // No, always allow opening folder
+            setState(() {
+              _currentFolderId = folder.id;
+              _selectedFileIds.clear(); // Clear selection just in case
+            });
+          }
+        },
+        child: ListTile(
+          leading: Stack(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.folder, color: Colors.blue, size: 28),
+              ),
+              if (isSelected)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: const BoxDecoration(
+                      color: Colors.blue,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.check, size: 12, color: Colors.white),
+                  ),
+                ),
+            ],
           ),
-          child: const Icon(Icons.folder, color: Colors.blue, size: 28),
-        ),
         title: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: Text('$fileCount ${fileCount == 1 ? 'file' : 'files'}'),
         trailing: PopupMenuButton<String>(
@@ -1292,6 +1398,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           ],
         ),
         onTap: () => setState(() => _currentFolderId = folder.id),
+        ),
       ),
     );
   }
@@ -1434,6 +1541,46 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     if (file.isDoc) return Colors.blue;
     if (file.isExcel) return Colors.green;
     return Colors.grey;
+  }
+  void _openDocument(DocumentItem item) async {
+    if (item.isPdf && item.filePath != null) {
+      await _openPdfWithSmartPassword(item.filePath!, item.name);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot open this file type')),
+      );
+    }
+  }
+
+  Future<void> _deleteSelectedItems() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Selected Items?'),
+        content: Text('Are you sure you want to delete ${_selectedFileIds.length} items? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    for (final id in _selectedFileIds) {
+      await _docService.deleteItem(id);
+    }
+    
+    setState(() {
+      _selectedFileIds.clear();
+    });
   }
 }
 
