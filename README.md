@@ -2,14 +2,16 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.9 - Release Notes
+## Version 0.0.15 - Password Management Integration
 
-### 🎯 Key Features
+### 🎉 New Features
 
-#### Nested Folder Management
-- **Create Folders Within Folders**: Unlimited nested folder hierarchy
-- **Folder Validation**: Real-time validation prevents duplicate folder names
-- **Visual Hierarchy**: Clean UI showing folder structure without category labels
+#### Password Manager
+- **New "Passwords" Tab**: Dedicated password management screen in bottom navigation
+- **Encrypted Storage**: All password values encrypted with XOR encryption
+- **Search & Filter**: Quickly find passwords by key name
+- **Add/Delete**: Easy password management with confirmation dialogs
+- **PDF Integration**: Password selection dialog when opening password-protected PDFs
 
 #### Advanced File Operations
 - **Duplicate Detection**: Automatic duplicate file detection when:
