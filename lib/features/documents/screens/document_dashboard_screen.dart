@@ -267,34 +267,51 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     try {
       setState(() => _isLoading = true);
       
-      // Get files in folder
-      final files = _docService.getFilesInFolder(folder.id);
+      // Create archive
+      final archive = Archive();
       
-      if (files.isEmpty) {
+      // Recursive function to add folder contents
+      void addFolderToArchive(String folderId, String pathPrefix) {
+        // Add files in this folder
+        final files = _docService.getFilesInFolder(folderId);
+        for (final fileItem in files) {
+          if (fileItem.filePath != null) {
+            final file = File(fileItem.filePath!);
+            if (file.existsSync()) {
+              final bytes = file.readAsBytesSync();
+              final archivePath = pathPrefix.isEmpty 
+                  ? fileItem.name 
+                  : '$pathPrefix/${fileItem.name}';
+              final archiveFile = ArchiveFile(
+                archivePath,
+                bytes.length,
+                bytes,
+              );
+              archive.addFile(archiveFile);
+            }
+          }
+        }
+        
+        // Recursively add subfolders
+        final subfolders = _docService.getSubfolders(folderId);
+        for (final subfolder in subfolders) {
+          final subPath = pathPrefix.isEmpty
+              ? subfolder.name
+              : '$pathPrefix/${subfolder.name}';
+          addFolderToArchive(subfolder.id, subPath);
+        }
+      }
+      
+      // Start recursive export from root folder
+      addFolderToArchive(folder.id, '');
+      
+      if (archive.files.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Folder is empty')),
           );
         }
         return;
-      }
-
-      // Create archive
-      final archive = Archive();
-      
-      for (final fileItem in files) {
-        if (fileItem.filePath != null) {
-          final file = File(fileItem.filePath!);
-          if (file.existsSync()) {
-            final bytes = file.readAsBytesSync();
-            final archiveFile = ArchiveFile(
-              fileItem.name,
-              bytes.length,
-              bytes,
-            );
-            archive.addFile(archiveFile);
-          }
-        }
       }
 
       // Encode to ZIP
@@ -328,7 +345,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Exported to Downloads/$zipFileName'),
+            content: Text('Exported ${archive.files.length} file(s) to Downloads/$zipFileName'),
             duration: const Duration(seconds: 4),
             action: SnackBarAction(
               label: 'OK',
@@ -337,7 +354,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           ),
         );
       }
-      _log.info('DocumentDashboard', 'Exported folder: ${folder.name} to ${outputFile.path}');
+      _log.info('DocumentDashboard', 'Exported folder: ${folder.name} (${archive.files.length} files) to ${outputFile.path}');
     } catch (e, stack) {
       _log.error('DocumentDashboard', 'Export error', e, stack);
       if (mounted) {
@@ -363,7 +380,6 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Future<void> _moveSelectedFiles() async {
     if (_selectedFileIds.isEmpty) return;
 
-    // Build nested folder tree for display
     final allFolders = _docService.getFolders();
     if (allFolders.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -372,55 +388,65 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
-    // Helper to build folder hierarchy
-    List<Widget> buildFolderTree(String? parentId, int depth) {
-      final folders = parentId == null
-          ? _docService.getRootFolders()
-          : _docService.getSubfolders(parentId);
-      
-      return folders.expand((folder) {
-        return [
-          ListTile(
-            contentPadding: EdgeInsets.only(left: 16.0 + (depth * 24.0)),
-            leading: Icon(Icons.folder, 
-              color: depth == 0 ? Colors.blue : Colors.blue.withOpacity(0.7),
-            ),
-            title: Text(folder.name),
-            onTap: () => Navigator.pop(context, folder.id),
-          ),
-          ...buildFolderTree(folder.id, depth + 1),
-        ];
-      }).toList();
-    }
-
     final result = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Move ${_selectedFileIds.length} file(s) to...'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: buildFolderTree(null, 0),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
+      builder: (context) => _MoveDialogWithTree(
+        docService: _docService,
+        fileCount: _selectedFileIds.length,
       ),
     );
 
     if (result != null) {
       try {
-        await _docService.moveFilesToFolder(_selectedFileIds.toList(), result);
+        // Check for duplicates before moving
+        final destinationFiles = _docService.getFilesInFolder(result);
+        final filesToMove = _selectedFileIds.map((id) => 
+          _docService.getAllItems().firstWhere((item) => item.id == id)
+        ).toList();
+        
+        final Map<String, String> renamedFiles = {}; // original id -> new name
+        
+        for (final file in filesToMove) {
+          final duplicate = destinationFiles.where((f) => f.name == file.name).firstOrNull;
+          
+          if (duplicate != null) {
+            // Show duplicate dialog
+            final action = await _showDuplicateDialog(file.name);
+            
+            if (action == null || action == 'discard') {
+              // Skip this file - remove from selection
+              _selectedFileIds.remove(file.id);
+              continue;
+            } else if (action == 'rename') {
+              // Get new name
+              final newName = await _getNewFileName(file.name);
+              if (newName == null || newName.isEmpty) {
+                // User cancelled - skip this file
+                _selectedFileIds.remove(file.id);
+                continue;
+              }
+              renamedFiles[file.id] = newName;
+            }
+          }
+        }
+        
+        // Rename files that need renaming
+        for (final entry in renamedFiles.entries) {
+          await _docService.renameItem(entry.key, entry.value);
+        }
+        
+        // Now move all remaining files
+        if (_selectedFileIds.isNotEmpty) {
+          await _docService.moveFilesToFolder(_selectedFileIds.toList(), result);
+        }
+        
         setState(() {
           _selectedFileIds.clear();
         });
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Files moved successfully')),
+            SnackBar(content: Text('Moved ${filesToMove.length - (filesToMove.length - _selectedFileIds.length)} file(s)')),
           );
         }
       } catch (e) {
@@ -861,5 +887,88 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     if (file.isDoc) return Colors.blue;
     if (file.isExcel) return Colors.green;
     return Colors.grey;
+  }
+}
+
+// Stateful tree widget for move dialog
+class _MoveDialogWithTree extends StatefulWidget {
+  final DocumentService docService;
+  final int fileCount;
+  
+  const _MoveDialogWithTree({
+    required this.docService,
+    required this.fileCount,
+  });
+
+  @override
+  State<_MoveDialogWithTree> createState() => _MoveDialogWithTreeState();
+}
+
+class _MoveDialogWithTreeState extends State<_MoveDialogWithTree> {
+  final Set<String> _expandedFolders = {};
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Move ${widget.fileCount} file(s) to...'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: _buildFolderTree(null, 0),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildFolderTree(String? parentId, int depth) {
+    final folders = parentId == null
+        ? widget.docService.getRootFolders()
+        : widget.docService.getSubfolders(parentId);
+    
+    return folders.expand((folder) {
+      final hasChildren = widget.docService.getSubfolders(folder.id).isNotEmpty;
+      final isExpanded = _expandedFolders.contains(folder.id);
+      
+      return [
+        ListTile(
+          contentPadding: EdgeInsets.only(left: 16.0 + (depth * 24.0)),
+          leading: hasChildren
+              ? IconButton(
+                  icon: Icon(isExpanded ? Icons.expand_more : Icons.chevron_right),
+                  onPressed: () {
+                    setState(() {
+                      if (isExpanded) {
+                        _expandedFolders.remove(folder.id);
+                      } else {
+                        _expandedFolders.add(folder.id);
+                      }
+                    });
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                )
+              : const SizedBox(width: 24),
+          title: Row(
+            children: [
+              Icon(Icons.folder, 
+                color: depth == 0 ? Colors.blue : Colors.blue.withOpacity(0.7),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(child: Text(folder.name)),
+            ],
+          ),
+          onTap: () => Navigator.pop(context, folder.id),
+        ),
+        if (hasChildren && isExpanded)
+          ..._buildFolderTree(folder.id, depth + 1),
+      ];
+    }).toList();
   }
 }
