@@ -630,6 +630,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       },
     );
 
+    // Yield to let UI render the popup before heavy work
+    await Future.delayed(Duration.zero);
+
     try {
       final archive = Archive();
       
@@ -1816,6 +1819,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       },
     );
+
+    // Yield to let UI render the popup before heavy work
+    await Future.delayed(Duration.zero);
 
     try {
       final archive = Archive();
