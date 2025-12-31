@@ -596,8 +596,38 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     // Start background export
     setState(() => _isExporting = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Export started in background...')),
+    
+    // Show auto-closing popup
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (Navigator.canPop(dialogContext)) {
+            Navigator.pop(dialogContext);
+          }
+        });
+        return AlertDialog(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 16),
+              const Text('Export has begun...'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
 
     try {
