@@ -19,8 +19,9 @@ class ExportJob {
   String? outputPath;
   String? errorMessage;
   final List<ExportItem> items;
-  final String? exportDir; // Configured export directory
-  int progress; // 0-100
+  final String? zipPassword;
+  final String? exportDir;
+  int progress;
   int processedItems;
   int totalItems;
 
@@ -29,6 +30,7 @@ class ExportJob {
     required this.name,
     required this.items,
     this.exportDir,
+    this.zipPassword,
     this.status = ExportStatus.queued,
     this.progress = 0,
     this.processedItems = 0,
@@ -62,6 +64,7 @@ class ExportJob {
       'error_message': errorMessage,
       'items': items.map((i) => i.toJson()).toList(),
       'export_dir': exportDir,
+      'zip_password': zipPassword,
       'progress': progress,
       'processed_items': processedItems,
       'total_items': totalItems,
@@ -74,6 +77,7 @@ class ExportJob {
       name: json['name'],
       items: (json['items'] as List).map((i) => ExportItem.fromJson(i)).toList(),
       exportDir: json['export_dir'],
+      zipPassword: json['zip_password'],
       status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
       progress: json['progress'] ?? 0,
       processedItems: json['processed_items'] ?? 0,
@@ -211,7 +215,7 @@ class ExportQueueService {
   }
 
   /// Add a new export job to queue
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir}) async {
+  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword}) async {
     // Count total files for progress tracking
     int countItems(List<ExportItem> items) {
       int count = 0;
@@ -232,6 +236,7 @@ class ExportQueueService {
       name: name,
       items: items,
       exportDir: exportDir,
+      zipPassword: zipPassword,
       totalItems: total,
     );
     _jobs.add(job);
@@ -285,7 +290,8 @@ class ExportQueueService {
       }
 
       // Encode ZIP in isolate
-      final zipData = await compute(_encodeArchive, archive);
+      // Pass both archive and password
+      final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
       if (zipData == null) throw Exception('Failed to encode ZIP');
 
       // Determine save path
@@ -388,9 +394,14 @@ class ExportQueueService {
 }
 
 /// Isolate function to encode archive
-List<int>? _encodeArchive(Archive archive) {
+// Accepts Map with 'archive' and optional 'password'
+List<int>? _encodeArchive(Map<String, dynamic> params) {
   try {
-    return ZipEncoder().encode(archive);
+    final archive = params['archive'] as Archive;
+    final password = params['password'] as String?;
+    
+    final encoder = ZipEncoder(password: password);
+    return encoder.encode(archive);
   } catch (e) {
     return null;
   }

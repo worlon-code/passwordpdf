@@ -66,6 +66,7 @@ class StorageService {
         output_path TEXT,
         error_message TEXT,
         export_dir TEXT,
+        zip_password TEXT,
         items_json TEXT NOT NULL,
         progress INTEGER NOT NULL DEFAULT 0,
         processed_items INTEGER NOT NULL DEFAULT 0,
@@ -94,6 +95,11 @@ class StorageService {
           total_items INTEGER NOT NULL DEFAULT 0
         )
       ''');
+    }
+    
+    if (oldVersion < 3) {
+      // Add zip_password column
+      await db.execute('ALTER TABLE ${AppConstants.exportJobsTable} ADD COLUMN zip_password TEXT');
     }
   }
 

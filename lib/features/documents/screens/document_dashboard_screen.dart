@@ -692,26 +692,65 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _exportFolderAsZip(DocumentItem folder) async {
+    String? password;
+    bool encrypt = false;
+    
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Export "${folder.name}"?'),
-        content: const Text('Do you want to export this folder as a ZIP file? This will happen in the background.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.download),
-            onPressed: () => Navigator.pop(context, true),
-            label: const Text('Export'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Export "${folder.name}"?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Do you want to export this folder as a ZIP file?'),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: encrypt,
+                        onChanged: (val) => setState(() => encrypt = val ?? false),
+                      ),
+                      const Text('Protect with Password'),
+                    ],
+                  ),
+                  if (encrypt)
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'ZIP Password',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      obscureText: true,
+                      onChanged: (val) => password = val,
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.download),
+                  onPressed: () => Navigator.pop(context, true),
+                  label: const Text('Export'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
 
     if (confirm != true) return;
+
+    // Use password only if encrypt checked
+    final zipPassword = encrypt ? password : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -740,7 +779,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
 
       // Add to queue
-      _exportQueue.addJob(folder.name, items, exportDir: exportPath);
+      _exportQueue.addJob(folder.name, items, exportDir: exportPath, zipPassword: zipPassword);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1797,26 +1836,65 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _exportSelectedItems() async {
+    String? password;
+    bool encrypt = false;
+
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Export Selected Items'),
-        content: Text('Export ${_selectedFileIds.length} items as a ZIP file? This will happen in the background.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.archive),
-            onPressed: () => Navigator.pop(context, true),
-            label: const Text('Export'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Export Selected Items'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Export ${_selectedFileIds.length} items as a ZIP file?'),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: encrypt,
+                        onChanged: (val) => setState(() => encrypt = val ?? false),
+                      ),
+                      const Text('Protect with Password'),
+                    ],
+                  ),
+                  if (encrypt)
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'ZIP Password',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      obscureText: true,
+                      onChanged: (val) => password = val,
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.archive),
+                  onPressed: () => Navigator.pop(context, true),
+                  label: const Text('Export'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
 
     if (confirm != true) return;
+
+    // Use password only if encrypt checked
+    final zipPassword = encrypt ? password : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -1876,7 +1954,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
 
       // Add to queue
-      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath);
+      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath, zipPassword: zipPassword);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
