@@ -14,7 +14,7 @@ import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
 
 // App version for tracking
-const String appVersion = '0.0.24';
+const String appVersion = '0.0.25';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 

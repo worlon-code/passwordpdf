@@ -54,6 +54,13 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 #### Password Manager
 - **Refresh Fix**: Pull-to-refresh works on empty lists.
 
+### v0.0.25
+- **Advanced Conflict Resolution**: New UI for handling file conflicts with Retry, Rename, Skip options.
+- **Batch Import**: Conflict resolution now applies gracefully to bulk file imports.
+- **Smart Notifications**: Tap on export notifications to view progress.
+- **UI Polish**: Improved dialog layouts and feedback.
+
+### v0.0.24
 #### Password Manager Improvements
 - **Rename Password Keys**: Tap ••• menu on any password to rename
 - **Pull-to-Refresh**: Swipe down on password list to refresh
