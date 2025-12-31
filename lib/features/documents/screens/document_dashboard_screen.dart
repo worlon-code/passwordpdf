@@ -12,6 +12,9 @@ import '../../../services/pdf_password_service.dart';
 import '../../../services/encryption_service.dart';
 import '../../../services/export_queue_service.dart';
 import '../../../models/document_item_model.dart';
+import '../../../models/password_model.dart';
+import '../../../services/storage_service.dart';
+import '../../../services/pdf_tools_service.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
 import 'export_progress_screen.dart';
@@ -989,14 +992,45 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
-  /// Smart PDF open - checks stored password, tries without, then shows dialog
-  Future<void> _openPdfWithSmartPassword(String filePath, String fileName) async {
-    final pdfService = PdfPasswordService();
+  Future<void> _openDocument(DocumentItem item) async {
+    if (!item.isPdf) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cannot open this file type')),
+        );
+      }
+      return;
+    }
     
-    // 1. Check for stored password
+    final filePath = item.filePath; // Use actual file path, not ID
+    if (filePath == null) {
+       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File path is missing')),
+        );
+      }
+      return;
+    }
+    
+    final fileName = item.name;
+    
+    // Check existence explicitly
+    final file = File(filePath);
+    if (!file.existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('File not found: $filePath'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    final pdfService = PdfPasswordService();
+    final tools = PdfToolsService();
+    
+    // 1. Check if specific password stored (Association)
     final storedPassword = await pdfService.getPasswordForDocument(filePath);
     if (storedPassword != null) {
-      // Use stored password
       if (mounted) {
         Navigator.push(
           context,
@@ -1012,60 +1046,249 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
-    // 2. Try opening without password first
+    // 2. Check if file is actually protected
+    // Display loading
+    if (!mounted) return;
+    
+    // Track if dialog is open
+    bool dialogOpen = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (c) => const Center(child: CircularProgressIndicator()),
+    );
+    
+    try {
+      _log.debug('SmartOpen', 'Checking protection for $filePath');
+      final isProtected = await tools.isProtected(filePath);
+      _log.debug('SmartOpen', 'File protected: $isProtected');
+      
+      if (!isProtected) {
+        if (dialogOpen) {
+          Navigator.pop(context); // Close loading
+          dialogOpen = false;
+        }
+        
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PdfViewerScreen(
+                filePath: filePath,
+                fileName: fileName,
+                password: '',
+                onSuccess: () => pdfService.saveDocumentPassword(filePath, ''),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      
+      // 3. Try saved passwords
+      _log.debug('SmartOpen', 'Fetching saved passwords');
+      final storage = StorageService();
+      final passwords = await storage.getAllPasswords();
+      final encryption = context.read<EncryptionService>();
+      
+      _log.debug('SmartOpen', 'Found ${passwords.length} saved passwords');
+      
+      String? foundPassword;
+      String? foundKeyName;
+      
+      for (final p in passwords) {
+        final decrypted = await encryption.decrypt(p.encryptedValue);
+        if (decrypted != null) {
+          _log.debug('SmartOpen', 'Trying password: ${p.keyName}');
+          if (await tools.verifyPassword(filePath, decrypted)) {
+            _log.debug('SmartOpen', 'Password matched!');
+            foundPassword = decrypted;
+            foundKeyName = p.keyName;
+            break;
+          }
+        }
+      }
+      
+      if (dialogOpen) {
+        Navigator.pop(context); // Close loading
+        dialogOpen = false;
+      }
+      
+      if (foundPassword != null) {
+        // Success! Save association and open
+        await pdfService.saveDocumentPassword(filePath, foundPassword);
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             SnackBar(content: Text('Unlocked with saved password: ${foundKeyName ?? "Unknown"}'), backgroundColor: Colors.green),
+           );
+           Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PdfViewerScreen(
+                filePath: filePath,
+                fileName: fileName,
+                password: foundPassword,
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      
+    } catch (e, stack) {
+      _log.error('SmartOpen', 'Error opening document: $e', e, stack);
+      if (dialogOpen && mounted) {
+        Navigator.pop(context);
+        dialogOpen = false;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening file: $e'), backgroundColor: Colors.red),
+        );
+      }
+      return; 
+    }
+    
+    // Ensure dialog close if not closed above
+    if (dialogOpen && mounted) {
+      Navigator.pop(context);
+      dialogOpen = false;
+    }
+    
+    // 4. Fallback to manual input with "Add to list" option
     if (mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PdfViewerScreen(
-            filePath: filePath,
-            fileName: fileName,
-            password: '',
-            onPasswordRequired: () async {
-              // 3. PDF needs password - show dialog
-              Navigator.pop(context);
-              await _showPasswordDialogAndOpen(filePath, fileName);
-            },
-            onSuccess: () {
-              // Save empty password (no password needed)
-              pdfService.saveDocumentPassword(filePath, '');
-            },
-          ),
-        ),
-      );
+      await _showSmartPasswordDialogAndOpen(filePath, fileName);
     }
   }
 
-  Future<void> _showPasswordDialogAndOpen(String filePath, String fileName) async {
+  Future<void> _showSmartPasswordDialogAndOpen(String filePath, String fileName) async {
+    final tools = PdfToolsService();
     final pdfService = PdfPasswordService();
+    final storage = StorageService();
+    final encryption = context.read<EncryptionService>();
     
-    final password = await showDialog<String>(
+    String password = '';
+    bool saveToList = false;
+    String saveName = fileName;
+    String? errorMessage;
+    
+    await showDialog(
       context: context,
-      builder: (context) => const PasswordSelectionDialog(),
-    );
-    
-    if (password != null && mounted) {
-      // Don't save password yet - wait for successful load
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => PdfViewerScreen(
-            filePath: filePath,
-            fileName: fileName,
-            password: password,
-            onSuccess: () {
-              // Only save password after successful load
-              pdfService.saveDocumentPassword(filePath, password);
-            },
-            onPasswordRequired: () async {
-              // Wrong password - go back and show dialog again
-              Navigator.pop(context);
-              await _showPasswordDialogAndOpen(filePath, fileName);
-            },
-          ),
-        ),
-      );
-    }
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Password Required'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('This file is encrypted. Please enter the password.'),
+                    const SizedBox(height: 16),
+                    TextField(
+                      autofocus: true,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        errorText: errorMessage,
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.lock),
+                      ),
+                      onChanged: (val) {
+                        password = val;
+                        if (errorMessage != null) setState(() => errorMessage = null);
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: saveToList,
+                          onChanged: (val) => setState(() => saveToList = val ?? false),
+                        ),
+                        const Expanded(child: Text('Add to My Passwords list?')),
+                      ],
+                    ),
+                    if (saveToList)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: TextField(
+                          controller: TextEditingController(text: saveName),
+                          decoration: const InputDecoration(
+                            labelText: 'Password Name (e.g. Bank Statement)',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          onChanged: (val) => saveName = val,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (password.isEmpty) return;
+                    
+                    // Verify logic
+                    final isValid = await tools.verifyPassword(filePath, password);
+                    if (!isValid) {
+                      setState(() => errorMessage = 'Incorrect password');
+                      return;
+                    }
+                    
+                    // Valid! Handle saving to list if requested
+                    if (saveToList && saveName.isNotEmpty) {
+                       // Check duplicates
+                       if (await storage.passwordKeyExists(saveName)) {
+                         setState(() => errorMessage = 'Name "$saveName" already exists');
+                         return;
+                       }
+                       
+                       // Encrypt and save to list
+                       final encrypted = await encryption.encrypt(password);
+                       if (encrypted != null) {
+                         final newPassword = PasswordModel(
+                           keyName: saveName,
+                           encryptedValue: encrypted,
+                           createdAt: DateTime.now(),
+                         );
+                         await storage.insertPassword(newPassword);
+                       }
+                    }
+                    
+                    Navigator.pop(context, true);
+                  },
+                  child: const Text('Open'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((result) async {
+      if (result == true) {
+        // Password was valid (checked in dialog)
+        await pdfService.saveDocumentPassword(filePath, password);
+        
+        if (mounted) {
+           Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => PdfViewerScreen(
+                filePath: filePath,
+                fileName: fileName,
+                password: password,
+              ),
+            ),
+          );
+        }
+      }
+    });
   }
 
   void _navigateUp() {
@@ -1692,7 +1915,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     );
                     if (result == 'open' && file.isPdf && mounted) {
                       // Smart PDF password handling
-                      await _openPdfWithSmartPassword(file.filePath!, file.name);
+                      await _openDocument(file);
                     }
                   } else if (value == 'select') {
                     _toggleFileSelection(file.id);
@@ -1757,8 +1980,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               }
             });
           } else if (file.isPdf) {
-            // Smart PDF password handling - checks stored, tries without, shows dialog if needed
-            await _openPdfWithSmartPassword(file.filePath!, file.name);
+            // Smart PDF password handling
+            await _openDocument(file);
           }
           // For non-PDF files when not in move mode - do nothing on tap
         },
@@ -1794,15 +2017,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     if (file.isExcel) return Colors.green;
     return Colors.grey;
   }
-  void _openDocument(DocumentItem item) async {
-    if (item.isPdf && item.filePath != null) {
-      await _openPdfWithSmartPassword(item.filePath!, item.name);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cannot open this file type')),
-      );
-    }
-  }
+
 
   Future<void> _deleteSelectedItems() async {
     final confirm = await showDialog<bool>(

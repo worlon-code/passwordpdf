@@ -179,6 +179,25 @@ class PdfToolsService {
     return newPath;
   }
 
+  /// Check if a password is valid for a PDF
+  Future<bool> verifyPassword(String filePath, String password) async {
+    try {
+      final file = File(filePath);
+      if (!file.existsSync()) return false;
+      
+      final bytes = await file.readAsBytes();
+      try {
+        final doc = PdfDocument(inputBytes: bytes, password: password);
+        doc.dispose(); // Valid password
+        return true;
+      } catch (e) {
+        return false; // Invalid password
+      }
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Check if a PDF is password protected
   Future<bool> isProtected(String filePath) async {
     try {

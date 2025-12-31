@@ -8,6 +8,7 @@ import 'features/password_manager/screens/password_manager_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
 import 'services/permission_service.dart';
+import 'services/encryption_service.dart';
 
 // App version for tracking
 const String appVersion = '0.0.1+1';
@@ -32,6 +33,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: settingsService),
+        Provider<EncryptionService>.value(value: EncryptionService()),
       ],
       child: const MyApp(),
     ),
