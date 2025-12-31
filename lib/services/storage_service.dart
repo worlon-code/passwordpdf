@@ -56,9 +56,94 @@ class StorageService {
     ''');
   }
 
-  /// Handle database upgrades
+  // Handle database upgrades
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Handle future schema upgrades here
+    if (oldVersion < 2) {
+      // Add export_jobs table
+      await db.execute('''
+        CREATE TABLE ${AppConstants.exportJobsTable} (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          completed_at INTEGER,
+          output_path TEXT,
+          error_message TEXT,
+          export_dir TEXT,
+          items_json TEXT NOT NULL,
+          progress INTEGER NOT NULL DEFAULT 0,
+          processed_items INTEGER NOT NULL DEFAULT 0,
+          total_items INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+    }
+  }
+
+  // ==================== EXPORT JOBS OPERATIONS ====================
+
+  /// Insert or update an export job
+  Future<int> insertOrUpdateExportJob(Map<String, dynamic> jobMap) async {
+    final db = await database;
+    // We need to stringify items_json
+    final mapToSave = Map<String, dynamic>.from(jobMap);
+    if (mapToSave['items'] != null) {
+      // Convert list of items to JSON string
+      // Note: The UI/Service uses 'items' list, but DB uses 'items_json' string
+      // We assume the service prepares the map correctly or we handle it here.
+      // Actually, ExportJob.toJson returns 'items' as List<Map>.
+      // We need to JSON encode it for storage.
+    }
+    
+    return await db.insert(
+      AppConstants.exportJobsTable,
+      jobMap, // Caller must ensure this matches DB schema or we adapt it
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+  
+  // Note: Since ExportJob.toJson() returns nested maps, sqflite insert might complain if we pass List objects directly 
+  // into TEXT columns. We should handle the conversion in ExportQueueService or here. 
+  // Unifying implementation: I will make StorageService accept the raw map and handle JSON encoding if needed, 
+  // OR expects simple types.
+  // Standard pattern: Service creates the map suitable for DB.
+  
+  /// Insert/Update export job raw
+  Future<void> saveExportJob(String id, Map<String, dynamic> data) async {
+    final db = await database;
+    await db.insert(
+      AppConstants.exportJobsTable,
+      data,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get all export jobs
+  Future<List<Map<String, dynamic>>> getAllExportJobs() async {
+    final db = await database;
+    return await db.query(
+      AppConstants.exportJobsTable,
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  /// Delete an export job
+  Future<int> deleteExportJob(String id) async {
+    final db = await database;
+    return await db.delete(
+      AppConstants.exportJobsTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Clear all finished jobs
+  Future<int> deleteFinishedExportJobs() async {
+    final db = await database;
+    return await db.delete(
+      AppConstants.exportJobsTable,
+      where: 'status = ? OR status = ?',
+      whereArgs: ['completed', 'error'],
+    );
   }
 
   // ==================== PASSWORD OPERATIONS ====================

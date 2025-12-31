@@ -44,6 +44,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _exportQueue.onJobsUpdated = () {
       if (mounted) setState(() {});
     };
+    _exportQueue.init(); // Load history
     _exportQueue.startWorker();
     _initialize();
   }
@@ -1131,7 +1132,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 icon: Stack(
                   alignment: Alignment.center,
                   children: [
-                    Icon(_isExporting ? Icons.sync : Icons.archive),
+                    Icon(_isExporting ? Icons.sync : Icons.list_alt),
                     if (_exportQueue.inProgressCount > 0)
                       Positioned(
                         top: 0,
