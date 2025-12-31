@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 import 'logging_service.dart';
 
 /// Status of an export job
@@ -18,14 +17,35 @@ class ExportJob {
   String? outputPath;
   String? errorMessage;
   final List<ExportItem> items;
+  final String? exportDir; // Configured export directory
+  int progress; // 0-100
+  int processedItems;
+  int totalItems;
 
   ExportJob({
     required this.id,
     required this.name,
     required this.items,
+    this.exportDir,
     this.status = ExportStatus.queued,
+    this.progress = 0,
+    this.processedItems = 0,
+    this.totalItems = 0,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
+  
+  String get statusText {
+    switch (status) {
+      case ExportStatus.queued:
+        return 'Queued';
+      case ExportStatus.inProgress:
+        return 'In Progress ($progress%)';
+      case ExportStatus.completed:
+        return 'Completed';
+      case ExportStatus.error:
+        return 'Error';
+    }
+  }
 }
 
 /// Model for an export item (file or folder)
@@ -67,6 +87,17 @@ class ExportQueueService {
   List<ExportJob> getJobsByStatus(ExportStatus status) {
     return _jobs.where((j) => j.status == status).toList();
   }
+  
+  /// Get counts by status
+  Map<ExportStatus, int> get statusCounts {
+    return {
+      for (var status in ExportStatus.values)
+        status: _jobs.where((j) => j.status == status).length,
+    };
+  }
+  
+  /// Get in-progress count
+  int get inProgressCount => _jobs.where((j) => j.status == ExportStatus.inProgress).length;
 
   /// Start the background worker
   void startWorker() {
@@ -83,14 +114,31 @@ class ExportQueueService {
   }
 
   /// Add a new export job to queue
-  String addJob(String name, List<ExportItem> items) {
+  String addJob(String name, List<ExportItem> items, {String? exportDir}) {
+    // Count total files for progress tracking
+    int countItems(List<ExportItem> items) {
+      int count = 0;
+      for (final item in items) {
+        if (item.isFolder) {
+          count += countItems(item.children);
+        } else {
+          count++;
+        }
+      }
+      return count;
+    }
+    
+    final total = countItems(items);
+    
     final job = ExportJob(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: name,
       items: items,
+      exportDir: exportDir,
+      totalItems: total,
     );
     _jobs.add(job);
-    _log.info('ExportQueueService', 'Job added: ${job.name} with ${items.length} items');
+    _log.info('ExportQueueService', 'Job added: ${job.name} with $total files');
     onJobsUpdated?.call();
     
     // Immediately try to process
@@ -122,16 +170,15 @@ class ExportQueueService {
   /// Process a single job
   Future<void> _processJob(ExportJob job) async {
     job.status = ExportStatus.inProgress;
+    job.processedItems = 0;
     onJobsUpdated?.call();
     _log.info('ExportQueueService', 'Processing job: ${job.name}');
 
     try {
       final archive = Archive();
 
-      // Add all items to archive
-      for (final item in job.items) {
-        await _addItemToArchive(archive, item, '');
-      }
+      // Add all items to archive with progress tracking
+      await _addItemsToArchive(archive, job.items, '', job);
 
       if (archive.files.isEmpty) {
         throw Exception('No files to export');
@@ -141,15 +188,28 @@ class ExportQueueService {
       final zipData = await compute(_encodeArchive, archive);
       if (zipData == null) throw Exception('Failed to encode ZIP');
 
+      // Determine save path
+      String savePath;
+      if (job.exportDir != null) {
+        final dir = Directory(job.exportDir!);
+        if (!dir.existsSync()) {
+          dir.createSync(recursive: true);
+        }
+        final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
+        savePath = '${dir.path}/$fileName';
+      } else {
+        // Fallback to app directory
+        savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
+      }
+
       // Save file
-      final dir = await getApplicationDocumentsDirectory();
-      final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
-      final file = File('${dir.path}/$fileName');
+      final file = File(savePath);
       await file.writeAsBytes(zipData);
 
       job.outputPath = file.path;
       job.status = ExportStatus.completed;
       job.completedAt = DateTime.now();
+      job.progress = 100;
       _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
     } catch (e, stack) {
       job.status = ExportStatus.error;
@@ -164,20 +224,30 @@ class ExportQueueService {
     _processQueue();
   }
 
-  /// Add item to archive recursively
-  Future<void> _addItemToArchive(Archive archive, ExportItem item, String pathPrefix) async {
-    final archivePath = pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
+  /// Add items to archive with progress tracking
+  Future<void> _addItemsToArchive(Archive archive, List<ExportItem> items, String pathPrefix, ExportJob job) async {
+    for (final item in items) {
+      final archivePath = pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
 
-    if (item.isFolder) {
-      // Add children recursively
-      for (final child in item.children) {
-        await _addItemToArchive(archive, child, archivePath);
-      }
-    } else if (item.filePath != null) {
-      final file = File(item.filePath!);
-      if (await file.exists()) {
-        final bytes = await file.readAsBytes();
-        archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
+      if (item.isFolder) {
+        // Add children recursively
+        await _addItemsToArchive(archive, item.children, archivePath, job);
+      } else if (item.filePath != null) {
+        final file = File(item.filePath!);
+        if (await file.exists()) {
+          final bytes = await file.readAsBytes();
+          archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
+          
+          // Update progress
+          job.processedItems++;
+          if (job.totalItems > 0) {
+            job.progress = ((job.processedItems / job.totalItems) * 100).round();
+          }
+          onJobsUpdated?.call();
+          
+          // Yield to allow UI updates
+          await Future.delayed(Duration.zero);
+        }
       }
     }
   }
@@ -185,6 +255,12 @@ class ExportQueueService {
   /// Clear completed/error jobs
   void clearFinished() {
     _jobs.removeWhere((j) => j.status == ExportStatus.completed || j.status == ExportStatus.error);
+    onJobsUpdated?.call();
+  }
+  
+  /// Remove a specific job
+  void removeJob(String jobId) {
+    _jobs.removeWhere((j) => j.id == jobId);
     onJobsUpdated?.call();
   }
 }

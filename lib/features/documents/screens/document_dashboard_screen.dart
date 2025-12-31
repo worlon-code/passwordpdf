@@ -3,8 +3,6 @@ import 'package:passwordpdf_manager/features/documents/screens/document_search_d
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
-import 'package:archive/archive.dart'; // For Archive class
-import 'package:archive/archive_io.dart'; // For ZipEncoder
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../../services/logging_service.dart';
@@ -16,6 +14,7 @@ import '../../../services/export_queue_service.dart';
 import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
+import 'export_progress_screen.dart';
 import '../widgets/password_selection_dialog.dart';
 import '../../common/utils/file_conflict_resolver.dart';
 
@@ -605,6 +604,38 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     );
   }
 
+  // Helper to build ExportItems from folder
+  List<ExportItem> _buildExportItemsFromFolder(String folderId) {
+    final List<ExportItem> items = [];
+    
+    // Add files in this folder
+    final files = _docService.getFilesInFolder(folderId);
+    for (final file in files) {
+      if (file.filePath != null) {
+        items.add(ExportItem(
+          itemId: file.id,
+          name: file.name,
+          filePath: file.filePath,
+          isFolder: false,
+        ));
+      }
+    }
+    
+    // Process subfolders
+    final subfolders = _docService.getSubfolders(folderId);
+    for (final folder in subfolders) {
+      items.add(ExportItem(
+        itemId: folder.id,
+        name: folder.name,
+        isFolder: true,
+        children: _buildExportItemsFromFolder(folder.id),
+      ));
+    }
+    
+    return items;
+  }
+
+
   Future<String?> _getNewFileName(String originalName) async {
     final parts = originalName.split('.');
     final ext = parts.length > 1 ? parts.last : '';
@@ -681,82 +712,24 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Note: _isExporting now derives from queue status
+    // Check configuration
+    final settings = context.read<SettingsService>();
+    final exportPath = settings.exportPath;
     
-    // Show auto-closing popup
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) {
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (Navigator.canPop(dialogContext)) {
-            Navigator.pop(dialogContext);
-          }
-        });
-        return AlertDialog(
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 16),
-              const Text('Export has begun...'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('OK'),
-            ),
-          ],
+    if (exportPath == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export path not configured. Please check settings.')),
         );
-      },
-    );
-
-    // Yield to let UI render the popup before heavy work
-    await Future.delayed(Duration.zero);
+      }
+      return;
+    }
 
     try {
-      final archive = Archive();
+      // Build export items
+      final items = _buildExportItemsFromFolder(folder.id);
       
-      // Helper to match existing recursive logic
-      void addFolderToArchive(String folderId, String pathPrefix) {
-        final files = _docService.getFilesInFolder(folderId);
-        for (final fileItem in files) {
-          if (fileItem.filePath != null) {
-            final file = File(fileItem.filePath!);
-            if (file.existsSync()) {
-              final bytes = file.readAsBytesSync();
-              final archivePath = pathPrefix.isEmpty 
-                  ? fileItem.name 
-                  : '$pathPrefix/${fileItem.name}';
-              final archiveFile = ArchiveFile(
-                archivePath,
-                bytes.length,
-                bytes,
-              );
-              archive.addFile(archiveFile);
-            }
-          }
-        }
-        
-        // Recursively add subfolders
-        final subfolders = _docService.getSubfolders(folderId);
-        for (final subfolder in subfolders) {
-          final subPath = pathPrefix.isEmpty
-              ? subfolder.name
-              : '$pathPrefix/${subfolder.name}';
-          addFolderToArchive(subfolder.id, subPath);
-        }
-      }
-      
-      // Start recursive export from root folder
-      addFolderToArchive(folder.id, '');
-      
-      if (archive.files.isEmpty) {
+      if (items.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Folder is empty')),
@@ -765,68 +738,34 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         return;
       }
 
-      // Encode to ZIP
-      final zipData = ZipEncoder().encode(archive);
-      if (zipData == null) {
-        throw Exception('Failed to create ZIP');
-      }
-
-      // Save to configured export path
-      final settings = context.read<SettingsService>();
-      final exportPath = settings.exportPath;
-      
-      if (exportPath == null) {
-        throw Exception('Export path not configured');
-      }
-      
-      final downloadsDir = Directory(exportPath);
-      if (!downloadsDir.existsSync()) {
-        try {
-          downloadsDir.createSync(recursive: true);
-        } catch (e) {
-             throw Exception('Could not access export directory: $exportPath');
-        }
-      }
-
-      // Create unique filename
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final zipFileName = '${folder.name}_$timestamp.zip';
-      
-      final defaultPath = '${downloadsDir.path}/$zipFileName';
-
-      final savePath = await FileConflictResolver.resolve(
-        context: context,
-        filePath: defaultPath,
-      );
-
-      if (savePath == null) return;
-      
-      final outputFile = File(savePath);
-      
-      await outputFile.writeAsBytes(zipData);
+      // Add to queue
+      _exportQueue.addJob(folder.name, items, exportDir: exportPath);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Exported ${archive.files.length} file(s) to .../${outputFile.path.split(Platform.pathSeparator).last}'),
-            duration: const Duration(seconds: 4),
+            content: const Text('Export started in background'),
             action: SnackBarAction(
-              label: 'OK',
-              onPressed: () {},
+              label: 'View',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ExportProgressScreen(),
+                  ),
+                );
+              },
             ),
           ),
         );
       }
-      _log.info('DocumentDashboard', 'Exported folder: ${folder.name} (${archive.files.length} files) to ${outputFile.path}');
-    } catch (e, stack) {
-      _log.error('DocumentDashboard', 'Export error', e, stack);
+    } catch (e) {
+      _log.error('DocumentDashboard', 'Queue error', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Failed to start export: $e')),
         );
       }
-    } finally {
-      setState(() => _isLoading = false);
     }
   }
 
@@ -1187,26 +1126,40 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   },
                   tooltip: 'Export as ZIP',
                 ),
-              if (_isExporting)
-                IconButton(
-                  icon: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+              // Export progress button (always visible)
+              IconButton(
+                icon: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(_isExporting ? Icons.sync : Icons.archive),
+                    if (_exportQueue.inProgressCount > 0)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Text(
+                            '${_exportQueue.inProgressCount}',
+                            style: const TextStyle(color: Colors.white, fontSize: 10),
+                          ),
+                        ),
                       ),
-                      const Icon(Icons.archive, size: 14),
-                    ],
-                  ),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Export in progress...')),
-                    );
-                  },
-                  tooltip: 'Export in progress',
+                  ],
                 ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const ExportProgressScreen(),
+                    ),
+                  );
+                },
+                tooltip: 'Export Progress',
+              ),
               PopupMenuButton<String>(
                 onSelected: (value) {
                   if (value == 'create_folder') {
@@ -1847,7 +1800,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Export Selected Items'),
-        content: Text('Export ${_selectedFileIds.length} items as a ZIP file?'),
+        content: Text('Export ${_selectedFileIds.length} items as a ZIP file? This will happen in the background.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1864,6 +1817,19 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
+    // Check configuration
+    final settings = context.read<SettingsService>();
+    final exportPath = settings.exportPath;
+    
+    if (exportPath == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export path not configured. Please check settings.')),
+        );
+      }
+      return;
+    }
+
     // Copy selected IDs before clearing selection
     final idsToExport = Set<String>.from(_selectedFileIds);
 
@@ -1871,117 +1837,76 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       _selectedFileIds.clear(); // Clear selection immediately so user can continue working
     });
     
-    // Show auto-closing popup
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (dialogContext) {
-        // Auto-close after 1.5 seconds
-        Future.delayed(const Duration(milliseconds: 1500), () {
-          if (Navigator.canPop(dialogContext)) {
-            Navigator.pop(dialogContext);
-          }
-        });
-        return AlertDialog(
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 16),
-              const Text('Export has begun...'),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-
-    // Yield to let UI render the popup before heavy work
-    await Future.delayed(Duration.zero);
-
     try {
-      final archive = Archive();
+      final List<ExportItem> exportItems = [];
+      final allItems = _docService.getAllItems();
       
-      // Helper to match existing recursive logic
-      void addFolderToArchive(String folderId, String pathPrefix) {
-        final files = _docService.getFilesInFolder(folderId);
-        for (final fileItem in files) {
-          if (fileItem.filePath != null) {
-            final file = File(fileItem.filePath!);
-            if (file.existsSync()) {
-              final bytes = file.readAsBytesSync();
-              final archivePath = pathPrefix.isEmpty 
-                  ? fileItem.name 
-                  : '$pathPrefix/${fileItem.name}';
-              archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
-            }
-          }
-        }
-        final subfolders = _docService.getSubfolders(folderId);
-        for (final subfolder in subfolders) {
-          final newPrefix = pathPrefix.isEmpty 
-              ? subfolder.name 
-              : '$pathPrefix/${subfolder.name}';
-          addFolderToArchive(subfolder.id, newPrefix);
-        }
-      }
-
       for (final id in idsToExport) {
-        final item = _docService.getAllItems().firstWhere((e) => e.id == id);
-        if (item.isFolder) {
-          addFolderToArchive(item.id, item.name);
-        } else if (item.filePath != null) {
-          final file = File(item.filePath!);
-          if (file.existsSync()) {
-            final bytes = file.readAsBytesSync();
-            archive.addFile(ArchiveFile(item.name, bytes.length, bytes));
+        try {
+          final item = allItems.firstWhere((e) => e.id == id);
+          
+          if (item.isFolder) {
+            exportItems.add(ExportItem(
+              itemId: item.id,
+              name: item.name,
+              isFolder: true,
+              children: _buildExportItemsFromFolder(item.id),
+            ));
+          } else if (item.filePath != null) {
+            exportItems.add(ExportItem(
+              itemId: item.id,
+              name: item.name,
+              filePath: item.filePath,
+              isFolder: false,
+            ));
           }
+        } catch (e) {
+          // Item might not exist, skip
         }
       }
 
-      final zipData = await compute(encodeZip, archive);
-      
-      if (zipData == null) throw Exception('Failed to encode ZIP');
+      if (exportItems.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No valid items to export')),
+          );
+        }
+        return;
+      }
 
-      final settings = context.read<SettingsService>();
-      final exportPath = settings.exportPath ?? (await getApplicationDocumentsDirectory()).path;
-      final fileName = 'bulk_export_${DateTime.now().millisecondsSinceEpoch}.zip';
-      final file = File('$exportPath/$fileName');
+      // Add to queue
+      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath);
       
-      await file.writeAsBytes(zipData);
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export complete: ${file.path}')),
+          SnackBar(
+            content: const Text('Export started in background'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ExportProgressScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
         );
       }
     } catch (e) {
+      _log.error('DocumentDashboard', 'Queue error', e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e')),
+          SnackBar(content: Text('Failed to start export: $e')),
         );
       }
-    } finally {
-      if (mounted) setState(() {});
     }
   }
-}
 
-// Top-level function for compute
-List<int>? encodeZip(Archive archive) {
-  final encoder = ZipEncoder();
-  return encoder.encode(archive);
-}
 
+}
 
 // Stateful tree widget for move dialog
 class _MoveDialogWithTree extends StatefulWidget {
