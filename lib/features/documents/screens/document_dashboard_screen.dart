@@ -1172,6 +1172,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     String saveName = fileName;
     String? errorMessage;
     
+    bool obscurePassword = true;
+
     await showDialog(
       context: context,
       builder: (context) {
@@ -1187,12 +1189,20 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     const SizedBox(height: 16),
                     TextField(
                       autofocus: true,
-                      obscureText: true,
+                      obscureText: obscurePassword,
                       decoration: InputDecoration(
                         labelText: 'Password',
                         errorText: errorMessage,
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.lock),
+                        suffixIcon: IconButton(
+                          icon: Icon(obscurePassword ? Icons.visibility : Icons.visibility_off),
+                          onPressed: () {
+                            setState(() {
+                              obscurePassword = !obscurePassword;
+                            });
+                          },
+                        ),
                       ),
                       onChanged: (val) {
                         password = val;

@@ -11,7 +11,7 @@ import 'services/permission_service.dart';
 import 'services/encryption_service.dart';
 
 // App version for tracking
-const String appVersion = '0.0.1+1';
+const String appVersion = '0.0.24';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
