@@ -33,6 +33,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _checkEncryptionKey();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refresh encryption key status when screen is revisited
+    _checkEncryptionKey();
+  }
+
   Future<void> _checkBiometricSupport() async {
     final supported = await _biometricService.isDeviceSupported();
     setState(() {
