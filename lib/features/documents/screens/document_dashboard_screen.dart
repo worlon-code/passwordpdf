@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:passwordpdf_manager/features/documents/screens/document_search_delegate.dart';
+import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
-import 'document_search_delegate.dart';
 import 'dart:io';
-import 'package:archive/archive_io.dart';
+import 'package:archive/archive.dart'; // For Archive class
+import 'package:archive/archive_io.dart'; // For ZipEncoder
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../../services/logging_service.dart';
@@ -27,6 +29,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   final LoggingService _log = LoggingService();
   final DocumentService _docService = DocumentService();
   bool _isLoading = false;
+  bool _isExporting = false; // New state for background export
   bool _isInitialized = false;
   String? _currentFolderId; // null = show all folders
   final Set<String> _selectedFileIds = {};
@@ -570,12 +573,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _exportFolderAsZip(DocumentItem folder) async {
-    // Show confirmation dialog
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Export Folder'),
-        content: Text('Do you want to export "${folder.name}" as a ZIP file?'),
+        title: Text('Export "${folder.name}"?'),
+        content: const Text('Do you want to export this folder as a ZIP file? This will happen in the background.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -592,15 +594,17 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
+    // Start background export
+    setState(() => _isExporting = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Export started in background...')),
+    );
+
     try {
-      setState(() => _isLoading = true);
-      
-      // Create archive
       final archive = Archive();
       
-      // Recursive function to add folder contents
+      // Helper to match existing recursive logic
       void addFolderToArchive(String folderId, String pathPrefix) {
-        // Add files in this folder
         final files = _docService.getFilesInFolder(folderId);
         for (final fileItem in files) {
           if (fileItem.filePath != null) {
@@ -1012,12 +1016,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 },
                 tooltip: 'Search',
               ),
-               IconButton(
-                  icon: const Icon(Icons.create_new_folder),
-                  onPressed: _importFolder,
-                  tooltip: 'Import Folder',
-                ),
-              if (_currentFolderId != null) ...[
+              if (_currentFolderId != null)
                 IconButton(
                   icon: const Icon(Icons.download),
                   onPressed: () {
@@ -1032,6 +1031,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 onSelected: (value) {
                   if (value == 'create_folder') {
                     _createFolder();
+                  } else if (value == 'import_folder') {
+                    _importFolder();
                   }
                 },
                 itemBuilder: (context) => [
@@ -1045,12 +1046,27 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       ],
                     ),
                   ),
+                  const PopupMenuItem(
+                    value: 'import_folder',
+                    child: Row(
+                      children: [
+                        Icon(Icons.drive_folder_upload),
+                        SizedBox(width: 8),
+                        Text('Import Folder'),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ],
           ],
-        ],
-      ),
+          bottom: _isExporting 
+              ? const PreferredSize(
+                  preferredSize: Size.fromHeight(4), 
+                  child: LinearProgressIndicator(),
+                ) 
+              : null,
+        ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : _isInitialized
@@ -1402,7 +1418,19 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             ),
           ],
         ),
-        onTap: () => setState(() => _currentFolderId = folder.id),
+        onTap: () {
+            if (_selectedFileIds.isNotEmpty) {
+              setState(() {
+                if (isSelected) {
+                  _selectedFileIds.remove(folder.id);
+                } else {
+                  _selectedFileIds.add(folder.id);
+                }
+              });
+            } else {
+              setState(() => _currentFolderId = folder.id);
+            }
+          },
         ),
       ),
     );
@@ -1508,7 +1536,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         onTap: () async {
           if (_selectedFileIds.isNotEmpty) {
             // In selection/move mode - toggle selection
-            _toggleFileSelection(file.id);
+            setState(() {
+              if (isSelected) {
+                _selectedFileIds.remove(file.id);
+              } else {
+                _selectedFileIds.add(file.id);
+              }
+            });
           } else if (file.isPdf) {
             // Smart PDF password handling - checks stored, tries without, shows dialog if needed
             await _openPdfWithSmartPassword(file.filePath!, file.name);
@@ -1610,8 +1644,16 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
+    setState(() {
+      _isExporting = true;
+      _selectedFileIds.clear(); // Clear selection immediately so user can continue working
+    });
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Export started in background...')),
+    );
+
     try {
-      setState(() => _isLoading = true);
       final archive = Archive();
       
       // Helper to match existing recursive logic
@@ -1651,8 +1693,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         }
       }
 
-      final zipEncoder = ZipEncoder();
-      final zipData = zipEncoder.encode(archive);
+      final zipData = await compute(encodeZip, archive);
       
       if (zipData == null) throw Exception('Failed to encode ZIP');
 
@@ -1665,9 +1706,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Exported to ${file.path}')),
+          SnackBar(content: Text('Export complete: ${file.path}')),
         );
-        setState(() => _selectedFileIds.clear());
       }
     } catch (e) {
       if (mounted) {
@@ -1676,10 +1716,17 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isExporting = false);
     }
   }
 }
+
+// Top-level function for compute
+List<int>? encodeZip(Archive archive) {
+  final encoder = ZipEncoder();
+  return encoder.encode(archive);
+}
+
 
 // Stateful tree widget for move dialog
 class _MoveDialogWithTree extends StatefulWidget {
