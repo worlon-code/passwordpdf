@@ -737,6 +737,10 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       builder: (context) => _MoveDialogWithTree(
         docService: _docService,
         fileCount: _selectedFileIds.length,
+        excludedFolderIds: _selectedFileIds.where((id) {
+          final item = _docService.getAllItems().firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
+          return item.isFolder;
+        }).toSet(),
       ),
     );
 
@@ -1027,6 +1031,26 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   },
                   tooltip: 'Export as ZIP',
                 ),
+              if (_isExporting)
+                IconButton(
+                  icon: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const Icon(Icons.archive, size: 14),
+                    ],
+                  ),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Export in progress...')),
+                    );
+                  },
+                  tooltip: 'Export in progress',
+                ),
               PopupMenuButton<String>(
                 onSelected: (value) {
                   if (value == 'create_folder') {
@@ -1207,7 +1231,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
-  /// Build filter bar with file type chips
+  /// Build filter bar with file type chips showing counts
   Widget _buildFilterBar() {
     final filters = ['All', 'PDF', 'DOC', 'Excel'];
     
@@ -1219,10 +1243,12 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         child: Row(
           children: filters.map((type) {
             final isSelected = _filterType == type;
+            final counts = _getFilterCounts(type);
+            final label = '$type (${counts['files']}f, ${counts['folders']}d)';
             return Padding(
               padding: const EdgeInsets.only(right: 8),
               child: FilterChip(
-                label: Text(type),
+                label: Text(label),
                 selected: isSelected,
                 onSelected: (selected) {
                   setState(() => _filterType = type);
@@ -1234,6 +1260,32 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         ),
       ),
     );
+  }
+
+  /// Get file and folder counts for a given filter type
+  Map<String, int> _getFilterCounts(String filterType) {
+    List<DocumentItem> files;
+    List<DocumentItem> folders;
+    
+    if (_currentFolderId == null) {
+      files = _docService.getUnorganizedFiles();
+      folders = _docService.getRootFolders();
+    } else {
+      files = _docService.getFilesInFolder(_currentFolderId!);
+      folders = _docService.getSubfolders(_currentFolderId!);
+    }
+    
+    // Apply filter
+    final oldFilter = _filterType;
+    _filterType = filterType;
+    final filteredFiles = _applyFileFilter(files);
+    final filteredFolders = _applyFolderFilter(folders);
+    _filterType = oldFilter;
+    
+    return {
+      'files': filteredFiles.length,
+      'folders': filteredFolders.length,
+    };
   }
 
   /// Apply file type filter to list of files
@@ -1277,6 +1329,18 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   List<DocumentItem> _applyFolderFilter(List<DocumentItem> folders) {
     if (_filterType == 'All') return folders;
     return folders.where((folder) => _folderContainsMatchingFiles(folder.id)).toList();
+  }
+
+  /// Build subtitle showing file and folder counts
+  String _buildFolderSubtitle(String folderId) {
+    final allFiles = _docService.getFilesInFolder(folderId);
+    final fileCount = _applyFileFilter(allFiles).length;
+    final subfolderCount = _docService.getSubfolders(folderId).length;
+    
+    final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
+    final folderPart = '$subfolderCount ${subfolderCount == 1 ? 'folder' : 'folders'}';
+    
+    return '$filePart, $folderPart';
   }
 
   Widget _buildEmptyState() {
@@ -1373,7 +1437,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             ],
           ),
         title: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('$fileCount ${fileCount == 1 ? 'file' : 'files'}'),
+        subtitle: Text(_buildFolderSubtitle(folder.id)),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
             if (value == 'rename') {
@@ -1644,6 +1708,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
+    // Copy selected IDs before clearing selection
+    final idsToExport = Set<String>.from(_selectedFileIds);
+
     setState(() {
       _isExporting = true;
       _selectedFileIds.clear(); // Clear selection immediately so user can continue working
@@ -1680,7 +1747,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         }
       }
 
-      for (final id in _selectedFileIds) {
+      for (final id in idsToExport) {
         final item = _docService.getAllItems().firstWhere((e) => e.id == id);
         if (item.isFolder) {
           addFolderToArchive(item.id, item.name);
@@ -1732,10 +1799,12 @@ List<int>? encodeZip(Archive archive) {
 class _MoveDialogWithTree extends StatefulWidget {
   final DocumentService docService;
   final int fileCount;
+  final Set<String> excludedFolderIds;
   
   const _MoveDialogWithTree({
     required this.docService,
     required this.fileCount,
+    this.excludedFolderIds = const {},
   });
 
   @override
@@ -1815,7 +1884,10 @@ class _MoveDialogWithTreeState extends State<_MoveDialogWithTree> {
         ? widget.docService.getRootFolders()
         : widget.docService.getSubfolders(parentId);
     
-    return folders.expand((folder) {
+    // Filter out excluded folders (selected folders being moved)
+    final filteredFolders = folders.where((f) => !widget.excludedFolderIds.contains(f.id)).toList();
+    
+    return filteredFolders.expand((folder) {
       final hasChildren = widget.docService.getSubfolders(folder.id).isNotEmpty;
       final isExpanded = _expandedFolders.contains(folder.id);
       
