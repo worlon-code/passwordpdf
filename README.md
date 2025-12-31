@@ -2,9 +2,19 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.24 - Smart Passwords & Export Queue
+## Version 0.0.25 - Advanced Conflicts & Notifications
 
 ### 🚀 New Features
+
+#### Advanced Conflict Resolution (v0.0.25)
+- **Batch Processing**: Handle multiple file conflicts at once when importing or maneuvering files.
+- **Interactive Dialog**: Select specific files to Rename, Overwrite, or Skip.
+- **Custom Renaming**: Apply custom suffixes to renamed files in bulk (e.g., `_v2`, `_copy`).
+- **Safety First**: "Overwrite" is an explicit action, preventing accidental data loss.
+
+#### Smart Notifications (v0.0.25)
+- **Interactive Alerts**: Tap on "Exporting..." notifications to instantly open the active `ExportQueueScreen`.
+- **Progress Tracking**: Real-time progress updates in the notification shade.
 
 #### Smart Password Learning (v0.0.24)
 - **Auto-Unlock**: Automatically tries saved passwords when opening protected PDFs.
@@ -192,11 +202,15 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 3. Includes all subfolders and files
 4. Check Downloads folder for ZIP file
 
-#### Handling Duplicates
-- When adding/moving files with existing names:
-  - Dialog shows: "Skip This File" or "Rename & Add"
-  - Choose to skip or provide new name
-  - Original file preserved
+#### Handling Duplicates & Conflicts
+- When adding or moving files results in naming conflicts:
+  - A **Batch Resolution Dialog** appears listing all conflicting files.
+  - Select files you want to resolve.
+  - Choose an action from the dropdown:
+    - **Rename**: Appends a suffix (default `_copy`) to selected files.
+    - **Overwrite**: Replaces the destination files with the new ones.
+    - **Skip**: Ignores the selected files.
+  - Click **OK** to apply. The dialog repeats until all conflicts are resolved.
 
 ### 🛠️ Development
 
@@ -230,5 +244,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.24 (Build 24)  
+**Current Version**: 0.0.25 (Build 25)  
 **Last Updated**: January 1, 2026
