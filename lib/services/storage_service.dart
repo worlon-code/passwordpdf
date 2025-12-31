@@ -54,6 +54,24 @@ class StorageService {
         last_accessed TEXT NOT NULL
       )
     ''');
+    
+    // Export jobs table
+    await db.execute('''
+      CREATE TABLE ${AppConstants.exportJobsTable} (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        output_path TEXT,
+        error_message TEXT,
+        export_dir TEXT,
+        items_json TEXT NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        processed_items INTEGER NOT NULL DEFAULT 0,
+        total_items INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
   }
 
   // Handle database upgrades
