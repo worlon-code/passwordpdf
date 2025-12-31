@@ -160,6 +160,56 @@ class DocumentService {
     _log.info('DocumentService', 'Moved ${fileIds.length} files to folder');
   }
 
+  /// Move a folder to another folder (updates parentId)
+  Future<void> moveFolderToFolder(String folderId, String newParentId) async {
+    final folderIndex = _items.indexWhere((item) => item.id == folderId);
+    if (folderIndex == -1) {
+      throw Exception('Folder not found');
+    }
+    
+    final folder = _items[folderIndex];
+    if (!folder.isFolder) {
+      throw Exception('Item is not a folder');
+    }
+    
+    // Update the parentId
+    _items[folderIndex] = folder.copyWith(parentId: newParentId);
+    
+    await _saveDocuments();
+    _log.info('DocumentService', 'Moved folder ${folder.name} to folder $newParentId');
+  }
+
+  /// Move files to root (remove from all folders)
+  Future<void> moveFilesToRoot(List<String> fileIds) async {
+    // Remove from all folders
+    for (final folder in getFolders()) {
+      final newFileIds = folder.fileIds
+          .where((id) => !fileIds.contains(id))
+          .toList();
+      if (newFileIds.length != folder.fileIds.length) {
+        final index = _items.indexWhere((item) => item.id == folder.id);
+        _items[index] = folder.copyWith(fileIds: newFileIds);
+      }
+    }
+    
+    await _saveDocuments();
+    _log.info('DocumentService', 'Moved ${fileIds.length} files to root');
+  }
+
+  /// Move a folder to root (set parentId to null)
+  Future<void> moveFolderToRoot(String folderId) async {
+    final folderIndex = _items.indexWhere((item) => item.id == folderId);
+    if (folderIndex == -1) {
+      throw Exception('Folder not found');
+    }
+    
+    final folder = _items[folderIndex];
+    _items[folderIndex] = folder.copyWith(parentId: null);
+    
+    await _saveDocuments();
+    _log.info('DocumentService', 'Moved folder ${folder.name} to root');
+  }
+
   /// Delete item (recursively deletes folder contents)
   Future<void> deleteItem(String itemId) async {
     final item = _items.firstWhere(

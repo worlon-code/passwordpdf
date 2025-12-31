@@ -746,8 +746,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (result != null) {
       try {
-        // Check for duplicates before moving
-        final destinationFiles = _docService.getFilesInFolder(result);
+        // Check for duplicates before moving (skip for root)
+        List<DocumentItem> destinationFiles = [];
+        if (result != '__ROOT__') {
+          destinationFiles = _docService.getFilesInFolder(result);
+        }
         final filesToMove = _selectedFileIds.map((id) => 
           _docService.getAllItems().firstWhere((item) => item.id == id)
         ).toList();
@@ -783,10 +786,44 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           await _docService.renameItem(entry.key, entry.value);
         }
         
-        // Now move all remaining files
-        if (_selectedFileIds.isNotEmpty) {
-          await _docService.moveFilesToFolder(_selectedFileIds.toList(), result);
+        // Separate files and folders
+        final fileIdsToMove = <String>[];
+        final folderIdsToMove = <String>[];
+        
+        for (final id in _selectedFileIds) {
+          final item = _docService.getAllItems().firstWhere(
+            (e) => e.id == id,
+            orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+          );
+          if (item.id.isNotEmpty) {
+            if (item.isFolder) {
+              folderIdsToMove.add(id);
+            } else {
+              fileIdsToMove.add(id);
+            }
+          }
         }
+        
+        // Move files
+        if (fileIdsToMove.isNotEmpty) {
+          if (result == '__ROOT__') {
+            // Move files to root (remove from all folders)
+            await _docService.moveFilesToRoot(fileIdsToMove);
+          } else {
+            await _docService.moveFilesToFolder(fileIdsToMove, result);
+          }
+        }
+        
+        // Move folders (update their parentId)
+        for (final folderId in folderIdsToMove) {
+          if (result == '__ROOT__') {
+            await _docService.moveFolderToRoot(folderId);
+          } else {
+            await _docService.moveFolderToFolder(folderId, result);
+          }
+        }
+        
+        final totalMoved = fileIdsToMove.length + folderIdsToMove.length;
         
         setState(() {
           _selectedFileIds.clear();
@@ -794,7 +831,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Moved ${filesToMove.length - (filesToMove.length - _selectedFileIds.length)} file(s)')),
+            SnackBar(content: Text('Moved $totalMoved item(s)')),
           );
         }
       } catch (e) {
@@ -1716,8 +1753,38 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       _selectedFileIds.clear(); // Clear selection immediately so user can continue working
     });
     
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Export started in background...')),
+    // Show auto-closing popup
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        // Auto-close after 1.5 seconds
+        Future.delayed(const Duration(milliseconds: 1500), () {
+          if (Navigator.canPop(dialogContext)) {
+            Navigator.pop(dialogContext);
+          }
+        });
+        return AlertDialog(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 16),
+              const Text('Export has begun...'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
 
     try {
@@ -1859,6 +1926,14 @@ class _MoveDialogWithTreeState extends State<_MoveDialogWithTree> {
               ),
             ),
             const SizedBox(height: 16),
+            // Root option
+            ListTile(
+              leading: const Icon(Icons.home, color: Colors.orange),
+              title: const Text('Root (No Folder)', style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: const Text('Move to main screen'),
+              onTap: () => Navigator.pop(context, '__ROOT__'),
+            ),
+            const Divider(),
             Flexible(
               child: SingleChildScrollView(
                 child: Column(
