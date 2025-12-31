@@ -2,9 +2,22 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.24 - Dashboard & Folder Enhancements
+## Version 0.0.24 - Smart Passwords & Export Queue
 
 ### 🚀 New Features
+
+#### Smart Password Learning (v0.0.24)
+- **Auto-Unlock**: Automatically tries saved passwords when opening protected PDFs.
+- **Smart Dialog**: Falls back to password prompt if auto-unlock fails, with option to save the password.
+- **Save to List**: Easily add new passwords to your secure "My Passwords" list directly from the opening dialog.
+- **Key Name Notification**: Visual feedback telling you exactly which saved password key successfully unlocked the file.
+- **Password Visibility**: Toggle visibility int he password dialog to ensure you type correctly.
+
+#### Export Queue Service (v0.0.24)
+- **Background Processing**: Large export jobs (ZIPs) run in the background, keeping the UI responsive.
+- **Queue Management**: Monitor status, progress, and history of all exports in a dedicated dashboard.
+- **Persistence**: Export jobs survive app restarts and continue until completion.
+- **ZIP Encryption**: Secure your exported ZIP files with a custom password.
 
 #### Document Dashboard Filter (v0.0.24)
 - **File Type Filters**: Filter by All, PDF, DOC, Excel.
@@ -211,4 +224,4 @@ Proprietary - All rights reserved
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
 **Current Version**: 0.0.24 (Build 24)  
-**Last Updated**: December 31, 2024
+**Last Updated**: January 1, 2026
