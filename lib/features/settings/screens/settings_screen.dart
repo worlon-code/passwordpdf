@@ -96,6 +96,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _setupEncryptionKey() async {
+    // First check if key is already set
+    final keyExists = await _encryptionService.isKeySet();
+    if (keyExists) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle, color: Colors.green),
+              SizedBox(width: 8),
+              Text('Key Already Set'),
+            ],
+          ),
+          content: const Text('Encryption key is already configured.'),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      // Update state to reflect key is set
+      setState(() {
+        _encryptionKeySet = true;
+      });
+      return;
+    }
+    
     final controller = TextEditingController();
     final generatedKey = _encryptionService.generateRandomKey(24);
     controller.text = generatedKey;
