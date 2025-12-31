@@ -12,6 +12,7 @@ import '../../settings/services/settings_service.dart';
 import '../../../services/document_service.dart';
 import '../../../services/pdf_password_service.dart';
 import '../../../services/encryption_service.dart';
+import '../../../services/export_queue_service.dart';
 import '../../../models/document_item_model.dart';
 import 'pdf_viewer_screen.dart';
 import 'file_info_screen.dart';
@@ -29,17 +30,29 @@ class DocumentDashboardScreen extends StatefulWidget {
 class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   final LoggingService _log = LoggingService();
   final DocumentService _docService = DocumentService();
+  final ExportQueueService _exportQueue = ExportQueueService();
   bool _isLoading = false;
-  bool _isExporting = false; // New state for background export
   bool _isInitialized = false;
   String? _currentFolderId; // null = show all folders
   final Set<String> _selectedFileIds = {};
   String _filterType = 'All'; // All, PDF, DOC, Excel
+  
+  bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
 
   @override
   void initState() {
     super.initState();
+    _exportQueue.onJobsUpdated = () {
+      if (mounted) setState(() {});
+    };
+    _exportQueue.startWorker();
     _initialize();
+  }
+  
+  @override
+  void dispose() {
+    _exportQueue.stopWorker();
+    super.dispose();
   }
 
   Future<void> _initialize() async {
@@ -668,8 +681,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Start background export
-    setState(() => _isExporting = true);
+    // Note: _isExporting now derives from queue status
     
     // Show auto-closing popup
     showDialog(
@@ -1856,7 +1868,6 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     final idsToExport = Set<String>.from(_selectedFileIds);
 
     setState(() {
-      _isExporting = true;
       _selectedFileIds.clear(); // Clear selection immediately so user can continue working
     });
     
@@ -1960,7 +1971,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isExporting = false);
+      if (mounted) setState(() {});
     }
   }
 }

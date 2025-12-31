@@ -19,6 +19,9 @@ class EncryptionService {
   // Developer password for accessing sensitive info
   static const String _developerPassword = 'Portal123!';
   String? _encryptionKey;
+  
+  // Callback to notify when key is set
+  void Function()? onKeySet;
 
   /// Check if encryption key is already set
   Future<bool> isKeySet() async {
@@ -38,6 +41,10 @@ class EncryptionService {
       await _secureStorage.write(key: 'encryption_key', value: key);
       _encryptionKey = key;
       _log.info('EncryptionService', 'Encryption key set successfully');
+      
+      // Notify listeners
+      onKeySet?.call();
+      
       return true;
     } catch (e) {
       _log.error('EncryptionService', 'Failed to set encryption key', e);
