@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:share_plus/share_plus.dart';
+import 'package:cross_file/cross_file.dart';
 import '../../../services/export_queue_service.dart';
 
 /// Screen showing export queue progress with filters
@@ -12,6 +15,7 @@ class ExportProgressScreen extends StatefulWidget {
 class _ExportProgressScreenState extends State<ExportProgressScreen> {
   final ExportQueueService _exportQueue = ExportQueueService();
   ExportStatus? _filterStatus; // null = all
+  final Set<String> _selectedJobIds = {};
 
   @override
   void initState() {
@@ -26,15 +30,105 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
     return _exportQueue.getJobsByStatus(_filterStatus!);
   }
 
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedJobIds.contains(id)) {
+        _selectedJobIds.remove(id);
+      } else {
+        _selectedJobIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _shareSelectedJobs() async {
+    final jobs = _exportQueue.jobs.where((j) => _selectedJobIds.contains(j.id));
+    final filesToShare = <XFile>[];
+    final missingFiles = <String>[];
+    
+    for (final job in jobs) {
+      if (job.status == ExportStatus.completed && job.outputPath != null) {
+        final file = File(job.outputPath!);
+        if (await file.exists()) {
+           filesToShare.add(XFile(job.outputPath!));
+        } else {
+           missingFiles.add(job.name);
+        }
+      }
+    }
+
+    if (missingFiles.isNotEmpty) {
+      if (mounted) {
+         showDialog(
+           context: context,
+           builder: (context) => AlertDialog(
+             title: const Text('Files Missing'),
+             content: Text('The following export files are no longer on the device:\n\n${missingFiles.join('\n')}'),
+             actions: [
+               TextButton(
+                 onPressed: () => Navigator.pop(context),
+                 child: const Text('OK'),
+               )
+             ],
+           ),
+         );
+      }
+      // If we have some valid files, ask to continue? Or just stop?
+      // For now, let's stop to be safe and clear confusion.
+      return; 
+    }
+
+    if (filesToShare.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No valid export files found to share')),
+      );
+      return;
+    }
+
+    try {
+      await Share.shareXFiles(filesToShare, text: 'Attached exports');
+      setState(() => _selectedJobIds.clear());
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Share failed: $e')),
+      );
+    }
+  }
+
+  void _deleteSelectedJobs() {
+    for (final id in _selectedJobIds) {
+      _exportQueue.removeJob(id);
+    }
+    setState(() => _selectedJobIds.clear());
+  }
+
   @override
   Widget build(BuildContext context) {
     final counts = _exportQueue.statusCounts;
     
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Export Progress'),
+        title: Text(_selectedJobIds.isEmpty 
+            ? 'Export Progress' 
+            : '${_selectedJobIds.length} Selected'),
+        leading: _selectedJobIds.isNotEmpty
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => setState(() => _selectedJobIds.clear()),
+              )
+            : null,
         actions: [
-          if (_exportQueue.jobs.any((j) => 
+          if (_selectedJobIds.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.share),
+              tooltip: 'Share',
+              onPressed: _shareSelectedJobs,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete),
+              tooltip: 'Delete',
+              onPressed: _deleteSelectedJobs,
+            ),
+          ] else if (_exportQueue.jobs.any((j) => 
             j.status == ExportStatus.completed || j.status == ExportStatus.error))
             IconButton(
               icon: const Icon(Icons.delete_sweep),
@@ -119,91 +213,132 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
   }
 
   Widget _buildJobCard(ExportJob job) {
+    final isSelected = _selectedJobIds.contains(job.id);
+    final theme = Theme.of(context);
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _getStatusIcon(job.status),
-                const SizedBox(width: 8),
-                Expanded(
+      elevation: isSelected ? 4 : 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: isSelected 
+            ? BorderSide(color: theme.colorScheme.primary, width: 2)
+            : BorderSide.none,
+      ),
+      child: InkWell(
+        onTap: (_selectedJobIds.isNotEmpty || job.status == ExportStatus.completed)
+            ? () {
+                 if (job.status != ExportStatus.completed) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Only completed exports can be shared')),
+                    );
+                    return;
+                 }
+                 _toggleSelection(job.id);
+               }
+            : null,
+        onLongPress: () {
+          if (job.status != ExportStatus.completed) {
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(content: Text('Only completed exports can be selected')),
+             );
+             return;
+          }
+          _toggleSelection(job.id);
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (_selectedJobIds.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Icon(
+                        isSelected ? Icons.check_circle : Icons.circle_outlined,
+                        color: isSelected ? theme.colorScheme.primary : Colors.grey,
+                      ),
+                    ),
+                  _getStatusIcon(job.status),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      job.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (_selectedJobIds.isEmpty && (job.status == ExportStatus.completed || job.status == ExportStatus.error))
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      onPressed: () => _exportQueue.removeJob(job.id),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              
+              // Progress bar
+              LinearProgressIndicator(
+                value: job.progress / 100,
+                backgroundColor: Colors.grey[200],
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _getStatusColor(job.status),
+                ),
+              ),
+              const SizedBox(height: 4),
+              
+              // Status row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    job.statusText,
+                    style: TextStyle(
+                      color: _getStatusColor(job.status),
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (job.totalItems > 0)
+                    Text(
+                      '${job.processedItems}/${job.totalItems} files',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                    ),
+                ],
+              ),
+              
+              // Error message
+              if (job.status == ExportStatus.error && job.errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      job.errorMessage!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ),
+                ),
+                
+              // Output path
+              if (job.status == ExportStatus.completed && job.outputPath != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
                   child: Text(
-                    job.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    'Saved to: ${job.outputPath!.split('/').last}',
+                    style: TextStyle(color: Colors.green[700], fontSize: 12),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (job.status == ExportStatus.completed || job.status == ExportStatus.error)
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    onPressed: () => _exportQueue.removeJob(job.id),
-                    visualDensity: VisualDensity.compact,
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            
-            // Progress bar
-            LinearProgressIndicator(
-              value: job.progress / 100,
-              backgroundColor: Colors.grey[200],
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _getStatusColor(job.status),
-              ),
-            ),
-            const SizedBox(height: 4),
-            
-            // Status row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  job.statusText,
-                  style: TextStyle(
-                    color: _getStatusColor(job.status),
-                    fontSize: 12,
-                  ),
-                ),
-                if (job.totalItems > 0)
-                  Text(
-                    '${job.processedItems}/${job.totalItems} files',
-                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                  ),
-              ],
-            ),
-            
-            // Error message
-            if (job.status == ExportStatus.error && job.errorMessage != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    job.errorMessage!,
-                    style: const TextStyle(color: Colors.red, fontSize: 12),
-                  ),
-                ),
-              ),
-              
-            // Output path
-            if (job.status == ExportStatus.completed && job.outputPath != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Saved to: ${job.outputPath!.split('/').last}',
-                  style: TextStyle(color: Colors.green[700], fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

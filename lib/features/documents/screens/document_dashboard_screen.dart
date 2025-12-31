@@ -5,6 +5,10 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:cross_file/cross_file.dart';
+import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import '../../../services/logging_service.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../services/document_service.dart';
@@ -985,6 +989,59 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
+  Future<void> _shareSelectedFiles() async {
+    if (_selectedFileIds.isEmpty) return;
+
+    // Double check: if any folder is selected, abort (button should be disabled anyway)
+    final allItems = _docService.getAllItems();
+    final hasFolders = _selectedFileIds.any((id) {
+       final item = allItems.firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
+       return item.isFolder;
+    });
+    
+    if (hasFolders) {
+       ScaffoldMessenger.of(context).showSnackBar(
+         const SnackBar(content: Text('Folders cannot be shared directly. Please use "Export" to zip them first.')),
+       );
+       return;
+    }
+
+    try {
+      final filesToShare = <XFile>[];
+      for (final id in _selectedFileIds) {
+        final item = allItems.firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
+        if (item.filePath != null) {
+          // Verify file exists
+          final file = File(item.filePath!);
+          if (await file.exists()) {
+             filesToShare.add(XFile(item.filePath!));
+          }
+        }
+      }
+
+      if (filesToShare.isNotEmpty) {
+        await Share.shareXFiles(filesToShare, text: 'Shared from Password Manager');
+        // Clear selection after sharing
+        setState(() {
+          _selectedFileIds.clear();
+        });
+      } else {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('No shareable files selected')),
+           );
+        }
+      }
+    } catch (e) {
+      _log.error('DocumentDashboard', 'Share error', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Share failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _renameItem(DocumentItem item) async {
     final controller = TextEditingController(text: item.name);
     final result = await showDialog<bool>(
@@ -1375,38 +1432,60 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_currentFolderId == null ? 'Documents' : _getFolderName()),
-          leading: _currentFolderId != null
+          title: Text(_selectedFileIds.isNotEmpty 
+              ? '${_selectedFileIds.length} Selected'
+              : (_currentFolderId == null ? 'Documents' : _getFolderName())),
+          leading: _selectedFileIds.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: _navigateUp,
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _selectedFileIds.clear();
+                    });
+                  },
                 )
-              : null,
+              : (_currentFolderId != null
+                  ? IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: _navigateUp,
+                    )
+                  : null),
           actions: [
             if (_selectedFileIds.isNotEmpty) ...[
-              IconButton(
-                icon: Badge(
-                  label: Text('${_selectedFileIds.length}'),
-                  child: const Icon(Icons.drive_file_move),
-                ),
-                onPressed: _moveSelectedFiles,
-                tooltip: 'Move files',
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete),
-                onPressed: _deleteSelectedItems,
-                tooltip: 'Delete selected',
-              ),
-              IconButton(
-                icon: const Icon(Icons.archive),
-                onPressed: _exportSelectedItems,
-                tooltip: 'Export selected as ZIP',
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => setState(() => _selectedFileIds.clear()),
-                tooltip: 'Clear selection',
-              ),
+               IconButton(
+                 icon: const Icon(Icons.share),
+                 onPressed: _selectedFileIds.any((id) {
+                     final item = _docService.getAllItems().firstWhere(
+                       (e) => e.id == id, 
+                       orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file)
+                     );
+                     return item.isFolder;
+                   }) ? null : _shareSelectedFiles,
+                 tooltip: 'Share (Files only)',
+               ),
+               IconButton(
+                 icon: Badge(
+                    label: Text('${_selectedFileIds.length}'),
+                    child: const Icon(Icons.drive_file_move),
+                  ),
+                 onPressed: _moveSelectedFiles,
+                 tooltip: 'Move files',
+               ),
+               IconButton(
+                 icon: const Icon(Icons.delete),
+                 onPressed: _deleteSelectedItems,
+                 tooltip: 'Delete selected',
+               ),
+               IconButton(
+                   icon: const Icon(Icons.archive),
+                   onPressed: _exportSelectedItems,
+                   tooltip: 'Export selected as ZIP',
+               ),
+               IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() => _selectedFileIds.clear()),
+                  tooltip: 'Clear selection',
+               ),
             ] else ...[
               IconButton(
                 icon: const Icon(Icons.search),

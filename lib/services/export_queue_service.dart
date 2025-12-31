@@ -267,6 +267,16 @@ class ExportQueueService {
 
   /// Add a new export job to queue
   Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword}) async {
+    // Cap history at 100 jobs
+    if (_jobs.length >= 100) {
+      // Remove oldest (completed/error) first, or just oldest
+      final oldest = _jobs.firstWhere(
+        (j) => j.status == ExportStatus.completed || j.status == ExportStatus.error, 
+        orElse: () => _jobs.first
+      );
+      await removeJob(oldest.id);
+    }
+    
     // Count total files for progress tracking
     int countItems(List<ExportItem> items) {
       int count = 0;
