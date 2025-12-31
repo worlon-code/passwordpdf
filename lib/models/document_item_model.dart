@@ -28,6 +28,7 @@ class DocumentItem {
   DocumentItem copyWith({
     String? name,
     String? parentId,
+    bool clearParentId = false, // Set to true to explicitly set parentId to null
     List<String>? fileIds,
     DateTime? modifiedAt,
   }) {
@@ -36,7 +37,7 @@ class DocumentItem {
       name: name ?? this.name,
       type: type,
       filePath: filePath,
-      parentId: parentId ?? this.parentId,
+      parentId: clearParentId ? null : (parentId ?? this.parentId),
       fileIds: fileIds ?? this.fileIds,
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),

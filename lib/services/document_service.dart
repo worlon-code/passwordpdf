@@ -204,7 +204,7 @@ class DocumentService {
     }
     
     final folder = _items[folderIndex];
-    _items[folderIndex] = folder.copyWith(parentId: null);
+    _items[folderIndex] = folder.copyWith(clearParentId: true);
     
     await _saveDocuments();
     _log.info('DocumentService', 'Moved folder ${folder.name} to root');
