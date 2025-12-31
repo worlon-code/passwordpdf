@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'logging_service.dart';
 import 'storage_service.dart';
 
@@ -130,6 +131,8 @@ class ExportItem {
   }
 }
 
+// Moved import to top
+
 /// Service for managing export queue with background processing
 class ExportQueueService {
   static final ExportQueueService _instance = ExportQueueService._internal();
@@ -141,6 +144,10 @@ class ExportQueueService {
   Timer? _workerTimer;
   static const int maxConcurrent = 2;
   static const Duration checkInterval = Duration(minutes: 2);
+  
+  // Notifications
+  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  bool _notificationsInitialized = false;
   
   // Callback for UI updates
   void Function()? onJobsUpdated;
@@ -182,6 +189,7 @@ class ExportQueueService {
 
   /// Initialize service and load history
   Future<void> init() async {
+    await _initNotifications();
     try {
       final jobMaps = await _storage.getAllExportJobs();
       _jobs.clear();
@@ -212,6 +220,49 @@ class ExportQueueService {
     } catch (e) {
       _log.error('ExportQueueService', 'Failed to init history', e);
     }
+  }
+  
+  // Stream for notification taps
+  final _notificationTapController = StreamController<String>.broadcast();
+  Stream<String> get onNotificationTap => _notificationTapController.stream;
+
+  Future<void> _initNotifications() async {
+    if (_notificationsInitialized) return;
+    
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+    
+    await _notificationsPlugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (details) {
+         if (details.payload != null) {
+           _notificationTapController.add(details.payload!);
+         } else {
+           _notificationTapController.add('');
+         }
+      },
+    );
+    _notificationsInitialized = true;
+    _log.info('ExportQueueService', 'Notifications initialized');
+  }
+  
+  Future<void> _showNotification(int id, String title, String body, {int? progress, int? maxProgress, String? payload}) async {
+    if (!_notificationsInitialized) return;
+    
+    final androidDetails = AndroidNotificationDetails(
+      'export_channel',
+      'Export Service',
+      channelDescription: 'Notifications for background exports',
+      importance: Importance.low,
+      priority: Priority.low,
+      showProgress: progress != null,
+      maxProgress: maxProgress ?? 100,
+      progress: progress ?? 0,
+      onlyAlertOnce: progress != null, // Don't buzz for progress updates
+    );
+    
+    final details = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(id, title, body, details, payload: payload ?? 'export_progress');
   }
 
   /// Add a new export job to queue
@@ -278,16 +329,22 @@ class ExportQueueService {
     _persistJob(job); // Update status
     onJobsUpdated?.call();
     _log.info('ExportQueueService', 'Processing job: ${job.name}');
+    
+    // Notification ID: use last 4 chars of ID as int (hash)
+    final notificationId = job.id.hashCode;
+    await _showNotification(notificationId, 'Export Started', 'Exporting ${job.name}...');
 
     try {
       final archive = Archive();
 
       // Add all items to archive with progress tracking
-      await _addItemsToArchive(archive, job.items, '', job);
+      await _addItemsToArchive(archive, job.items, '', job, notificationId);
 
       if (archive.files.isEmpty) {
         throw Exception('No files to export');
       }
+
+      await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
 
       // Encode ZIP in isolate
       // Pass both archive and password
@@ -317,11 +374,16 @@ class ExportQueueService {
       job.completedAt = DateTime.now();
       job.progress = 100;
       _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
+      
+      await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
+      
     } catch (e, stack) {
       job.status = ExportStatus.error;
       job.errorMessage = e.toString();
       job.completedAt = DateTime.now();
       _log.error('ExportQueueService', 'Job failed: ${job.name}', e, stack);
+      
+      await _showNotification(notificationId, 'Export Failed', 'Error: ${job.name}');
     }
 
     _persistJob(job); // Final update
@@ -332,13 +394,13 @@ class ExportQueueService {
   }
 
   /// Add items to archive with progress tracking
-  Future<void> _addItemsToArchive(Archive archive, List<ExportItem> items, String pathPrefix, ExportJob job) async {
+  Future<void> _addItemsToArchive(Archive archive, List<ExportItem> items, String pathPrefix, ExportJob job, int notificationId) async {
     for (final item in items) {
       final archivePath = pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
 
       if (item.isFolder) {
         // Add children recursively
-        await _addItemsToArchive(archive, item.children, archivePath, job);
+        await _addItemsToArchive(archive, item.children, archivePath, job, notificationId);
       } else if (item.filePath != null) {
         final file = File(item.filePath!);
         if (await file.exists()) {
@@ -349,6 +411,17 @@ class ExportQueueService {
           job.processedItems++;
           if (job.totalItems > 0) {
             job.progress = ((job.processedItems / job.totalItems) * 100).round();
+            
+            // Throttle notifications (every 5 items or 10%)
+            if (job.processedItems % 5 == 0 || job.progress % 10 == 0) {
+               await _showNotification(
+                 notificationId, 
+                 'Exporting ${job.name}', 
+                 '${job.progress}% complete', 
+                 progress: job.progress, 
+                 maxProgress: 100
+               );
+            }
           }
           onJobsUpdated?.call();
           
@@ -382,6 +455,11 @@ class ExportQueueService {
     // Remove from DB
     await _storage.deleteFinishedExportJobs();
     
+    // Cancel notifications for removed jobs
+    for (final job in toRemove) {
+      await _notificationsPlugin.cancel(job.id.hashCode);
+    }
+    
     onJobsUpdated?.call();
   }
   
@@ -389,6 +467,7 @@ class ExportQueueService {
   Future<void> removeJob(String jobId) async {
     _jobs.removeWhere((j) => j.id == jobId);
     await _storage.deleteExportJob(jobId);
+    await _notificationsPlugin.cancel(jobId.hashCode);
     onJobsUpdated?.call();
   }
 }

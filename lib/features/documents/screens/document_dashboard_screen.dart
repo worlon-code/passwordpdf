@@ -20,6 +20,8 @@ import 'file_info_screen.dart';
 import 'export_progress_screen.dart';
 import '../widgets/password_selection_dialog.dart';
 import '../../common/utils/file_conflict_resolver.dart';
+import '../widgets/conflict_resolution_dialog.dart';
+import '../../../models/conflict_resolution_model.dart';
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -297,103 +299,114 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       );
 
       if (result != null && result.files.isNotEmpty) {
-        int addedCount = 0;
+        // 1. Identify Conflicts
+        List<DocumentItem> existingFiles;
+        if (folderId != null) {
+          existingFiles = _docService.getFilesInFolder(folderId);
+        } else {
+          existingFiles = _docService.getUnorganizedFiles();
+        }
+
+        final conflictingItems = <ConflictItem>[];
+        final validFiles = <PlatformFile>[];
         
         for (final file in result.files) {
-          if (file.path != null) {
-            final fileName = file.path!.split(RegExp(r'[/\\]')).last;
+          if (file.path == null) continue;
+          
+          final fileName = file.path!.split(RegExp(r'[/\\]')).last;
+          final duplicate = existingFiles.where((f) => f.name.toLowerCase() == fileName.toLowerCase()).firstOrNull;
+          
+          if (duplicate != null) {
+            conflictingItems.add(ConflictItem(
+              sourceId: file.path!, // Use path as sourceId for import
+              name: fileName,
+              originalPath: file.path!,
+              isFolder: false,
+            ));
+          }
+          validFiles.add(file);
+        }
+
+        // 2. Resolve Conflicts
+        final Map<String, ConflictAction> resolutions = {};
+        if (conflictingItems.isNotEmpty) {
+          final dialogResult = await showDialog<Map<String, ConflictAction>>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => ConflictResolutionDialog(conflicts: conflictingItems),
+          );
+
+          if (dialogResult == null) {
+             // User cancelled entire operation
+             return; 
+          }
+          resolutions.addAll(dialogResult);
+        }
+
+        // 3. Process Files
+        int addedCount = 0;
+        int skippedCount = 0;
+
+        for (final file in validFiles) {
+          if (file.path == null) continue;
+          final filePath = file.path!;
+          
+          // Check resolution
+          if (resolutions.containsKey(filePath)) {
+            final action = resolutions[filePath]!;
             
-            // Check if adding to a folder
-            if (folderId != null) {
-              final filesInFolder = _docService.getFilesInFolder(folderId);
-              final duplicate = filesInFolder.where((f) => f.name == fileName).firstOrNull;
+            if (action.type == ConflictActionType.skip) {
+              skippedCount++;
+              continue;
+            } else if (action.type == ConflictActionType.overwrite) {
+               // Find and delete existing
+               final fileName = filePath.split(RegExp(r'[/\\]')).last;
+               final destFile = existingFiles.firstWhere((f) => f.name.toLowerCase() == fileName.toLowerCase());
+               await _docService.deleteItem(destFile.id);
+               
+               // Then add normal
+               await _docService.addFile(filePath, folderId: folderId);
+               addedCount++;
+            } else if (action.type == ConflictActionType.rename) {
+               // Rename Source Logic
+               final fileName = filePath.split(RegExp(r'[/\\]')).last;
+               final parts = fileName.split('.');
+               final ext = parts.length > 1 ? parts.last : '';
+               final nameWithoutExt = parts.length > 1 
+                  ? parts.sublist(0, parts.length - 1).join('.') 
+                  : fileName;
               
-              if (duplicate != null) {
-                // Show duplicate dialog
-                final action = await _showDuplicateDialog(fileName);
-                
-                // If user cancelled (null) or chose discard, skip this file
-                if (action == null || action == 'discard') {
-                  continue; // Skip this file
-                } else if (action == 'rename') {
-                  // Get new name
-                  final newName = await _getNewFileName(fileName);
-                  if (newName == null || newName.isEmpty) {
-                    continue; // User cancelled rename
-                  }
-                  
-                  // Copy the original file with new name
-                  try {
-                    final originalFile = File(file.path!);
-                    final directory = originalFile.parent;
-                    final newFilePath = '${directory.path}/$newName';
-                    
-                    // Copy file to new path
-                    await originalFile.copy(newFilePath);
-                    
-                    // Add the copied file (not the original)
-                    await _docService.addFile(newFilePath, folderId: folderId);
-                    addedCount++;
-                    _log.info('DocumentDashboard', 'Copied file $fileName to $newName');
-                  } catch (e) {
-                    _log.error('DocumentDashboard', 'Failed to copy file', e);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to copy file: $e'), backgroundColor: Colors.red),
-                      );
-                    }
-                  }
-                  continue;
-                }
-              }
-            } else {
-              // Check for duplicates in unorganized files (main screen)
-              final unorganizedFiles = _docService.getUnorganizedFiles();
-              final duplicate = unorganizedFiles.where((f) => f.name == fileName).firstOrNull;
-              
-              if (duplicate != null) {
-                // Show duplicate dialog
-                final action = await _showDuplicateDialog(fileName);
-                
-                if (action == null || action == 'discard') {
-                  continue; // Skip this file
-                } else if (action == 'rename') {
-                  final newName = await _getNewFileName(fileName);
-                  if (newName == null || newName.isEmpty) {
-                    continue;
-                  }
-                  
-                  // Copy the original file with new name
-                  try {
-                    final originalFile = File(file.path!);
-                    final directory = originalFile.parent;
-                    final newFilePath = '${directory.path}/$newName';
-                    await originalFile.copy(newFilePath);
-                    await _docService.addFile(newFilePath);
-                    addedCount++;
-                  } catch (e) {
-                    _log.error('DocumentDashboard', 'Failed to copy file', e);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Failed to copy file: $e'), backgroundColor: Colors.red),
-                      );
-                    }
-                  }
-                  continue;
-                }
-              }
+               final suffix = action.renameSuffix ?? '_copy';
+               final newName = ext.isNotEmpty ? '$nameWithoutExt$suffix.$ext' : '$nameWithoutExt$suffix';
+               
+               // Create temp copy with new name
+               try {
+                 final originalFile = File(filePath);
+                 final directory = originalFile.parent;
+                 final newFilePath = '${directory.path}/$newName';
+                 
+                 // Copy file to new path in cache/temp
+                 await originalFile.copy(newFilePath);
+                 
+                 // Import the NEW file
+                 await _docService.addFile(newFilePath, folderId: folderId);
+                 addedCount++;
+               } catch (e) {
+                 _log.error('DocumentDashboard', 'Failed to rename import', e);
+               }
             }
-            
-            await _docService.addFile(file.path!, folderId: folderId);
+          } else {
+            // No conflict, just add
+            await _docService.addFile(filePath, folderId: folderId);
             addedCount++;
           }
         }
         
         setState(() {});
         
-        if (mounted && addedCount > 0) {
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Added $addedCount file(s)')),
+            SnackBar(content: Text('Added $addedCount file(s)${skippedCount > 0 ? ', skipped $skippedCount' : ''}')),
           );
         }
       }
@@ -833,114 +846,141 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
-    final result = await showDialog<String>(
+    // 1. Select Destination
+    final destinationId = await showDialog<String>(
       context: context,
       builder: (context) => _MoveDialogWithTree(
         docService: _docService,
         fileCount: _selectedFileIds.length,
         excludedFolderIds: _selectedFileIds.where((id) {
-          final item = _docService.getAllItems().firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
+          final item = _docService.getAllItems().firstWhere(
+            (e) => e.id == id, 
+            orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file)
+          );
           return item.isFolder;
         }).toSet(),
       ),
     );
 
-    if (result != null) {
-      try {
-        // Check for duplicates before moving (skip for root)
-        List<DocumentItem> destinationFiles = [];
-        if (result != '__ROOT__') {
-          destinationFiles = _docService.getFilesInFolder(result);
+    if (destinationId == null) return; // Cancelled
+
+    try {
+      // 2. Pre-calculate Conflicts
+      List<DocumentItem> destinationFiles = [];
+      if (destinationId != '__ROOT__') {
+        destinationFiles = _docService.getFilesInFolder(destinationId);
+      } else {
+        destinationFiles = _docService.getUnorganizedFiles();
+      }
+
+      final filesToMove = _selectedFileIds.map((id) => 
+        _docService.getAllItems().firstWhere((item) => item.id == id)
+      ).toList();
+      
+      final conflictingItems = <ConflictItem>[];
+      final Map<String, ConflictAction> resolutions = {};
+
+      for (final file in filesToMove) {
+        // Skip folders for name conflict check for now (or implement if needed)
+        if (file.isFolder) continue; 
+
+        final duplicate = destinationFiles.where((f) => f.name.toLowerCase() == file.name.toLowerCase()).firstOrNull;
+        if (duplicate != null) {
+          conflictingItems.add(ConflictItem(
+            sourceId: file.id,
+            name: file.name,
+            originalPath: file.filePath ?? '',
+            isFolder: false,
+          ));
         }
-        final filesToMove = _selectedFileIds.map((id) => 
-          _docService.getAllItems().firstWhere((item) => item.id == id)
-        ).toList();
+      }
+
+      // 3. Resolve Conflicts (if any)
+      if (conflictingItems.isNotEmpty) {
+        final result = await showDialog<Map<String, ConflictAction>>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => ConflictResolutionDialog(conflicts: conflictingItems),
+        );
+
+        if (result == null) return; // User cancelled operation
+        resolutions.addAll(result);
+      }
+
+      // 4. Execute Moves
+      int movedCount = 0;
+      int skippedCount = 0;
+
+      for (final file in filesToMove) {
+        // Check if skipped
+        if (resolutions.containsKey(file.id)) {
+          final action = resolutions[file.id]!;
+          if (action.type == ConflictActionType.skip) {
+            skippedCount++;
+            continue;
+          }
+        }
+
+        // Apply Resolution first
+        String currentFileId = file.id;
         
-        final Map<String, String> renamedFiles = {}; // original id -> new name
-        
-        for (final file in filesToMove) {
-          final duplicate = destinationFiles.where((f) => f.name == file.name).firstOrNull;
+        if (resolutions.containsKey(file.id)) {
+          final action = resolutions[file.id]!;
           
-          if (duplicate != null) {
-            // Show duplicate dialog
-            final action = await _showDuplicateDialog(file.name);
+          if (action.type == ConflictActionType.rename) {
+            // Rename Source
+            final parts = file.name.split('.');
+            final ext = parts.length > 1 ? parts.last : '';
+            final nameWithoutExt = parts.length > 1 
+                ? parts.sublist(0, parts.length - 1).join('.') 
+                : file.name;
             
-            if (action == null || action == 'discard') {
-              // Skip this file - remove from selection
-              _selectedFileIds.remove(file.id);
-              continue;
-            } else if (action == 'rename') {
-              // Get new name
-              final newName = await _getNewFileName(file.name);
-              if (newName == null || newName.isEmpty) {
-                // User cancelled - skip this file
-                _selectedFileIds.remove(file.id);
-                continue;
-              }
-              renamedFiles[file.id] = newName;
-            }
+            final suffix = action.renameSuffix ?? '_copy';
+            final newName = ext.isNotEmpty ? '$nameWithoutExt$suffix.$ext' : '$nameWithoutExt$suffix';
+            
+            await _docService.renameItem(file.id, newName);
+            // currentFileId remains same, but name changed in DB
+          } else if (action.type == ConflictActionType.overwrite) {
+             // Delete Destination File
+             final destFile = destinationFiles.firstWhere((f) => f.name.toLowerCase() == file.name.toLowerCase());
+             await _docService.deleteItem(destFile.id); // This deletes the destination entry
           }
         }
-        
-        // Rename files that need renaming
-        for (final entry in renamedFiles.entries) {
-          await _docService.renameItem(entry.key, entry.value);
+
+        // Perform Move
+        if (file.isFolder) {
+           if (destinationId == '__ROOT__') {
+             await _docService.moveFolderToRoot(currentFileId);
+           } else {
+             await _docService.moveFolderToFolder(currentFileId, destinationId);
+           }
+        } else {
+           if (destinationId == '__ROOT__') {
+             await _docService.moveFilesToRoot([currentFileId]);
+           } else {
+             await _docService.moveFilesToFolder([currentFileId], destinationId);
+           }
         }
-        
-        // Separate files and folders
-        final fileIdsToMove = <String>[];
-        final folderIdsToMove = <String>[];
-        
-        for (final id in _selectedFileIds) {
-          final item = _docService.getAllItems().firstWhere(
-            (e) => e.id == id,
-            orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
-          );
-          if (item.id.isNotEmpty) {
-            if (item.isFolder) {
-              folderIdsToMove.add(id);
-            } else {
-              fileIdsToMove.add(id);
-            }
-          }
-        }
-        
-        // Move files
-        if (fileIdsToMove.isNotEmpty) {
-          if (result == '__ROOT__') {
-            // Move files to root (remove from all folders)
-            await _docService.moveFilesToRoot(fileIdsToMove);
-          } else {
-            await _docService.moveFilesToFolder(fileIdsToMove, result);
-          }
-        }
-        
-        // Move folders (update their parentId)
-        for (final folderId in folderIdsToMove) {
-          if (result == '__ROOT__') {
-            await _docService.moveFolderToRoot(folderId);
-          } else {
-            await _docService.moveFolderToFolder(folderId, result);
-          }
-        }
-        
-        final totalMoved = fileIdsToMove.length + folderIdsToMove.length;
-        
-        setState(() {
-          _selectedFileIds.clear();
-        });
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Moved $totalMoved item(s)')),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-          );
-        }
+        movedCount++;
+      }
+      
+      setState(() {
+        _selectedFileIds.clear();
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Moved $movedCount item(s)${skippedCount > 0 ? ', skipped $skippedCount' : ''}'),
+          ),
+        );
+      }
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error moving files: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }

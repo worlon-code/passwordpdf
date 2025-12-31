@@ -10,8 +10,13 @@ import 'services/logging_service.dart';
 import 'services/permission_service.dart';
 import 'services/encryption_service.dart';
 
+import 'features/documents/screens/export_progress_screen.dart';
+import 'services/export_queue_service.dart';
+
 // App version for tracking
 const String appVersion = '0.0.24';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,6 +27,18 @@ void main() async {
   // Initialize settings service
   final settingsService = SettingsService();
   await settingsService.initialize();
+  
+  // Setup Notification Listener
+  final exportService = ExportQueueService();
+  // Ensure init is called so notification plugin is ready
+  await exportService.init();
+  
+  exportService.onNotificationTap.listen((payload) {
+    log.info('App', 'Notification tapped: $payload');
+    navigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (_) => const ExportProgressScreen()),
+    );
+  });
   
   log.info('App', 'Settings loaded:');
   log.info('App', '  - AuthMethod: ${settingsService.authMethod}');
@@ -48,6 +65,7 @@ class MyApp extends StatelessWidget {
     return Consumer<SettingsService>(
       builder: (context, settings, child) {
         return MaterialApp(
+          navigatorKey: navigatorKey,
           title: 'PDF Password Manager',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
