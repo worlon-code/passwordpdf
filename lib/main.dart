@@ -17,6 +17,7 @@ import 'dart:io';
 import 'services/document_service.dart';
 import 'features/documents/screens/pdf_viewer_screen.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
+import 'features/documents/screens/all_documents_screen.dart';
 
 /// Static class to hold pending file to open (for Open With flow)
 class PendingFileOpen {
@@ -402,6 +403,7 @@ class _MainScreenState extends State<MainScreen> {
       body: IndexedStack(
         index: _currentIndex,
         children: const [
+          AllDocumentsScreen(),
           DocumentDashboardScreen(),
           PasswordManagerScreen(),
           SettingsScreen(),
@@ -415,6 +417,11 @@ class _MainScreenState extends State<MainScreen> {
           });
         },
         destinations: const [
+           NavigationDestination(
+            icon: Icon(Icons.storage),
+            selectedIcon: Icon(Icons.storage_outlined),
+            label: 'All Docs',
+          ),
           NavigationDestination(
             icon: Icon(Icons.folder_outlined),
             selectedIcon: Icon(Icons.folder),
