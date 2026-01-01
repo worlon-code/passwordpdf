@@ -5,8 +5,11 @@ import '../../../services/document_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../models/document_item_model.dart';
 import '../../../models/password_model.dart';
+import '../../../models/password_model.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
+import '../../settings/services/settings_service.dart';
 
 /// Developer Screen with password protection
 class DeveloperScreen extends StatefulWidget {
@@ -177,9 +180,17 @@ class _DocumentsTableTabState extends State<_DocumentsTableTab> {
         buffer.writeln('"${item.id}","${item.name}","${item.type}","${item.filePath ?? ''}","${item.createdAt}"');
       }
       
-      // Save to Developer folder
-      final appDir = await getApplicationDocumentsDirectory();
-      final devDir = Directory('${appDir.path}/Developer');
+      // Save to Developer folder in export path or app docs
+      final settings = Provider.of<SettingsService>(context, listen: false);
+      String basePath;
+      if (settings.exportPath != null) {
+        basePath = settings.exportPath!;
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        basePath = appDir.path;
+      }
+
+      final devDir = Directory('$basePath/Developer');
       if (!await devDir.exists()) {
         await devDir.create(recursive: true);
       }
@@ -198,6 +209,29 @@ class _DocumentsTableTabState extends State<_DocumentsTableTab> {
           SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  Future<void> _updateItem(DocumentItem item) async {
+    final controller = TextEditingController(text: item.name);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update Item'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+        ],
+      ),
+    );
+    
+    if (confirm == true && controller.text.isNotEmpty) {
+      await _docService.renameItem(item.id, controller.text);
+      _loadItems();
     }
   }
 
@@ -268,6 +302,7 @@ class _DocumentsTableTabState extends State<_DocumentsTableTab> {
                     icon: const Icon(Icons.delete_outline, size: 20),
                     onPressed: () => _deleteItem(item),
                   ),
+                  onTap: () => _updateItem(item),
                 ),
               );
             },
@@ -313,8 +348,17 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
         buffer.writeln('"${p.id}","${p.keyName}","${p.encryptedValue}"');
       }
       
-      final appDir = await getApplicationDocumentsDirectory();
-      final devDir = Directory('${appDir.path}/Developer');
+      // Save to Developer folder in export path or app docs
+      final settings = Provider.of<SettingsService>(context, listen: false);
+      String basePath;
+      if (settings.exportPath != null) {
+        basePath = settings.exportPath!;
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        basePath = appDir.path;
+      }
+
+      final devDir = Directory('$basePath/Developer');
       if (!await devDir.exists()) {
         await devDir.create(recursive: true);
       }
@@ -333,6 +377,29 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
           SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  Future<void> _updatePassword(PasswordModel item) async {
+    final keyController = TextEditingController(text: item.keyName);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update Password Key'),
+        content: TextField(
+          controller: keyController,
+          decoration: const InputDecoration(labelText: 'Key Name'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+        ],
+      ),
+    );
+    
+    if (confirm == true && keyController.text.isNotEmpty && item.id != null) {
+      await _storage.renamePassword(item.id!, keyController.text);
+      _loadPasswords();
     }
   }
 
@@ -415,6 +482,7 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
                     icon: const Icon(Icons.delete_outline, size: 20),
                     onPressed: () => _deletePassword(p),
                   ),
+                  onTap: () => _updatePassword(p),
                 ),
               );
             },

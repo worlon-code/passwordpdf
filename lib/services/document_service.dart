@@ -401,23 +401,22 @@ class DocumentService {
       
       // Recursively delete subfolders
       final subfolders = getSubfolders(itemId);
-      for (final subfolder in subfolders) {
-        await deleteItem(subfolder.id);
+      for (final sub in subfolders) {
+        await deleteItem(sub.id);
       }
       
       _log.info('DocumentService', 'Cascade deleted folder contents: ${item.name}');
     }
     
-    // Now delete the item itself
+    // Remove the item itself
     _items.removeWhere((i) => i.id == itemId);
     
-    // Clean up any references in parent folders
-    for (final folder in getFolders()) {
-      if (folder.fileIds.contains(itemId)) {
-        final index = _items.indexWhere((i) => i.id == folder.id);
-        if (index != -1) {
-          final newFileIds = folder.fileIds.where((id) => id != itemId).toList();
-          _items[index] = folder.copyWith(fileIds: newFileIds);
+    // If it was a file, remove its ID from any folder containing it
+    if (item.isFile) {
+      for (int i = 0; i < _items.length; i++) {
+        if (_items[i].isFolder && _items[i].fileIds.contains(itemId)) {
+          final newIds = _items[i].fileIds.where((id) => id != itemId).toList();
+          _items[i] = _items[i].copyWith(fileIds: newIds);
         }
       }
     }
@@ -428,7 +427,7 @@ class DocumentService {
 
   /// Rename item
   Future<void> renameItem(String itemId, String newName) async {
-    final index = _items.indexWhere((item) => item.id == itemId);
+    final index = _items.indexWhere((i) => i.id == itemId);
     if (index != -1) {
       _items[index] = _items[index].copyWith(name: newName);
       await _saveDocuments();
