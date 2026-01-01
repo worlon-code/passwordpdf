@@ -10,6 +10,7 @@ import '../../debug/screens/debug_logs_screen.dart';
 import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
+import '../../developer/screens/developer_screen.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -246,15 +247,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _openDebugLogs() async {
     final authorized = await showDeveloperPasswordDialog(
       context,
-      title: 'Debug Logs Access',
-      description: 'Enter developer password to access debug logs',
+      title: 'Developer Access',
+      description: 'Enter developer password to access developer tools',
     );
 
     if (authorized && mounted) {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => const DebugLogsScreen(),
+          builder: (context) => const DeveloperScreen(),
         ),
       );
     }

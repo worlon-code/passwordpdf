@@ -3,6 +3,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/document_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../models/document_item_model.dart';
+import '../../../models/password_model.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
@@ -74,9 +76,8 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     _loadLogs();
   }
 
-  Future<void> _loadLogs() async {
-    final logs = await _log.getLogs();
-    setState(() => _logs = logs);
+  void _loadLogs() {
+    setState(() => _logs = _log.logs);
   }
 
   @override
@@ -95,8 +96,8 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
               ),
               IconButton(
                 icon: const Icon(Icons.delete_outline),
-                onPressed: () async {
-                  await _log.clearLogs();
+                onPressed: () {
+                  _log.clearLogs();
                   _loadLogs();
                 },
               ),
@@ -287,7 +288,7 @@ class _PasswordsTableTab extends StatefulWidget {
 
 class _PasswordsTableTabState extends State<_PasswordsTableTab> {
   final StorageService _storage = StorageService();
-  List<PasswordEntry> _passwords = [];
+  List<PasswordModel> _passwords = [];
   int _limit = 50;
 
   @override
@@ -335,7 +336,7 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
     }
   }
 
-  Future<void> _deletePassword(PasswordEntry entry) async {
+  Future<void> _deletePassword(PasswordModel entry) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -348,8 +349,8 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
       ),
     );
     
-    if (confirm == true) {
-      await _storage.deletePassword(entry.id);
+    if (confirm == true && entry.id != null) {
+      await _storage.deletePassword(entry.id!);
       _loadPasswords();
     }
   }
@@ -409,7 +410,7 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
                   dense: true,
                   leading: const Icon(Icons.key),
                   title: Text(p.keyName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(p.id, style: const TextStyle(fontSize: 10)),
+                  subtitle: Text('ID: ${p.id ?? 'N/A'}', style: const TextStyle(fontSize: 10)),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline, size: 20),
                     onPressed: () => _deletePassword(p),
