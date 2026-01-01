@@ -87,6 +87,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   final LoggingService _log = LoggingService();
   final ExportQueueService _exportQueue = ExportQueueService();
   List<LogEntry> _logs = [];
+  Map<String, int> _logCounts = {};
   String _selectedFilter = 'All';
   final List<String> _filters = ['All', 'Info', 'Warn', 'Error'];
 
@@ -101,11 +102,28 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     final allLogs = await _log.getAllLogs();
     if (!mounted) return;
     
+    // Calculate counts
+    final counts = <String, int>{
+      'All': allLogs.length,
+      'Info': 0,
+      'Warn': 0,
+      'Error': 0,
+    };
+    
+    for (final log in allLogs) {
+      final level = log.level; // formatting might vary
+      // Simple matching
+      if (level.toUpperCase().contains('INFO')) counts['Info'] = (counts['Info'] ?? 0) + 1;
+      else if (level.toUpperCase().contains('WARN')) counts['Warn'] = (counts['Warn'] ?? 0) + 1;
+      else if (level.toUpperCase().contains('ERROR')) counts['Error'] = (counts['Error'] ?? 0) + 1;
+    }
+    
     setState(() {
+      _logCounts = counts;
       if (_selectedFilter == 'All') {
         _logs = allLogs;
       } else {
-        _logs = allLogs.where((l) => l.level.toLowerCase() == _selectedFilter.toLowerCase()).toList();
+        _logs = allLogs.where((l) => l.level.toLowerCase().contains(_selectedFilter.toLowerCase())).toList();
       }
     });
   }
@@ -197,18 +215,17 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
               children: _filters.map((filter) {
                 return Padding(
                   padding: const EdgeInsets.only(right: 8.0),
-                  child: ChoiceChip(
-                    label: Text(filter, style: TextStyle(
+                  child: FilterChip(
+                    label: Text('${filter} (${_logCounts[filter] ?? 0})', style: TextStyle(
                       fontSize: 12,
                       color: _selectedFilter == filter ? Colors.white : Colors.black87,
                     )),
                     selected: _selectedFilter == filter,
                     selectedColor: Theme.of(context).primaryColor,
+                    checkmarkColor: Colors.white,
                     onSelected: (selected) {
-                      if (selected) {
-                        setState(() => _selectedFilter = filter);
-                        _loadLogs();
-                      }
+                      setState(() => _selectedFilter = filter); // Always select, no toggle off to null in this UI
+                      _loadLogs();
                     },
                     visualDensity: VisualDensity.compact,
                   ),
