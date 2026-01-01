@@ -97,8 +97,10 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   }
 
   Future<void> _loadLogs() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    final allLogs = _log.logs;
+    // await Future.delayed(const Duration(milliseconds: 500)); // Remove delay, DB is async
+    final allLogs = await _log.getAllLogs();
+    if (!mounted) return;
+    
     setState(() {
       if (_selectedFilter == 'All') {
         _logs = allLogs;
@@ -110,37 +112,21 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
 
   Future<void> _exportLogs() async {
     try {
-      if (_logs.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No logs to export')));
-        return;
-      }
-
-      final buffer = StringBuffer();
-      for (final log in _logs) {
-        buffer.writeln('[${log.timestamp}] [${log.level.toUpperCase()}] ${log.tag}: ${log.message}');
-      }
-      
-      // Save info temporary file first
-      final tempDir = await getTemporaryDirectory();
-      final file = File('${tempDir.path}/logs_export.txt');
-      await file.writeAsString(buffer.toString());
-      
       final settings = Provider.of<SettingsService>(context, listen: false);
 
-      // Add to queue
+      // Add to queue (No temp file needed anymore, service handles generic log export)
       await _exportQueue.addJob(
         'Logs Export',
-        [ExportItem(itemId: 'logs', name: 'logs.txt', filePath: file.path)],
-        exportDir: settings.exportPath,
+        [], // No items needed for generic logs export
+        exportDir: '${settings.exportPath}/Developer',
         type: ExportType.logs,
         isDeveloper: true,
       );
       
       if (mounted) {
          ScaffoldMessenger.of(context).showSnackBar(
-           const SnackBar(content: Text('Logs added to export queue')),
+           const SnackBar(content: Text('Logs Excel export queued')),
          );
-         // Optional: Navigate to queue? Or just let user click the icon in AppBar
       }
     } catch (e) {
       if (mounted) {
@@ -462,7 +448,7 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     await _exportQueue.addJob(
       'Database Export',
       [], 
-      exportDir: settings.exportPath,
+      exportDir: '${settings.exportPath}/Developer',
       type: ExportType.excel,
       isDeveloper: true,
     );

@@ -454,13 +454,13 @@ class ExportQueueService {
     }
   }
 
-  /// Clear completed/error jobs
-  Future<void> clearFinished() async {
-    final toRemove = _jobs.where((j) => j.status == ExportStatus.completed || j.status == ExportStatus.error).toList();
-    _jobs.removeWhere((j) => j.status == ExportStatus.completed || j.status == ExportStatus.error);
+  /// Clear completed/error jobs (isolation aware)
+  Future<void> clearFinished({bool isDeveloper = false}) async {
+    final toRemove = _jobs.where((j) => (j.status == ExportStatus.completed || j.status == ExportStatus.error) && j.isDeveloper == isDeveloper).toList();
+    _jobs.removeWhere((j) => (j.status == ExportStatus.completed || j.status == ExportStatus.error) && j.isDeveloper == isDeveloper);
     
     // Remove from DB
-    await _storage.deleteFinishedExportJobs();
+    await _storage.deleteFinishedExportJobs(isDeveloper);
     
     // Cancel notifications for removed jobs
     for (final job in toRemove) {
@@ -590,34 +590,62 @@ class ExportQueueService {
   }
 
   Future<void> _processLogsJob(ExportJob job, int notificationId) async {
-    // Items contains temp file path
-    if (job.items.isEmpty || job.items.first.filePath == null) {
-      throw Exception('No log file provided');
-    }
+    // Fetch logs from storage (we can ignore job.items for now as we export ALL logs)
+    // Or if we want to support file-based logs later, we could check items.
+    // But for now, user wants "Export Logs" which implies the persistent DB logs.
     
-    final tempFile = File(job.items.first.filePath!);
-    if (!await tempFile.exists()) {
-       throw Exception('Log file missing');
-    }
+    final logs = await _storage.getLogs(limit: 10000); // Fetch all (capped)
     
+    if (logs.isEmpty) {
+       // Should we error? Or just export empty?
+       // Let's create an empty excel
+    }
+
+    final excel = Excel.createExcel();
+    final sheet = excel['Logs'];
+    
+    // Header
+    sheet.appendRow([
+      TextCellValue('Timestamp'), 
+      TextCellValue('Level'), 
+      TextCellValue('Tag'), 
+      TextCellValue('Message'), 
+      TextCellValue('Stack Trace')
+    ]);
+    
+    // Rows
+    for (final log in logs) {
+      sheet.appendRow([
+        TextCellValue(log['timestamp']?.toString() ?? ''),
+        TextCellValue(log['level']?.toString() ?? ''),
+        TextCellValue(log['tag']?.toString() ?? ''),
+        TextCellValue(log['message']?.toString() ?? ''),
+        TextCellValue(log['stack_trace']?.toString() ?? ''),
+      ]);
+    }
+
     String savePath;
     if (job.exportDir != null) {
       final dir = Directory(job.exportDir!);
       if (!dir.existsSync()) dir.createSync(recursive: true);
-      final fileName = '${job.name}_${job.id}.txt';
+      final fileName = '${job.name}_${job.id}.xlsx';
       savePath = '${dir.path}/$fileName';
     } else {
-      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.txt';
+      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.xlsx';
     }
     
-    await tempFile.copy(savePath);
+    final fileData = excel.encode();
+    if (fileData == null) throw Exception('Failed to encode Excel');
+    
+    final file = File(savePath);
+    await file.writeAsBytes(fileData);
     
     job.outputPath = savePath;
     job.status = ExportStatus.completed;
     job.completedAt = DateTime.now();
     job.progress = 100;
     
-    await _showNotification(notificationId, 'Export Complete', 'Logs saved successfully.');
+    await _showNotification(notificationId, 'Export Complete', 'Logs exported to Excel.');
   }
 
   /// Isolate function to encode archive

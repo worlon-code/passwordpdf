@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'storage_service.dart';
 
 /// Log entry model
 class LogEntry {
@@ -15,6 +16,26 @@ class LogEntry {
     required this.message,
     this.stackTrace,
   });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'timestamp': timestamp.toIso8601String(),
+      'level': level,
+      'tag': tag,
+      'message': message,
+      'stack_trace': stackTrace,
+    };
+  }
+
+  factory LogEntry.fromMap(Map<String, dynamic> map) {
+    return LogEntry(
+      timestamp: DateTime.parse(map['timestamp']),
+      level: map['level'],
+      tag: map['tag'],
+      message: map['message'],
+      stackTrace: map['stack_trace'],
+    );
+  }
 }
 
 /// In-app logging service for debug purposes
@@ -23,6 +44,7 @@ class LoggingService {
   factory LoggingService() => _instance;
   LoggingService._internal();
 
+  final StorageService _storage = StorageService();
   final List<LogEntry> _logs = [];
   final int _maxLogs = 500;
 
@@ -49,6 +71,9 @@ class LoggingService {
     if (stackTrace != null) {
       debugPrint(stackTrace);
     }
+    
+    // Persist async
+    _storage.insertLog(entry.toMap());
   }
 
   void info(String tag, String message) {
@@ -74,8 +99,14 @@ class LoggingService {
     _addLog('DEBUG', tag, message);
   }
 
-  void clearLogs() {
+  Future<void> clearLogs() async {
     _logs.clear();
+    await _storage.clearLogs();
+  }
+  
+  Future<List<LogEntry>> getAllLogs() async {
+    final maps = await _storage.getLogs(limit: 8000);
+    return maps.map((m) => LogEntry.fromMap(m)).toList();
   }
 
   List<LogEntry> getLogsByLevel(String level) {

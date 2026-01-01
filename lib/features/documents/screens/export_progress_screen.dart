@@ -137,7 +137,7 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
               icon: const Icon(Icons.delete_sweep),
               tooltip: 'Clear finished',
               onPressed: () {
-                _exportQueue.clearFinished();
+                _exportQueue.clearFinished(isDeveloper: widget.showDeveloper);
               },
             ),
         ],
@@ -150,7 +150,7 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
-                _buildFilterChip('All', null, _exportQueue.jobs.length),
+                _buildFilterChip('All', null, _exportQueue.jobs.where((j) => j.isDeveloper == widget.showDeveloper).length),
                 _buildFilterChip('Queued', ExportStatus.queued, counts[ExportStatus.queued] ?? 0),
                 _buildFilterChip('In Progress', ExportStatus.inProgress, counts[ExportStatus.inProgress] ?? 0),
                 _buildFilterChip('Completed', ExportStatus.completed, counts[ExportStatus.completed] ?? 0),
@@ -229,24 +229,20 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
             : BorderSide.none,
       ),
       child: InkWell(
-        onTap: (_selectedJobIds.isNotEmpty || job.status == ExportStatus.completed)
-            ? () {
-                 if (job.status != ExportStatus.completed) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Only completed exports can be shared')),
-                    );
-                    return;
-                 }
-                 _toggleSelection(job.id);
-               }
-            : null,
-        onLongPress: () {
-          if (job.status != ExportStatus.completed) {
-             ScaffoldMessenger.of(context).showSnackBar(
-               const SnackBar(content: Text('Only completed exports can be selected')),
-             );
-             return;
+        onTap: () {
+          if (_selectedJobIds.isNotEmpty) {
+            _toggleSelection(job.id);
+          } else if (job.status == ExportStatus.completed && job.outputPath != null) {
+             // Open/Share file logic or just show info
+             // For now, let's strictly follow "single click selects" ONLY in multi-select mode.
+             // Outside mode, maybe open file?
+             // User said "press only enter to multi select mode".
+             // So tap outside might be "Open".
+             Share.shareXFiles([XFile(job.outputPath!)]);
           }
+        },
+        onLongPress: () {
+          // Always enter selection mode
           _toggleSelection(job.id);
         },
         borderRadius: BorderRadius.circular(12),

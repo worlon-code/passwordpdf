@@ -26,7 +26,7 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: 4, // Increased version
+      version: 5, // Increased version
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -75,6 +75,18 @@ class StorageService {
         is_developer INTEGER DEFAULT 0
       )
     ''');
+
+    // Logs table
+    await db.execute('''
+      CREATE TABLE ${AppConstants.logsTable} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        level TEXT NOT NULL,
+        tag TEXT NOT NULL,
+        message TEXT NOT NULL,
+        stack_trace TEXT
+      )
+    ''');
   }
 
   // Handle database upgrades
@@ -116,6 +128,20 @@ class StorageService {
       } catch (e) {
         // Ignore column exists error
       }
+    }
+
+    if (oldVersion < 5) {
+      // Add logs table
+      await db.execute('''
+        CREATE TABLE ${AppConstants.logsTable} (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          level TEXT NOT NULL,
+          tag TEXT NOT NULL,
+          message TEXT NOT NULL,
+          stack_trace TEXT
+        )
+      ''');
     }
   }
 
@@ -160,13 +186,13 @@ class StorageService {
     );
   }
 
-  /// Clear all finished jobs
-  Future<int> deleteFinishedExportJobs() async {
+  /// Clear finished jobs (filtered by developer flag)
+  Future<int> deleteFinishedExportJobs(bool isDeveloper) async {
     final db = await database;
     return await db.delete(
       AppConstants.exportJobsTable,
-      where: 'status = ? OR status = ?',
-      whereArgs: ['completed', 'error'],
+      where: '(status = ? OR status = ?) AND is_developer = ?',
+      whereArgs: ['completed', 'error', isDeveloper ? 1 : 0],
     );
   }
 
@@ -282,6 +308,37 @@ class StorageService {
   Future<int> clearRecentDocuments() async {
     final db = await database;
     return await db.delete(AppConstants.recentDocumentsTable);
+  }
+
+  // ==================== LOGS OPERATIONS ====================
+
+  /// Insert a log entry
+  Future<void> insertLog(Map<String, dynamic> log) async {
+    final db = await database;
+    await db.transaction((txn) async {
+       await txn.insert(AppConstants.logsTable, log);
+       // Prune old logs (Keep last 8000)
+       await txn.rawDelete(
+         'DELETE FROM ${AppConstants.logsTable} WHERE id NOT IN (SELECT id FROM ${AppConstants.logsTable} ORDER BY id DESC LIMIT 8000)'
+       );
+    });
+  }
+
+  /// Get logs
+  Future<List<Map<String, dynamic>>> getLogs({int limit = 1000, int offset = 0}) async {
+    final db = await database;
+    return await db.query(
+      AppConstants.logsTable,
+      orderBy: 'timestamp DESC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  /// Clear all logs
+  Future<void> clearLogs() async {
+    final db = await database;
+    await db.delete(AppConstants.logsTable);
   }
 
   // ==================== GENERIC DB OPERATIONS ====================
