@@ -28,6 +28,8 @@ class SettingsService extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   AuthMethod _authMethod = AuthMethod.none;
   bool _hasPinSet = false;
+  Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
+  int _fontSizeAdjustment = -3; // -7 to 0, default -3
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -36,6 +38,8 @@ class SettingsService extends ChangeNotifier {
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get biometricEnabled => _authMethod == AuthMethod.fingerprintOnly || _authMethod == AuthMethod.both;
   bool get pinEnabled => _authMethod == AuthMethod.pinOnly || _authMethod == AuthMethod.both;
+  Color get accentColor => _accentColor;
+  int get fontSizeAdjustment => _fontSizeAdjustment;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -67,6 +71,18 @@ class SettingsService extends ChangeNotifier {
       );
     }
 
+    // Load accent color
+    final accentColorInt = _prefs!.getInt('accent_color');
+    if (accentColorInt != null) {
+      _accentColor = Color(accentColorInt);
+    }
+
+    // Load font size adjustment
+    final fontAdj = _prefs!.getInt('font_size_adjustment');
+    if (fontAdj != null) {
+      _fontSizeAdjustment = fontAdj.clamp(-7, 0);
+    }
+
     // Check if PIN is set
     final pin = await _secureStorage.read(key: 'app_pin');
     _hasPinSet = pin != null && pin.isNotEmpty;
@@ -89,6 +105,20 @@ class SettingsService extends ChangeNotifier {
     } else {
       await setThemeMode(ThemeMode.dark);
     }
+  }
+
+  /// Set accent color
+  Future<void> setAccentColor(Color color) async {
+    _accentColor = color;
+    await _prefs?.setInt('accent_color', color.value);
+    notifyListeners();
+  }
+
+  /// Set font size adjustment (-7 to 0)
+  Future<void> setFontSizeAdjustment(int adjustment) async {
+    _fontSizeAdjustment = adjustment.clamp(-7, 0);
+    await _prefs?.setInt('font_size_adjustment', _fontSizeAdjustment);
+    notifyListeners();
   }
 
   /// Set authentication method

@@ -1,7 +1,50 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import 'dart:convert';
 import '../models/document_item_model.dart';
 import './logging_service.dart';
+
+/// Result of a file import operation
+class ImportResult {
+  final bool success;
+  final bool isDuplicate;
+  final String? importedPath;
+  final String? existingFolderName;
+  final String? existingFolderId;
+  final String? errorMessage;
+
+  ImportResult._({
+    required this.success,
+    this.isDuplicate = false,
+    this.importedPath,
+    this.existingFolderName,
+    this.existingFolderId,
+    this.errorMessage,
+  });
+
+  factory ImportResult.success(String path) => ImportResult._(success: true, importedPath: path);
+  factory ImportResult.duplicate(String path, String? folderName, String? folderId) => 
+      ImportResult._(success: false, isDuplicate: true, importedPath: path, existingFolderName: folderName, existingFolderId: folderId);
+  factory ImportResult.error(String message) => ImportResult._(success: false, errorMessage: message);
+}
+
+/// Information about a duplicate file found in the app
+class DuplicateInfo {
+  final String sourcePath;
+  final String fileName;
+  final String? existingFolderName; // null = Unorganized
+  final String? existingFolderId;
+
+  DuplicateInfo({
+    required this.sourcePath,
+    required this.fileName,
+    this.existingFolderName,
+    this.existingFolderId,
+  });
+  
+  String get locationDisplay => existingFolderName ?? 'Unorganized Files';
+}
 
 /// Service for managing document folders and files
 class DocumentService {
@@ -15,10 +58,139 @@ class DocumentService {
   static const String _documentsKey = 'documents_items';
   final List<DocumentItem> _items = [];
 
+  // Need path provider to persist copies
+  // We assume main.dart/UI passes us valid paths, but we need to import: 
+  // 'package:path_provider/path_provider.dart';
+  // and 'dart:io';
+
   /// Initialize service
   Future<void> initialize() async {
     _prefs = await SharedPreferences.getInstance();
     await _loadDocuments();
+  }
+
+  /// Import a file (Copy to App Storage + DB)
+  /// Returns an ImportResult with path (if imported) or existing location info
+  Future<ImportResult> importFile(String sourcePath, String sourceName) async {
+    try {
+      final file = File(sourcePath);
+      if (!await file.exists()) return ImportResult.error('Source file not found');
+
+      final srcLen = await file.length();
+
+      // 1. Check ALL existing files in app (including folders) for duplicate
+      for (final item in _items) {
+        if (!item.isFile || item.filePath == null) continue;
+        
+        if (item.name.toLowerCase() == sourceName.toLowerCase()) {
+          final existingFile = File(item.filePath!);
+          if (await existingFile.exists()) {
+            final existingLen = await existingFile.length();
+            if (srcLen == existingLen) {
+               // Found exact duplicate in app
+               String? folderPath = _getFolderPathForItem(item.id);
+               _log.info('DocumentService', 'File already exists: $sourceName in folder: $folderPath');
+               return ImportResult.duplicate(item.filePath!, folderPath, _getFolderIdForItem(item.id));
+            }
+          }
+        }
+      }
+
+      // 2. Get App Documents Directory
+      final appDir = await getApplicationDocumentsDirectory();
+      final documentsDir = Directory('${appDir.path}/documents');
+      if (!documentsDir.existsSync()) {
+        documentsDir.createSync(recursive: true);
+      }
+
+      // 3. Generate Unique Name (Safe Copy) if collision on filesystem
+      String fileName = sourceName;
+      String newPath = '${documentsDir.path}/$fileName';
+      
+      int copyCount = 0;
+      while (File(newPath).existsSync()) {
+        copyCount++;
+        final parts = sourceName.split('.');
+        if (parts.length > 1) {
+           final ext = parts.last;
+           final name = parts.sublist(0, parts.length - 1).join('.');
+           fileName = '${name}_$copyCount.$ext';
+        } else {
+           fileName = '${sourceName}_$copyCount';
+        }
+        newPath = '${documentsDir.path}/$fileName';
+      }
+
+      // 4. Copy File
+      await file.copy(newPath);
+      
+      // 5. Add to DB (Unorganized)
+      await addFile(newPath, customName: fileName);
+      
+      _log.info('DocumentService', 'Imported file: $sourceName as $fileName');
+      return ImportResult.success(newPath);
+    } catch (e) {
+      _log.error('DocumentService', 'Import failed', e);
+      return ImportResult.error(e.toString());
+    }
+  }
+
+  /// Get folder path string for an item
+  String? _getFolderPathForItem(String itemId) {
+    // Find which folder contains this file
+    for (final folder in getFolders()) {
+      if (folder.fileIds.contains(itemId)) {
+        return folder.name;
+      }
+    }
+    return null; // Unorganized
+  }
+
+  /// Get folder ID for an item
+  String? _getFolderIdForItem(String itemId) {
+    for (final folder in getFolders()) {
+      if (folder.fileIds.contains(itemId)) {
+        return folder.id;
+      }
+    }
+    return null;
+  }
+
+  /// Check for duplicates across ALL folders (for Add Files feature)
+  Future<List<DuplicateInfo>> checkForDuplicates(List<String> filePaths) async {
+    final duplicates = <DuplicateInfo>[];
+    
+    for (final path in filePaths) {
+      final file = File(path);
+      if (!await file.exists()) continue;
+      
+      final fileName = path.split(RegExp(r'[/\\]')).last;
+      final fileSize = await file.length();
+      
+      // Check against ALL files in _items
+      for (final item in _items) {
+        if (!item.isFile || item.filePath == null) continue;
+        
+        if (item.name.toLowerCase() == fileName.toLowerCase()) {
+          final existingFile = File(item.filePath!);
+          if (await existingFile.exists()) {
+            final existingSize = await existingFile.length();
+            if (fileSize == existingSize) {
+              // Found duplicate
+              duplicates.add(DuplicateInfo(
+                sourcePath: path,
+                fileName: fileName,
+                existingFolderName: _getFolderPathForItem(item.id),
+                existingFolderId: _getFolderIdForItem(item.id),
+              ));
+              break; // Only report first match
+            }
+          }
+        }
+      }
+    }
+    
+    return duplicates;
   }
 
   /// Get all items

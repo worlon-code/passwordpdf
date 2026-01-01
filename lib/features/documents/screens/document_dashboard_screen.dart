@@ -26,6 +26,9 @@ import '../widgets/password_selection_dialog.dart';
 import '../../common/utils/file_conflict_resolver.dart';
 import '../widgets/conflict_resolution_dialog.dart';
 import '../../../models/conflict_resolution_model.dart';
+import 'folder_navigation_screen.dart';
+import '../widgets/duplicate_files_dialog.dart';
+import '../../../main.dart' show PendingFileOpen;
 
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
@@ -76,6 +79,39 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         _isLoading = false;
         _isInitialized = true;
       });
+      
+      // Check for pending folder navigation (from notification tap)
+      if (DashboardFolderNavigation.pendingFolderId != null) {
+        final folderId = DashboardFolderNavigation.pendingFolderId;
+        DashboardFolderNavigation.clear();
+        setState(() {
+          _currentFolderId = folderId;
+        });
+      }
+      
+      // Check for pending file to open (from Open With)
+      if (PendingFileOpen.hasPending) {
+        final filePath = PendingFileOpen.filePath!;
+        final fileName = PendingFileOpen.fileName ?? 'Document';
+        PendingFileOpen.clear();
+        
+        // Create a temporary DocumentItem to use _openDocument
+        final tempItem = DocumentItem(
+          id: 'pending_${DateTime.now().millisecondsSinceEpoch}',
+          name: fileName,
+          type: DocumentItemType.file,
+          filePath: filePath,
+        );
+        
+        // Use existing password-aware open logic (loader is shown inside _openDocument)
+        // Just call it after a small delay to let the screen render first
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _openDocument(tempItem);
+          }
+        });
+      }
+      
       // Check mandatory settings
       if (mounted) _checkDownloadLocation();
     }
@@ -303,7 +339,24 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       );
 
       if (result != null && result.files.isNotEmpty) {
-        // 1. Identify Conflicts
+        // 0. Cross-folder duplicate check (name + size)
+        final filePaths = result.files.where((f) => f.path != null).map((f) => f.path!).toList();
+        final crossFolderDuplicates = await _docService.checkForDuplicates(filePaths);
+        
+        if (crossFolderDuplicates.isNotEmpty) {
+          // Show dialog with duplicates found in other folders
+          final shouldProceed = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => DuplicateFilesDialog(duplicates: crossFolderDuplicates),
+          );
+          
+          if (shouldProceed != true) {
+            return; // User cancelled or tapped a file to navigate
+          }
+        }
+        
+        // 1. Identify Same-Folder Conflicts (for rename/skip/overwrite)
         List<DocumentItem> existingFiles;
         if (folderId != null) {
           existingFiles = _docService.getFilesInFolder(folderId);
@@ -1592,20 +1645,26 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 ) 
               : null,
         ),
-        body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _isInitialized
-            ? AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                transitionBuilder: (Widget child, Animation<double> animation) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-                child: KeyedSubtree(
-                  key: ValueKey(_currentFolderId ?? 'root'),
-                  child: _buildContent(),
-                ),
-              )
-                : const Center(child: Text('Initializing...')),
+        body: RefreshIndicator(
+          onRefresh: () async {
+            await _initialize();
+            setState(() {});
+          },
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _isInitialized
+              ? AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    return FadeTransition(opacity: animation, child: child);
+                  },
+                  child: KeyedSubtree(
+                    key: ValueKey(_currentFolderId ?? 'root'),
+                    child: _buildContent(),
+                  ),
+                )
+              : const Center(child: Text('Initializing...')),
+        ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: () => _pickFiles(folderId: _currentFolderId),
           icon: const Icon(Icons.add),

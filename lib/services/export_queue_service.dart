@@ -265,6 +265,22 @@ class ExportQueueService {
     await _notificationsPlugin.show(id, title, body, details, payload: payload ?? 'export_progress');
   }
 
+  /// Public method for import notifications (duplicates, etc.)
+  Future<void> showImportNotification(String title, String body, {String? payload}) async {
+    if (!_notificationsInitialized) await _initNotifications();
+    
+    const androidDetails = AndroidNotificationDetails(
+      'import_channel',
+      'File Import',
+      channelDescription: 'Notifications for file imports',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+    
+    final details = NotificationDetails(android: androidDetails);
+    await _notificationsPlugin.show(1000, title, body, details, payload: payload);
+  }
+
   /// Add a new export job to queue
   Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword}) async {
     // Cap history at 100 jobs

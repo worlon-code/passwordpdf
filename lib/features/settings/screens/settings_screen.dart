@@ -9,6 +9,7 @@ import '../../../services/encryption_service.dart';
 import '../../debug/screens/debug_logs_screen.dart';
 import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
+import '../widgets/color_picker_dialog.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -259,6 +260,166 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _showColorPicker(BuildContext context, SettingsService settings) {
+    final colors = [
+      const Color(0xFF6750A4), // Purple (default)
+      const Color(0xFF0061A4), // Blue
+      const Color(0xFF006E1C), // Green
+      const Color(0xFFC00011), // Red
+      const Color(0xFFB23B00), // Orange
+      const Color(0xFF006874), // Teal
+      const Color(0xFF4A5568), // Gray
+      const Color(0xFF805AD5), // Violet
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Choose Accent Color'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                ...colors.map((color) => GestureDetector(
+                  onTap: () {
+                    settings.setAccentColor(color);
+                    Navigator.pop(context);
+                  },
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: settings.accentColor == color 
+                          ? Border.all(color: Colors.white, width: 3)
+                          : null,
+                      boxShadow: settings.accentColor == color 
+                          ? [BoxShadow(color: color.withOpacity(0.5), blurRadius: 8)]
+                          : null,
+                    ),
+                    child: settings.accentColor == color 
+                        ? const Icon(Icons.check, color: Colors.white)
+                        : null,
+                  ),
+                )),
+                // More button for advanced picker
+                GestureDetector(
+                  onTap: () {
+                    Navigator.pop(context);
+                    _showAdvancedColorPicker(context, settings);
+                  },
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.grey.shade400),
+                    ),
+                    child: const Icon(Icons.add, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAdvancedColorPicker(BuildContext context, SettingsService settings) {
+    showDialog(
+      context: context,
+      builder: (context) => ColorPickerDialog(settings: settings),
+    );
+  }
+
+  void _showHexColorInput(BuildContext context, SettingsService settings) {
+    final controller = TextEditingController(
+      text: settings.accentColor.value.toRadixString(16).substring(2).toUpperCase(),
+    );
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Hex Color'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                prefixText: '#',
+                hintText: '6750A4',
+                labelText: 'Hex Color Code',
+                border: OutlineInputBorder(),
+              ),
+              maxLength: 6,
+              textCapitalization: TextCapitalization.characters,
+            ),
+            const SizedBox(height: 16),
+            StatefulBuilder(
+              builder: (context, setState) {
+                Color? previewColor;
+                try {
+                  if (controller.text.length == 6) {
+                    previewColor = Color(int.parse('FF${controller.text}', radix: 16));
+                  }
+                } catch (_) {}
+                
+                return Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: previewColor ?? Colors.grey.shade300,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.grey.shade400),
+                  ),
+                  child: previewColor == null 
+                      ? const Icon(Icons.help_outline, color: Colors.grey)
+                      : null,
+                );
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              try {
+                final hex = controller.text.replaceAll('#', '');
+                if (hex.length == 6) {
+                  final color = Color(int.parse('FF$hex', radix: 16));
+                  settings.setAccentColor(color);
+                  Navigator.pop(context);
+                }
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Invalid hex color')),
+                );
+              }
+            },
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -274,18 +435,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: Consumer<SettingsService>(
               builder: (context, settings, child) {
-                return SwitchListTile(
-                  title: const Text('Dark Mode'),
-                  subtitle: Text(
-                    settings.isDarkMode ? 'Dark theme enabled' : 'Light theme enabled',
-                  ),
-                  secondary: Icon(
-                    settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-                  ),
-                  value: settings.isDarkMode,
-                  onChanged: (value) {
-                    settings.toggleDarkMode();
-                  },
+                return Column(
+                  children: [
+                    // Theme Dropdown
+                    ListTile(
+                      leading: const Icon(Icons.brightness_6),
+                      title: const Text('Theme'),
+                      trailing: DropdownButton<ThemeMode>(
+                        value: settings.themeMode,
+                        underline: const SizedBox(),
+                        onChanged: (mode) {
+                          if (mode != null) settings.setThemeMode(mode);
+                        },
+                        items: const [
+                          DropdownMenuItem(value: ThemeMode.system, child: Text('System')),
+                          DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
+                          DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    // Accent Color Picker
+                    ListTile(
+                      leading: const Icon(Icons.palette),
+                      title: const Text('Accent Color'),
+                      trailing: GestureDetector(
+                        onTap: () => _showColorPicker(context, settings),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: settings.accentColor,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.grey.shade400),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    // Font Size Slider
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.text_fields, size: 20),
+                              const SizedBox(width: 16),
+                              const Text('Font Size'),
+                              const Spacer(),
+                              Text('${settings.fontSizeAdjustment}px', 
+                                style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              trackShape: const RoundedRectSliderTrackShape(),
+                              tickMarkShape: const RoundSliderTickMarkShape(tickMarkRadius: 2),
+                              activeTickMarkColor: Theme.of(context).colorScheme.primary,
+                              inactiveTickMarkColor: Colors.grey,
+                            ),
+                            child: Slider(
+                              min: -7,
+                              max: 0,
+                              divisions: 7,
+                              value: settings.fontSizeAdjustment.toDouble(),
+                              onChanged: (val) => settings.setFontSizeAdjustment(val.toInt()),
+                            ),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Smaller', style: Theme.of(context).textTheme.bodySmall),
+                              Text('Default', style: Theme.of(context).textTheme.bodySmall),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 );
               },
             ),

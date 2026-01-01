@@ -12,6 +12,24 @@ import 'services/encryption_service.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'dart:io';
+import 'services/document_service.dart';
+import 'features/documents/screens/pdf_viewer_screen.dart';
+import 'features/documents/screens/folder_navigation_screen.dart';
+
+/// Static class to hold pending file to open (for Open With flow)
+class PendingFileOpen {
+  static String? filePath;
+  static String? fileName;
+  
+  static void clear() {
+    filePath = null;
+    fileName = null;
+  }
+  
+  static bool get hasPending => filePath != null;
+}
 
 // App version for tracking
 const String appVersion = '0.0.25';
@@ -35,9 +53,20 @@ void main() async {
   
   exportService.onNotificationTap.listen((payload) {
     log.info('App', 'Notification tapped: $payload');
-    navigatorKey.currentState?.push(
-      MaterialPageRoute(builder: (_) => const ExportProgressScreen()),
-    );
+    
+    if (payload.startsWith('open_folder:')) {
+      // Navigate to specific folder in Dashboard
+      final folderId = payload.replaceFirst('open_folder:', '');
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => FolderNavigationScreen(folderId: folderId == 'root' ? null : folderId)),
+        (route) => false,
+      );
+    } else {
+      // Default: Export Progress
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(builder: (_) => const ExportProgressScreen()),
+      );
+    }
   });
   
   log.info('App', 'Settings loaded:');
@@ -64,14 +93,44 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<SettingsService>(
       builder: (context, settings, child) {
+        // Use dynamic accent color from settings
+        final seedColor = settings.accentColor;
+        final fontScale = 1.0 + (settings.fontSizeAdjustment / 14.0); // -7 becomes ~0.5
+        
+        // Create base themes
+        final lightTheme = ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: seedColor,
+            brightness: Brightness.light,
+          ),
+          useMaterial3: true,
+        );
+        
+        final darkTheme = ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: seedColor,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        );
+        
         return MaterialApp(
           navigatorKey: navigatorKey,
           title: 'PDF Password Manager',
           debugShowCheckedModeBanner: false,
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
+          theme: lightTheme,
+          darkTheme: darkTheme,
           themeMode: settings.themeMode,
           home: const AppEntry(),
+          builder: (context, child) {
+            // Apply font scaling via MediaQuery
+            return MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(fontScale),
+              ),
+              child: child!,
+            );
+          },
         );
       },
     );
@@ -96,6 +155,157 @@ class _AppEntryState extends State<AppEntry> {
   void initState() {
     super.initState();
     _initialize();
+    
+    // Listen for intents while running
+    ReceiveSharingIntent.instance.getMediaStream().listen((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
+        _handleSharedFiles(value);
+      }
+    }, onError: (err) {
+      _log.error('AppEntry', 'Intent stream error', err);
+    });
+
+    // Get initial intent (if app was closed)
+    ReceiveSharingIntent.instance.getInitialMedia().then((List<SharedMediaFile> value) {
+      if (value.isNotEmpty) {
+        _handleSharedFiles(value);
+        // Clear intent so it doesn't re-trigger on reload
+        ReceiveSharingIntent.instance.reset(); 
+      }
+    });
+  }
+
+  Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
+    if (files.isEmpty) return;
+    
+    _log.info('AppEntry', 'Received ${files.length} shared files');
+    
+    // Show loading dialog
+    if (mounted) {
+       showDialog(
+         context: context,
+         barrierDismissible: false,
+         builder: (_) => const PopScope(
+            canPop: false,
+            child: Center(
+              child: Card(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Importing file...'),
+                    ],
+                  ),
+                ),
+              ),
+           ),
+         ),
+       );
+    }
+    
+    final docService = DocumentService();
+    await docService.initialize(); // Ensure _items is loaded for duplicate check
+    final exportService = ExportQueueService(); // For notification
+    
+    int importedCount = 0;
+    int skippedCount = 0;
+    String? fileToOpenPath;
+    String? fileToOpenName;
+    String? duplicateFolderName;
+    String? duplicateFolderId;
+    
+    for (final media in files) {
+       try {
+         final path = media.path;
+         final file = File(path);
+         if (!await file.exists()) continue;
+         
+         final filename = path.split('/').last;
+         
+         final result = await docService.importFile(path, filename);
+         
+         if (result.success) {
+            importedCount++;
+            fileToOpenPath = result.importedPath;
+            fileToOpenName = filename;
+         } else if (result.isDuplicate) {
+            skippedCount++;
+            duplicateFolderName = result.existingFolderName;
+            duplicateFolderId = result.existingFolderId;
+            // Use existing file path for opening
+            fileToOpenPath = result.importedPath;
+            fileToOpenName = filename;
+         }
+       } catch (e) {
+         _log.error('AppEntry', 'Failed to import shared file', e);
+       }
+    }
+    
+    // Dismiss loading dialog
+    if (mounted && Navigator.of(context).canPop()) {
+       Navigator.of(context).pop();
+    }
+    
+    // Always auto-open the file (whether imported or duplicate)
+    // Route through Dashboard which has password handling logic
+    if (fileToOpenPath != null && _isAuthenticated) {
+      final isPdf = fileToOpenPath.toLowerCase().endsWith('.pdf');
+      
+      if (isPdf) {
+         // Show "Opening file..." loader
+         if (mounted) {
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => const PopScope(
+                 canPop: false,
+                 child: Center(
+                   child: Card(
+                     child: Padding(
+                       padding: EdgeInsets.all(24),
+                       child: Column(
+                         mainAxisSize: MainAxisSize.min,
+                         children: [
+                           CircularProgressIndicator(),
+                           SizedBox(height: 16),
+                           Text('Opening file...'),
+                         ],
+                       ),
+                     ),
+                   ),
+                ),
+              ),
+            );
+         }
+         
+         // Set pending file for Dashboard to open with password handling
+         PendingFileOpen.filePath = fileToOpenPath;
+         PendingFileOpen.fileName = fileToOpenName ?? 'Document';
+         
+         // Navigate to MainScreen (Dashboard will detect pending file and dismiss loader)
+         navigatorKey.currentState?.pushAndRemoveUntil(
+           MaterialPageRoute(builder: (_) => const MainScreen()),
+           (route) => false,
+         );
+      }
+    }
+
+    // Show Android notification for duplicates (fire and forget)
+    if (skippedCount > 0) {
+        final location = duplicateFolderName ?? 'Unorganized Files';
+        // Create payload with folder ID for navigation
+        final payload = 'open_folder:${duplicateFolderId ?? 'root'}';
+        
+        // Show Android notification (don't await - let PDF stay open)
+        exportService.showImportNotification(
+          'File Already Exists',
+          'Found in: $location. Tap to view folder.',
+          payload: payload,
+        );
+    }
   }
 
   Future<void> _initialize() async {
