@@ -532,8 +532,23 @@ class ExportQueueService {
     final tables = await _storage.getTables();
     int processedTables = 0;
 
+    // Check for limit in items
+    int? limit = 50000; // Default
+    try {
+      final configItem = job.items.firstWhere((i) => i.itemId == 'config_limit', orElse: () => ExportItem(itemId: '', name: ''));
+      if (configItem.itemId == 'config_limit') {
+        final val = int.tryParse(configItem.name);
+        if (val != null && val < 0) {
+           limit = null; // Unlimited
+        } else {
+           limit = val ?? 50000;
+        }
+      }
+    } catch (_) {}
+
     for (final table in tables) {
-      final data = await _storage.getTableData(table);
+      // Fetch data with limit
+      final data = await _storage.getTableData(table, limit: limit);
       if (data.isNotEmpty) {
         final sheetName = table.length > 30 ? table.substring(0, 30) : table;
         final sheet = excel[sheetName];

@@ -355,9 +355,10 @@ class StorageService {
   }
 
   /// Get generic table data
-  Future<List<Map<String, dynamic>>> getTableData(String table) async {
+  /// Get generic table data with pagination
+  Future<List<Map<String, dynamic>>> getTableData(String table, {int? limit, int? offset}) async {
     final db = await database;
-    return await db.query(table);
+    return await db.query(table, limit: limit, offset: offset);
   }
 
   /// Update generic record

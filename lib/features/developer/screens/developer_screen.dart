@@ -428,6 +428,9 @@ class _DatabaseTabState extends State<_DatabaseTab> {
   List<Map<String, dynamic>> _tableData = [];
   bool _isLoading = false;
 
+  int _currentPage = 0;
+  final int _itemsPerPage = 10; // Reducing to 10 for safer mobile performance
+
   @override
   void initState() {
     super.initState();
@@ -455,28 +458,47 @@ class _DatabaseTabState extends State<_DatabaseTab> {
 
   Future<void> _loadTableData() async {
     if (_selectedTable == null) return;
-    setState(() => _isLoading = true);
     
+    setState(() {
+      _isLoading = true;
+      _tableData = []; // Clear data to force UI to show loader and drop old complex layout
+    });
+    
+    // Force a frame render to show the loader
+    await Future.delayed(Duration.zero);
+    
+    // Artificial small delay to ensures the spinner has time to spin safely before heavy logic
+    await Future.delayed(const Duration(milliseconds: 50));
+
     List<Map<String, dynamic>> data = [];
-    
-    if (_selectedTable!.startsWith('JSON: ')) {
-      // Load JSON data
-      final key = _selectedTable!.replaceAll('JSON: ', '');
-      final prefs = await SharedPreferences.getInstance();
-      final jsonStr = prefs.getString(key);
-      if (jsonStr != null) {
-        // Use compute to parse JSON in background isolate to prevent UI freeze
-        data = await compute(parseJsonTableData, jsonStr);
+
+    try {
+      if (_selectedTable!.startsWith('JSON: ')) {
+        // JSON tables don't support SQL pagination easily, load all then slice
+        final key = _selectedTable!.replaceAll('JSON: ', '');
+        final prefs = await SharedPreferences.getInstance();
+        final jsonStr = prefs.getString(key);
+        if (jsonStr != null) {
+          // Use compute to parse JSON in background isolate to prevent UI freeze
+          final allData = await compute(parseJsonTableData, jsonStr);
+          // Manual pagination
+          final start = _currentPage * _itemsPerPage;
+          if (start < allData.length) {
+            final end = (start + _itemsPerPage < allData.length) ? start + _itemsPerPage : allData.length;
+            data = allData.sublist(start, end);
+          }
+        }
+      } else {
+        // SQL Pagination
+        data = await _storage.getTableData(
+          _selectedTable!, 
+          limit: _itemsPerPage, 
+          offset: _currentPage * _itemsPerPage
+        );
       }
-    } else {
-      // Load SQL data
-  
-    data = await _storage.getTableData(_selectedTable!);
+    } catch (e) {
+      data = [{'error': 'Load failed: $e'}];
     }
-    
-    // Add small delay to allow UI to show loader if operation is too fast (prevent flicker)
-    // or to ensure UI loop clears if heavy DB work froze it briefly
-    await Future.delayed(const Duration(milliseconds: 100));
 
     if (mounted) {
       setState(() {
@@ -486,6 +508,12 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     }
   }
 
+  // ... (Keep existing _editRecord, _deleteRecord, _exportDatabase methods same as before)
+  // To avoid massive diff, reusing existing methods but I need to include them in Replace Content
+  // Actually, I'll just rewrite the widget build and `_itemsPerPage` and `_loadTableData` logic. 
+  // Wait, I need to include the helper methods or the tool will delete them if strictly replacing.
+  // I will use `replace_file_content` for the entire class block to update the logic and Widget Build.
+  
   Future<void> _editRecord(Map<String, dynamic> record) async {
     final settings = Provider.of<SettingsService>(context, listen: false);
     
@@ -624,9 +652,78 @@ class _DatabaseTabState extends State<_DatabaseTab> {
   Future<void> _exportDatabase() async {
     final settings = Provider.of<SettingsService>(context, listen: false);
     
+    final limitController = TextEditingController(text: '50000');
+    bool unlimited = false;
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('Export Database'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                RadioListTile<bool>(
+                  title: const Text('All Records'),
+                  value: true,
+                  groupValue: unlimited,
+                  onChanged: (v) => setState(() => unlimited = v!),
+                ),
+                RadioListTile<bool>(
+                  title: const Text('Limit Records'),
+                  value: false,
+                  groupValue: unlimited,
+                  onChanged: (v) => setState(() => unlimited = v!),
+                ),
+                if (!unlimited)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: TextField(
+                      controller: limitController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        suffixText: 'rows per table',
+                        helperText: 'Max limit recommended: 50,000',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, {
+                  'proceed': true,
+                  'unlimited': unlimited,
+                  'limit': limitController.text,
+                }), 
+                child: const Text('Export'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (result == null || result['proceed'] != true) return;
+    
+    final isUnlimited = result['unlimited'] == true;
+    final limitVal = int.tryParse(result['limit']) ?? 50000;
+    final finalLimit = isUnlimited ? -1 : limitVal;
+
+    // Pass limit via a special metadata item
+    final configItem = ExportItem(
+      itemId: 'config_limit', 
+      name: finalLimit.toString(),
+      isFolder: false,
+    );
+
     await _exportQueue.addJob(
       'Database Export',
-      [], 
+      [configItem], 
       exportDir: '${settings.exportPath}/Developer',
       type: ExportType.excel,
       isDeveloper: true,
@@ -660,7 +757,10 @@ class _DatabaseTabState extends State<_DatabaseTab> {
                   isExpanded: true,
                   hint: const Text('Select Table'),
                   onChanged: (v) {
-                    setState(() => _selectedTable = v);
+                    setState(() {
+                      _selectedTable = v;
+                      _currentPage = 0; // Reset page on table switch
+                    });
                     _loadTableData();
                   },
                   items: _tables.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
@@ -681,6 +781,37 @@ class _DatabaseTabState extends State<_DatabaseTab> {
           ),
         ),
         
+        // Paginator
+        if (_tables.isNotEmpty && !_isLoading)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                Text('Page ${_currentPage + 1}'),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: _currentPage > 0 
+                      ? () {
+                          setState(() => _currentPage--);
+                          _loadTableData();
+                        } 
+                      : null,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  // If we have full page, assume more exists
+                  onPressed: _tableData.length == _itemsPerPage
+                      ? () {
+                          setState(() => _currentPage++);
+                          _loadTableData();
+                        }
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        
         Expanded(
           child: _isLoading 
             ? const Center(child: CircularProgressIndicator()) 
@@ -696,8 +827,17 @@ class _DatabaseTabState extends State<_DatabaseTab> {
                       child: DataTable(
                         headingRowColor: MaterialStateProperty.resolveWith((states) => Theme.of(context).cardColor),
                         dataRowColor: MaterialStateProperty.all(Theme.of(context).cardColor),
+                        columnSpacing: 20,
+                        // FIXED WIDTH OPTIMIZATION:
+                        // Using fixed width columns significantly improves render performance by avoiding 
+                        // multiple layout passes to calculate intrinsic width of massive content.
                          columns: [
-                           ..._tableData.first.keys.map((k) => DataColumn(label: Text(k, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.titleSmall?.color)))),
+                           ..._tableData.first.keys.map((k) => DataColumn(
+                             label: SizedBox(
+                               width: 150, 
+                               child: Text(k, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.titleSmall?.color))
+                             )
+                           )),
                            if (!_selectedTable!.startsWith('JSON: '))
                               const DataColumn(label: Text('Actions')),
                         ],
@@ -705,9 +845,13 @@ class _DatabaseTabState extends State<_DatabaseTab> {
                           return DataRow(
                             cells: [
                               ...row.values.map((v) => DataCell(
-                                ConstrainedBox(
-                                  constraints: const BoxConstraints(maxWidth: 200),
-                                  child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis,
+                                SizedBox(
+                                  width: 150,
+                                  child: Text(
+                                    (v?.toString() ?? '').length > 100 
+                                        ? '${(v?.toString() ?? '').substring(0, 100)}...' 
+                                        : (v?.toString() ?? ''), 
+                                    overflow: TextOverflow.ellipsis,
                                     style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
                                   ),
                                 ),

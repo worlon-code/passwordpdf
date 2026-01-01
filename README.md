@@ -16,6 +16,12 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 - **Interactive Alerts**: Tap on "Exporting..." notifications to instantly open the active `ExportQueueScreen`.
 - **Progress Tracking**: Real-time progress updates in the notification shade.
 
+#### Developer Tools (v0.0.26)
+- **Database Viewer**: View, Edit, and Delete database records directly within the app.
+- **Excel Export**: Export database tables to Excel (.xlsx) for analysis.
+- **Performance**: Optimized viewer for large datasets with pagination and efficient rendering.
+- **Security**: Protected by a secure portal password.
+
 #### Smart Password Learning (v0.0.24)
 - **Auto-Unlock**: Automatically tries saved passwords when opening protected PDFs.
 - **Smart Dialog**: Falls back to password prompt if auto-unlock fails, with option to save the password.
@@ -63,6 +69,11 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 #### Password Manager
 - **Refresh Fix**: Pull-to-refresh works on empty lists.
+
+### v0.0.26
+- **Developer Tools**: New suite of tools for database management and debugging.
+- **Performance**: Optimized database viewer and large text rendering.
+- **Export Enhancements**: Support for unlimited database exports in background.
 
 ### v0.0.25
 - **Advanced Conflict Resolution**: New UI for handling file conflicts with Retry, Rename, Skip options.
@@ -159,6 +170,9 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 ### 📋 Version History
 
+- **v0.0.26**: Developer tools, Database viewer optimizations, Generic Excel export.
+- **v0.0.25**: Advanced conflict resolution, Smart notifications.
+- **v0.0.24**: Password learning, Export queue, Smart filters.
 - **v0.0.9**: Expandable move dialog, recursive export, move duplicate checking
 - **v0.0.8**: PopScope for Android back, improved empty folder UI, hierarchical display fixes
 - **v0.0.7**: Nested folder support, duplicate detection, folder name validation
@@ -244,5 +258,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.25 (Build 25)  
+**Current Version**: 0.0.26 (Build 26)  
 **Last Updated**: January 1, 2026
