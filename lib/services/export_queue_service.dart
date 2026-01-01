@@ -12,7 +12,7 @@ import 'storage_service.dart';
 enum ExportStatus { queued, inProgress, completed, error }
 
 /// Type of export job
-enum ExportType { zip, excel }
+enum ExportType { zip, excel, logs }
 
 /// Model for an export job
 class ExportJob {
@@ -26,7 +26,8 @@ class ExportJob {
   final List<ExportItem> items;
   final String? zipPassword;
   final String? exportDir;
-  final ExportType type; // New field
+  final ExportType type;
+  final bool isDeveloper; // New field
   int progress;
   int processedItems;
   int totalItems;
@@ -35,7 +36,8 @@ class ExportJob {
     required this.id,
     required this.name,
     required this.items,
-    this.type = ExportType.zip, // Default to zip
+    this.type = ExportType.zip,
+    this.isDeveloper = false, // Default false
     this.exportDir,
     this.zipPassword,
     this.status = ExportStatus.queued,
@@ -75,7 +77,8 @@ class ExportJob {
       'progress': progress,
       'processed_items': processedItems,
       'total_items': totalItems,
-      'type': type.name, // Save type
+      'type': type.name,
+      'is_developer': isDeveloper ? 1 : 0, // Save flag
     };
   }
 
@@ -89,6 +92,7 @@ class ExportJob {
       type: json['type'] != null 
           ? ExportType.values.firstWhere((e) => e.name == json['type'], orElse: () => ExportType.zip)
           : ExportType.zip,
+      isDeveloper: json['is_developer'] == 1, // Load flag
       status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
       progress: json['progress'] ?? 0,
       processedItems: json['processed_items'] ?? 0,
@@ -165,9 +169,9 @@ class ExportQueueService {
   /// Get all jobs
   List<ExportJob> get jobs => List.unmodifiable(_jobs);
 
-  /// Get jobs by status
-  List<ExportJob> getJobsByStatus(ExportStatus status) {
-    return _jobs.where((j) => j.status == status).toList();
+  /// Get jobs by status (optionally filter developer jobs)
+  List<ExportJob> getJobsByStatus(ExportStatus status, {bool showDeveloper = false}) {
+    return _jobs.where((j) => j.status == status && j.isDeveloper == showDeveloper).toList();
   }
   
   /// Get counts by status
@@ -292,7 +296,7 @@ class ExportQueueService {
   }
 
   /// Add a new export job to queue
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip}) async {
+  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false}) async {
     // Cap history at 100 jobs
     if (_jobs.length >= 100) {
       // Remove oldest (completed/error) first, or just oldest
@@ -326,6 +330,7 @@ class ExportQueueService {
       zipPassword: zipPassword,
       totalItems: total,
       type: type,
+      isDeveloper: isDeveloper,
     );
     _jobs.add(job);
     _persistJob(job); // Save initial state
@@ -374,6 +379,8 @@ class ExportQueueService {
     try {
       if (job.type == ExportType.excel) {
         await _processExcelJob(job, notificationId);
+      } else if (job.type == ExportType.logs) {
+        await _processLogsJob(job, notificationId);
       } else {
         await _processZipJob(job, notificationId);
       }
@@ -580,6 +587,37 @@ class ExportQueueService {
     job.progress = 100;
     
     await _showNotification(notificationId, 'Export Complete', 'Database saved successfully.');
+  }
+
+  Future<void> _processLogsJob(ExportJob job, int notificationId) async {
+    // Items contains temp file path
+    if (job.items.isEmpty || job.items.first.filePath == null) {
+      throw Exception('No log file provided');
+    }
+    
+    final tempFile = File(job.items.first.filePath!);
+    if (!await tempFile.exists()) {
+       throw Exception('Log file missing');
+    }
+    
+    String savePath;
+    if (job.exportDir != null) {
+      final dir = Directory(job.exportDir!);
+      if (!dir.existsSync()) dir.createSync(recursive: true);
+      final fileName = '${job.name}_${job.id}.txt';
+      savePath = '${dir.path}/$fileName';
+    } else {
+      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.txt';
+    }
+    
+    await tempFile.copy(savePath);
+    
+    job.outputPath = savePath;
+    job.status = ExportStatus.completed;
+    job.completedAt = DateTime.now();
+    job.progress = 100;
+    
+    await _showNotification(notificationId, 'Export Complete', 'Logs saved successfully.');
   }
 
   /// Isolate function to encode archive

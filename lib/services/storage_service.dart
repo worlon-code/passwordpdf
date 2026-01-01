@@ -26,7 +26,7 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: AppConstants.databaseVersion,
+      version: 4, // Increased version
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -70,7 +70,11 @@ class StorageService {
         items_json TEXT NOT NULL,
         progress INTEGER NOT NULL DEFAULT 0,
         processed_items INTEGER NOT NULL DEFAULT 0,
-        total_items INTEGER NOT NULL DEFAULT 0
+        progress INTEGER NOT NULL DEFAULT 0,
+        processed_items INTEGER NOT NULL DEFAULT 0,
+        total_items INTEGER NOT NULL DEFAULT 0,
+        type TEXT DEFAULT 'zip',
+        is_developer INTEGER DEFAULT 0
       )
     ''');
   }
@@ -99,7 +103,21 @@ class StorageService {
     
     if (oldVersion < 3) {
       // Add zip_password column
-      await db.execute('ALTER TABLE ${AppConstants.exportJobsTable} ADD COLUMN zip_password TEXT');
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.exportJobsTable} ADD COLUMN zip_password TEXT');
+      } catch (e) {
+        // Ignore if exists
+      }
+    }
+
+    if (oldVersion < 4) {
+      // Add type and is_developer columns
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.exportJobsTable} ADD COLUMN type TEXT DEFAULT "zip"');
+        await db.execute('ALTER TABLE ${AppConstants.exportJobsTable} ADD COLUMN is_developer INTEGER DEFAULT 0');
+      } catch (e) {
+        // Ignore column exists error
+      }
     }
   }
 

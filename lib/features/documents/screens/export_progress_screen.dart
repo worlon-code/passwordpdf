@@ -6,7 +6,8 @@ import '../../../services/export_queue_service.dart';
 
 /// Screen showing export queue progress with filters
 class ExportProgressScreen extends StatefulWidget {
-  const ExportProgressScreen({super.key});
+  final bool showDeveloper;
+  const ExportProgressScreen({super.key, this.showDeveloper = false});
 
   @override
   State<ExportProgressScreen> createState() => _ExportProgressScreenState();
@@ -26,8 +27,9 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
   }
 
   List<ExportJob> get _filteredJobs {
-    if (_filterStatus == null) return _exportQueue.jobs;
-    return _exportQueue.getJobsByStatus(_filterStatus!);
+    final jobs = _exportQueue.jobs.where((j) => j.isDeveloper == widget.showDeveloper).toList();
+    if (_filterStatus == null) return jobs;
+    return jobs.where((j) => j.status == _filterStatus).toList();
   }
 
   void _toggleSelection(String id) {
@@ -41,7 +43,8 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
   }
 
   Future<void> _shareSelectedJobs() async {
-    final jobs = _exportQueue.jobs.where((j) => _selectedJobIds.contains(j.id));
+    final allJobs = _exportQueue.jobs.where((j) => j.isDeveloper == widget.showDeveloper);
+    final jobs = allJobs.where((j) => _selectedJobIds.contains(j.id));
     final filesToShare = <XFile>[];
     final missingFiles = <String>[];
     
