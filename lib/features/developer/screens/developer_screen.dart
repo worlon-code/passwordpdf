@@ -474,13 +474,20 @@ class _DatabaseTabState extends State<_DatabaseTab> {
       }
     } else {
       // Load SQL data
-      data = await _storage.getTableData(_selectedTable!);
+  
+    data = await _storage.getTableData(_selectedTable!);
     }
     
-    setState(() {
-      _tableData = List.from(data); 
-      _isLoading = false;
-    });
+    // Add small delay to allow UI to show loader if operation is too fast (prevent flicker)
+    // or to ensure UI loop clears if heavy DB work froze it briefly
+    await Future.delayed(const Duration(milliseconds: 100));
+
+    if (mounted) {
+      setState(() {
+        _tableData = List.from(data); 
+        _isLoading = false;
+      });
+    }
   }
 
   Future<void> _editRecord(Map<String, dynamic> record) async {
@@ -679,19 +686,22 @@ class _DatabaseTabState extends State<_DatabaseTab> {
         ),
         
         Expanded(
-          child: RefreshIndicator(
+          child: _isLoading 
+            ? const Center(child: CircularProgressIndicator()) 
+            : RefreshIndicator(
             onRefresh: _loadTableData,
             child: _tableData.isEmpty
-                ? const Center(child: Text('No data'))
+                ? Center(child: Text('No data', style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color)))
                 : SingleChildScrollView(
                     scrollDirection: Axis.vertical,
                     physics: const AlwaysScrollableScrollPhysics(),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
-                        headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
-                        columns: [
-                           ..._tableData.first.keys.map((k) => DataColumn(label: Text(k))),
+                        headingRowColor: MaterialStateProperty.resolveWith((states) => Theme.of(context).cardColor),
+                        dataRowColor: MaterialStateProperty.all(Theme.of(context).cardColor),
+                         columns: [
+                           ..._tableData.first.keys.map((k) => DataColumn(label: Text(k, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.titleSmall?.color)))),
                            if (!_selectedTable!.startsWith('JSON: '))
                               const DataColumn(label: Text('Actions')),
                         ],
@@ -701,7 +711,9 @@ class _DatabaseTabState extends State<_DatabaseTab> {
                               ...row.values.map((v) => DataCell(
                                 ConstrainedBox(
                                   constraints: const BoxConstraints(maxWidth: 200),
-                                  child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis),
+                                  child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: Theme.of(context).textTheme.bodyMedium?.color),
+                                  ),
                                 ),
                               )),
                               if (!_selectedTable!.startsWith('JSON: '))
@@ -711,6 +723,7 @@ class _DatabaseTabState extends State<_DatabaseTab> {
                                     IconButton(
                                       icon: const Icon(Icons.edit, size: 18),
                                       onPressed: () => _editRecord(row),
+                                      color: Theme.of(context).iconTheme.color,
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.delete, size: 18),

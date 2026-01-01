@@ -536,25 +536,33 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
+    // Use ValueNotifier for progress updates
+    final progressNotifier = ValueNotifier<Map<String, int>>({'processed': 0, 'total': totalFiles});
+
     // Show progress dialog
     if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Importing Folder'),
-            content: Column(
+      builder: (context) => AlertDialog(
+        title: const Text('Importing Folder'),
+        content: ValueListenableBuilder<Map<String, int>>(
+          valueListenable: progressNotifier,
+          builder: (context, value, child) {
+            final processed = value['processed']!;
+            final total = value['total']!;
+            final progress = total > 0 ? processed / total : 0.0;
+            
+            return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                LinearProgressIndicator(value: totalFiles > 0 ? processedFiles / totalFiles : 0),
+                LinearProgressIndicator(value: progress),
                 const SizedBox(height: 16),
-                Text('Importing $processedFiles / $totalFiles files...'),
+                Text('Importing $processed / $total files...'),
               ],
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
 
@@ -589,10 +597,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             await _docService.addFile(entity.path, folderId: parentId);
             processedFiles++;
             
-            // Update progress (rebuild dialog)
-            if (mounted) {
-              (context as Element).markNeedsBuild();
-            }
+            // Update progress
+            progressNotifier.value = {'processed': processedFiles, 'total': totalFiles};
           }
         }
       }
@@ -600,7 +606,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       // Close progress dialog
       if (mounted) {
         Navigator.pop(context);
-        setState(() {});
+        setState(() {}); // Refresh list
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Imported $processedFiles files into "$finalFolderName"'),
@@ -611,11 +617,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     } catch (e) {
       _log.error('DocumentDashboard', 'Folder import error', e);
       if (mounted) {
-        Navigator.pop(context);
+        Navigator.pop(context); // Close dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Import failed: $e'), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      progressNotifier.dispose();
     }
   }
 
