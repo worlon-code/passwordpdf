@@ -3,10 +3,12 @@ import '../../../models/conflict_resolution_model.dart';
 
 class ConflictResolutionDialog extends StatefulWidget {
   final List<ConflictItem> conflicts;
+  final Future<bool> Function(String name)? onCheckExists;
 
   const ConflictResolutionDialog({
     super.key,
     required this.conflicts,
+    this.onCheckExists,
   });
 
   @override
@@ -53,49 +55,8 @@ class _ConflictResolutionDialogState extends State<ConflictResolutionDialog> {
 
     String? suffix;
     if (_selectedAction == ConflictActionType.rename) {
-      // Ask for suffix
-      final controller = TextEditingController(text: '_copy');
-      final result = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Bulk Rename'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Enter text to append to filename:'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: 'Suffix',
-                  hintText: 'e.g., _copy',
-                  border: OutlineInputBorder(),
-                ),
-                autofocus: true,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Example: file.pdf -> file${controller.text}.pdf',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      );
-
-      if (result == null) return;
-      suffix = result;
+      // Auto-rename mode: suffix is null, handled by caller
+      suffix = null;
     }
 
     setState(() {

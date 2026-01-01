@@ -23,17 +23,32 @@ import 'features/documents/screens/all_documents_screen.dart';
 class PendingFileOpen {
   static String? filePath;
   static String? fileName;
+  static List<DuplicateInfo>? duplicateOptions;
   
   static void clear() {
     filePath = null;
     fileName = null;
+    duplicateOptions = null;
+    showDuplicatesSheet = false;
   }
+  
+  static void clearOpen() {
+    filePath = null;
+    fileName = null;
+  }
+  
+  static void clearDuplicates() {
+    duplicateOptions = null;
+    showDuplicatesSheet = false;
+  }
+  
+  static bool showDuplicatesSheet = false;
   
   static bool get hasPending => filePath != null;
 }
 
 // App version for tracking
-const String appVersion = '0.0.26';
+const String appVersion = '0.0.27';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -62,6 +77,67 @@ void main() async {
         MaterialPageRoute(builder: (_) => FolderNavigationScreen(folderId: folderId == 'root' ? null : folderId)),
         (route) => false,
       );
+    } else if (payload == 'open_duplicates') {
+       // Show duplicates sheet on current screen without navigating away
+       PendingFileOpen.showDuplicatesSheet = true;
+       
+       // Get the current context from navigatorKey and show sheet directly
+       final ctx = navigatorKey.currentContext;
+       if (ctx != null && PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
+         final duplicates = PendingFileOpen.duplicateOptions!;
+         final fileName = PendingFileOpen.fileName ?? 
+             (duplicates.isNotEmpty ? duplicates.first.existingName : 'File');
+         
+         showModalBottomSheet(
+           context: ctx,
+           isScrollControlled: true,
+           shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+           builder: (context) => Container(
+             padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+             height: MediaQuery.of(context).size.height * 0.5,
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               children: [
+                 Text('File "$fileName" exists in multiple locations', 
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                 const SizedBox(height: 8),
+                 Text('Select location to open:', 
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
+                 const SizedBox(height: 16),
+                 Expanded(
+                   child: ListView.separated(
+                     itemCount: duplicates.length,
+                     separatorBuilder: (_,__) => const Divider(),
+                     itemBuilder: (context, index) {
+                        final dup = duplicates[index];
+                        return ListTile(
+                          leading: const Icon(Icons.folder_open, color: Colors.blue),
+                          title: Text(dup.locationDisplay, style: const TextStyle(fontWeight: FontWeight.w500)),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                             Navigator.pop(context);
+                             PendingFileOpen.clearDuplicates();
+                             
+                             // Set pending folder for Dashboard to navigate to
+                             DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
+                             
+                             // Navigate to MainScreen with Documents tab (index 1)
+                             navigatorKey.currentState?.pushAndRemoveUntil(
+                               MaterialPageRoute(
+                                 builder: (_) => const MainScreen(initialIndex: 1),
+                               ),
+                               (route) => false,
+                             );
+                          },
+                        );
+                     },
+                   ),
+                 ),
+               ],
+             ),
+           ),
+         );
+       }
     } else {
       // Default: Export Progress
       navigatorKey.currentState?.push(
@@ -80,7 +156,9 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: settingsService),
+        ChangeNotifierProvider.value(value: exportService), // Added for Notifications
         Provider<EncryptionService>.value(value: EncryptionService()),
+        Provider<DocumentService>.value(value: DocumentService()),
       ],
       child: const MyApp(),
     ),
@@ -146,19 +224,22 @@ class AppEntry extends StatefulWidget {
   State<AppEntry> createState() => _AppEntryState();
 }
 
-class _AppEntryState extends State<AppEntry> {
+class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   final LoggingService _log = LoggingService();
   final PermissionService _permissionService = PermissionService();
   bool _isAuthenticated = false;
   bool _isLoading = true;
+  bool _isProcessingIntent = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initialize();
     
     // Listen for intents while running
     ReceiveSharingIntent.instance.getMediaStream().listen((List<SharedMediaFile> value) {
+      _log.info('AppEntry', 'getMediaStream fired with ${value.length} files');
       if (value.isNotEmpty) {
         _handleSharedFiles(value);
       }
@@ -178,8 +259,16 @@ class _AppEntryState extends State<AppEntry> {
 
   Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
+    if (_isProcessingIntent) {
+      _log.info('AppEntry', 'Already processing intent, skipping');
+      return;
+    }
     
+    _isProcessingIntent = true;
     _log.info('AppEntry', 'Received ${files.length} shared files');
+    
+    // Get exportService as singleton (context.read fails when app resumes from background)
+    final exportService = ExportQueueService();
     
     // Show loading dialog
     if (mounted) {
@@ -207,9 +296,10 @@ class _AppEntryState extends State<AppEntry> {
        );
     }
     
+    try {
     final docService = DocumentService();
     await docService.initialize(); // Ensure _items is loaded for duplicate check
-    final exportService = ExportQueueService(); // For notification
+    _log.info('AppEntry', 'DocumentService initialized, starting file loop');
     
     int importedCount = 0;
     int skippedCount = 0;
@@ -222,11 +312,18 @@ class _AppEntryState extends State<AppEntry> {
        try {
          final path = media.path;
          final file = File(path);
-         if (!await file.exists()) continue;
+         _log.info('AppEntry', 'Processing file: $path');
+         
+         if (!await file.exists()) {
+           _log.info('AppEntry', 'File does not exist: $path');
+           continue;
+         }
          
          final filename = path.split('/').last;
+         _log.info('AppEntry', 'Importing filename: $filename');
          
          final result = await docService.importFile(path, filename);
+         _log.info('AppEntry', 'Import result: success=${result.success}, isDuplicate=${result.isDuplicate}');
          
          if (result.success) {
             importedCount++;
@@ -236,9 +333,13 @@ class _AppEntryState extends State<AppEntry> {
             skippedCount++;
             duplicateFolderName = result.existingFolderName;
             duplicateFolderId = result.existingFolderId;
-            // Use existing file path for opening
             fileToOpenPath = result.importedPath;
             fileToOpenName = filename;
+            
+            // Store all duplicates if available
+            if (result.duplicates != null && result.duplicates!.isNotEmpty) {
+               PendingFileOpen.duplicateOptions = result.duplicates;
+            }
          }
        } catch (e) {
          _log.error('AppEntry', 'Failed to import shared file', e);
@@ -258,6 +359,7 @@ class _AppEntryState extends State<AppEntry> {
       if (isPdf) {
          // Show "Opening file..." loader
          if (mounted) {
+            _log.info('AppEntry', 'Showing opening dialog');
             showDialog(
               context: context,
               barrierDismissible: false,
@@ -286,26 +388,63 @@ class _AppEntryState extends State<AppEntry> {
          PendingFileOpen.filePath = fileToOpenPath;
          PendingFileOpen.fileName = fileToOpenName ?? 'Document';
          
+         _log.info('AppEntry', 'Pushing MainScreen with PendingFile: $fileToOpenName');
+         
          // Navigate to MainScreen (Dashboard will detect pending file and dismiss loader)
          navigatorKey.currentState?.pushAndRemoveUntil(
            MaterialPageRoute(builder: (_) => const MainScreen()),
            (route) => false,
          );
       }
+    } else {
+       _log.info('AppEntry', 'Not navigating: Path=$fileToOpenPath, Auth=$_isAuthenticated');
     }
 
+    _log.info('AppEntry', 'Post-loop: importedCount=$importedCount, skippedCount=$skippedCount');
+    
     // Show Android notification for duplicates (fire and forget)
     if (skippedCount > 0) {
+        _log.info('AppEntry', 'Duplicate detected - skippedCount=$skippedCount, showing notification');
+        
+        // Show snackbar for duplicate detection (wrapped in try-catch)
+        try {
+          if (mounted) {
+             ScaffoldMessenger.of(context).showSnackBar(
+               SnackBar(
+                 content: Text('Opening from existing location: ${duplicateFolderName ?? 'Unorganized Files'}'),
+                 duration: const Duration(seconds: 3),
+               ),
+             );
+          }
+        } catch (e) {
+          _log.error('AppEntry', 'Failed to show snackbar', e);
+        }
+        
         final location = duplicateFolderName ?? 'Unorganized Files';
         // Create payload with folder ID for navigation
         final payload = 'open_folder:${duplicateFolderId ?? 'root'}';
         
         // Show Android notification (don't await - let PDF stay open)
-        exportService.showImportNotification(
-          'File Already Exists',
-          'Found in: $location. Tap to view folder.',
-          payload: payload,
-        );
+        if (PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
+             _log.info('AppEntry', 'Showing multi-location notification');
+             exportService.showImportNotification(
+                'File Already Exists',
+                'Found in ${PendingFileOpen.duplicateOptions!.length} locations. Tap to select.',
+                payload: 'open_duplicates', // New payload type
+             );
+        } else {
+             _log.info('AppEntry', 'Showing single-location notification');
+             exportService.showImportNotification(
+                'File Already Exists',
+                'Found in: $location. Tap to view folder.',
+                payload: payload,
+             );
+        }
+    }
+    } finally {
+      // ALWAYS reset flag to allow future intents
+      _isProcessingIntent = false;
+      _log.info('AppEntry', 'Intent processing complete (finally block)');
     }
   }
 
@@ -345,7 +484,30 @@ class _AppEntryState extends State<AppEntry> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_isProcessingIntent) {
+      _log.info('AppEntry', 'App resumed - checking for pending intents');
+      _checkForPendingIntent();
+    }
+  }
+  
+  Future<void> _checkForPendingIntent() async {
+    try {
+      final media = await ReceiveSharingIntent.instance.getInitialMedia();
+      if (media.isNotEmpty) {
+        _log.info('AppEntry', 'Found ${media.length} pending files on resume');
+        _handleSharedFiles(media);
+        ReceiveSharingIntent.instance.reset(); // Clear initial intent
+        _log.info('AppEntry', 'Initial intent reset');
+      }
+    } catch (e) {
+      _log.error('AppEntry', 'Error checking pending intent', e);
+    }
   }
 
   void _onAuthenticated() {
@@ -388,16 +550,91 @@ class _AppEntryState extends State<AppEntry> {
 
 /// Main screen with bottom navigation
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final int initialIndex;
+  const MainScreen({super.key, this.initialIndex = 0});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 0;
+  late int _currentIndex;
 
   @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    
+    // Check for pending duplicate resolution
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (PendingFileOpen.showDuplicatesSheet && PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
+         _showDuplicateSelectionSheet();
+         PendingFileOpen.clearDuplicates(); // Only clear duplicates, leave file open if any
+      }
+    });
+  }
+
+  void _showDuplicateSelectionSheet() {
+    final duplicates = PendingFileOpen.duplicateOptions!;
+    // Get filename from first duplicate if PendingFileOpen.fileName is null
+    final fileName = PendingFileOpen.fileName ?? 
+        (duplicates.isNotEmpty ? duplicates.first.existingName : 'File');
+    
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (context) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        height: MediaQuery.of(context).size.height * 0.5,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('File "$fileName" exists in multiple locations', 
+               style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Select location to open:', 
+               style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.separated(
+                itemCount: duplicates.length,
+                separatorBuilder: (_,__) => const Divider(),
+                itemBuilder: (context, index) {
+                   final dup = duplicates[index];
+                   return ListTile(
+                     leading: const Icon(Icons.folder_open, color: Colors.blue),
+                     title: Text(dup.locationDisplay, style: const TextStyle(fontWeight: FontWeight.w500)),
+                     trailing: const Icon(Icons.chevron_right),
+                     onTap: () {
+                        Navigator.pop(context);
+                        PendingFileOpen.duplicateOptions = null; // Clear
+                        
+                        // Navigate directly to folder using global navigatorKey
+                        // First switch to Documents tab
+                        setState(() => _currentIndex = 1);
+                        
+                        // Then push folder navigation
+                        navigatorKey.currentState?.push(
+                          MaterialPageRoute(
+                            builder: (_) => FolderNavigationScreen(
+                              folderId: dup.existingFolderId == 'root' ? null : dup.existingFolderId,
+                            ),
+                          ),
+                        );
+                     },
+                   );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(() {
+       // Clear if dismissed without selection?
+       // PendingFileOpen.duplicateOptions = null; 
+    });
+  }
   Widget build(BuildContext context) {
     return Scaffold(
       body: IndexedStack(

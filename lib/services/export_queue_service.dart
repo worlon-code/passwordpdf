@@ -148,7 +148,7 @@ class ExportItem {
 // Moved import to top
 
 /// Service for managing export queue with background processing
-class ExportQueueService {
+class ExportQueueService extends ChangeNotifier {
   static final ExportQueueService _instance = ExportQueueService._internal();
   factory ExportQueueService() => _instance;
   ExportQueueService._internal();
@@ -162,9 +162,6 @@ class ExportQueueService {
   // Notifications
   final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
-  
-  // Callback for UI updates
-  void Function()? onJobsUpdated;
 
   /// Get all jobs
   List<ExportJob> get jobs => List.unmodifiable(_jobs);
@@ -229,7 +226,8 @@ class ExportQueueService {
           _log.error('ExportQueueService', 'Failed to load job', e);
         }
       }
-      onJobsUpdated?.call();
+
+      notifyListeners();
       _log.info('ExportQueueService', 'Loaded ${_jobs.length} jobs from history');
     } catch (e) {
       _log.error('ExportQueueService', 'Failed to init history', e);
@@ -336,7 +334,7 @@ class ExportQueueService {
     _persistJob(job); // Save initial state
     
     _log.info('ExportQueueService', 'Job added: ${job.name} with $total files');
-    onJobsUpdated?.call();
+    notifyListeners();
     
     // Immediately try to process
     _processQueue();
@@ -368,8 +366,9 @@ class ExportQueueService {
   Future<void> _processJob(ExportJob job) async {
     job.status = ExportStatus.inProgress;
     job.processedItems = 0;
+    job.processedItems = 0;
     _persistJob(job); // Update status
-    onJobsUpdated?.call();
+    notifyListeners();
     _log.info('ExportQueueService', 'Processing job: ${job.name}');
     
     // Notification ID: use last 4 chars of ID as int (hash)
@@ -394,7 +393,7 @@ class ExportQueueService {
     }
 
     _persistJob(job); // Final update
-    onJobsUpdated?.call();
+    notifyListeners();
     
     // Process next in queue
     _processQueue();
@@ -428,9 +427,9 @@ class ExportQueueService {
                  progress: job.progress, 
                  maxProgress: 100
                );
+               notifyListeners();
             }
           }
-          onJobsUpdated?.call();
           
           // Yield to allow UI updates
           await Future.delayed(Duration.zero);
@@ -467,7 +466,7 @@ class ExportQueueService {
       await _notificationsPlugin.cancel(job.id.hashCode);
     }
     
-    onJobsUpdated?.call();
+    notifyListeners();
   }
   
   /// Remove a specific job
@@ -475,7 +474,7 @@ class ExportQueueService {
     _jobs.removeWhere((j) => j.id == jobId);
     await _storage.deleteExportJob(jobId);
     await _notificationsPlugin.cancel(jobId.hashCode);
-    onJobsUpdated?.call();
+    notifyListeners();
   }
   Future<void> _processZipJob(ExportJob job, int notificationId) async {
     final archive = Archive();
@@ -566,7 +565,7 @@ class ExportQueueService {
       
       processedTables++;
       job.progress = ((processedTables / tables.length) * 100).round();
-      onJobsUpdated?.call();
+      notifyListeners();
       
       await _showNotification(
          notificationId, 

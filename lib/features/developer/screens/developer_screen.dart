@@ -198,6 +198,11 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   Map<String, int> _logCounts = {};
   String _selectedFilter = 'All';
   final List<String> _filters = ['All', 'Info', 'Warn', 'Error'];
+  
+  // New: Sort and Tag Filter
+  bool _sortDescending = true; // Latest first by default
+  String _tagFilter = 'All';
+  List<String> _availableTags = ['All'];
 
   @override
   void initState() {
@@ -206,9 +211,14 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   }
 
   Future<void> _loadLogs() async {
-    // await Future.delayed(const Duration(milliseconds: 500)); // Remove delay, DB is async
     final allLogs = await _log.getAllLogs();
     if (!mounted) return;
+    
+    // Extract unique tags
+    final tags = <String>{'All'};
+    for (final log in allLogs) {
+      tags.add(log.tag);
+    }
     
     // Calculate counts
     final counts = <String, int>{
@@ -219,20 +229,36 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     };
     
     for (final log in allLogs) {
-      final level = log.level; // formatting might vary
-      // Simple matching
+      final level = log.level;
       if (level.toUpperCase().contains('INFO')) counts['Info'] = (counts['Info'] ?? 0) + 1;
       else if (level.toUpperCase().contains('WARN')) counts['Warn'] = (counts['Warn'] ?? 0) + 1;
       else if (level.toUpperCase().contains('ERROR')) counts['Error'] = (counts['Error'] ?? 0) + 1;
     }
     
+    // Apply filters
+    var filtered = allLogs.toList();
+    
+    // Level filter
+    if (_selectedFilter != 'All') {
+      filtered = filtered.where((l) => l.level.toLowerCase().contains(_selectedFilter.toLowerCase())).toList();
+    }
+    
+    // Tag filter
+    if (_tagFilter != 'All') {
+      filtered = filtered.where((l) => l.tag == _tagFilter).toList();
+    }
+    
+    // Sort by timestamp
+    if (_sortDescending) {
+      filtered.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    } else {
+      filtered.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    }
+    
     setState(() {
       _logCounts = counts;
-      if (_selectedFilter == 'All') {
-        _logs = allLogs;
-      } else {
-        _logs = allLogs.where((l) => l.level.toLowerCase().contains(_selectedFilter.toLowerCase())).toList();
-      }
+      _logs = filtered;
+      _availableTags = tags.toList()..sort();
     });
   }
 
@@ -349,7 +375,36 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
           child: Row(
             children: [
               Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(width: 8),
+              // Tag filter dropdown
+              DropdownButton<String>(
+                value: _tagFilter,
+                isDense: true,
+                underline: const SizedBox(),
+                icon: const Icon(Icons.arrow_drop_down, size: 16),
+                style: Theme.of(context).textTheme.bodySmall,
+                items: _availableTags.map((tag) => DropdownMenuItem(
+                  value: tag,
+                  child: Text(tag.length > 15 ? '${tag.substring(0, 15)}...' : tag, 
+                    style: const TextStyle(fontSize: 11)),
+                )).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _tagFilter = value);
+                    _loadLogs();
+                  }
+                },
+              ),
               const Spacer(),
+              // Sort toggle
+              IconButton(
+                icon: Icon(_sortDescending ? Icons.arrow_downward : Icons.arrow_upward, size: 18),
+                tooltip: _sortDescending ? 'Latest First' : 'Oldest First',
+                onPressed: () {
+                  setState(() => _sortDescending = !_sortDescending);
+                  _loadLogs();
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.settings),
                 tooltip: 'Log Settings',
@@ -378,31 +433,68 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
               physics: const AlwaysScrollableScrollPhysics(),
               itemCount: _logs.length,
               itemBuilder: (context, index) {
-                final log = _logs[_logs.length - 1 - index]; // Reverse order
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  child: ListTile(
-                    dense: true,
-                    leading: Icon(
-                      log.level == 'error' ? Icons.error : 
-                      log.level == 'warn' ? Icons.warning : Icons.info,
-                      color: log.level == 'error' ? Colors.red :
-                             log.level == 'warn' ? Colors.orange : Colors.blue,
-                      size: 20,
-                    ),
-                    title: Text(
-                      log.message,
-                      style: const TextStyle(fontSize: 12),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      '${log.tag} • ${log.timestamp.toString().substring(0, 19)}',
-                      style: const TextStyle(fontSize: 10),
-                    ),
+              final log = _logs[_logs.length - 1 - index]; // Reverse order (latest first)
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: ExpansionTile(
+                  dense: true,
+                  leading: Icon(
+                    log.level == 'error' ? Icons.error : 
+                    log.level == 'warn' ? Icons.warning : Icons.info,
+                    color: log.level == 'error' ? Colors.red :
+                           log.level == 'warn' ? Colors.orange : Colors.blue,
+                    size: 20,
                   ),
-                );
-              },
+                  title: Text(
+                    log.message,
+                    style: const TextStyle(fontSize: 12),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(
+                    '${log.tag} • ${log.timestamp.toString().substring(0, 19)}',
+                    style: const TextStyle(fontSize: 10),
+                  ),
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Text('Level: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                              Text(log.level.toUpperCase(), style: const TextStyle(fontSize: 11)),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Text('Tag: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                              Expanded(child: Text(log.tag, style: const TextStyle(fontSize: 11))),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Text('Time: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                              Text(log.timestamp.toString(), style: const TextStyle(fontSize: 11)),
+                            ],
+                          ),
+                          const Divider(),
+                          const Text('Full Message:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                          const SizedBox(height: 4),
+                          SelectableText(
+                            log.message,
+                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
             ),
           ),
         ),

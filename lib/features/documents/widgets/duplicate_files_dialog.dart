@@ -9,6 +9,17 @@ class DuplicateFilesDialog extends StatelessWidget {
 
   const DuplicateFilesDialog({super.key, required this.duplicates});
 
+  Map<String, List<DuplicateInfo>> get _groupedDuplicates {
+    final map = <String, List<DuplicateInfo>>{};
+    for (final dup in duplicates) {
+      if (!map.containsKey(dup.fileName)) {
+        map[dup.fileName] = [];
+      }
+      map[dup.fileName]!.add(dup);
+    }
+    return map;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -33,28 +44,70 @@ class DuplicateFilesDialog extends StatelessWidget {
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
-                itemCount: duplicates.length,
+                itemCount: _groupedDuplicates.length,
                 itemBuilder: (context, index) {
-                  final dup = duplicates[index];
+                  final fileName = _groupedDuplicates.keys.elementAt(index);
+                  final dupes = _groupedDuplicates[fileName]!;
+                  
                   return Card(
                     margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: const Icon(Icons.insert_drive_file),
-                      title: Text(dup.fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      subtitle: Text(
-                        'In: ${dup.locationDisplay}',
-                        style: TextStyle(color: Theme.of(context).colorScheme.primary),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.insert_drive_file),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(fileName, 
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                  maxLines: 1, overflow: TextOverflow.ellipsis
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text('Found in:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          ...dupes.map((dup) => InkWell(
+                            onTap: () {
+                                Navigator.of(context).pop(); // Close dialog
+                                DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
+                                navigatorKey.currentState?.pushAndRemoveUntil(
+                                  MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)),
+                                  (route) => false,
+                                );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.folder_open, size: 16, color: Theme.of(context).colorScheme.primary),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          dup.locationDisplay,
+                                          style: TextStyle(color: Theme.of(context).colorScheme.primary, decoration: TextDecoration.underline),
+                                        ),
+                                        if (dup.existingName != fileName)
+                                          Text(
+                                            dup.existingName,
+                                            style: const TextStyle(fontSize: 10, color: Colors.grey),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(Icons.arrow_forward_ios, size: 12, color: Colors.grey),
+                                ],
+                              ),
+                            ),
+                          )),
+                        ],
                       ),
-                      trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () {
-                        // Navigate to folder
-                        Navigator.of(context).pop(); // Close dialog
-                        DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
-                        navigatorKey.currentState?.pushAndRemoveUntil(
-                          MaterialPageRoute(builder: (_) => const MainScreen()),
-                          (route) => false,
-                        );
-                      },
                     ),
                   );
                 },

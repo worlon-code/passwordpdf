@@ -10,7 +10,7 @@ subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 subprojects {
-    // Force all plugins to use Java 17
+    // Force all plugins to use Java 17 and Kotlin 17
     afterEvaluate { project ->
         if (project.hasProperty("android")) {
             project.android {
@@ -18,6 +18,13 @@ subprojects {
                     sourceCompatibility JavaVersion.VERSION_17
                     targetCompatibility JavaVersion.VERSION_17
                 }
+            }
+        }
+        
+        // Fix for Kotlin/Java target mismatch in plugins
+        project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+            kotlinOptions {
+                jvmTarget = "17"
             }
         }
     }

@@ -10,22 +10,26 @@ class ImportResult {
   final bool success;
   final bool isDuplicate;
   final String? importedPath;
+  final DocumentItem? importItem; // Added
   final String? existingFolderName;
   final String? existingFolderId;
   final String? errorMessage;
+  final List<DuplicateInfo>? duplicates;
 
   ImportResult._({
     required this.success,
     this.isDuplicate = false,
     this.importedPath,
+    this.importItem,
     this.existingFolderName,
     this.existingFolderId,
     this.errorMessage,
+    this.duplicates,
   });
 
-  factory ImportResult.success(String path) => ImportResult._(success: true, importedPath: path);
-  factory ImportResult.duplicate(String path, String? folderName, String? folderId) => 
-      ImportResult._(success: false, isDuplicate: true, importedPath: path, existingFolderName: folderName, existingFolderId: folderId);
+  factory ImportResult.success(String path, DocumentItem item) => ImportResult._(success: true, importedPath: path, importItem: item);
+  factory ImportResult.duplicate(String path, String? folderName, String? folderId, {List<DuplicateInfo>? duplicates}) => 
+      ImportResult._(success: false, isDuplicate: true, importedPath: path, existingFolderName: folderName, existingFolderId: folderId, duplicates: duplicates);
   factory ImportResult.error(String message) => ImportResult._(success: false, errorMessage: message);
 }
 
@@ -35,12 +39,16 @@ class DuplicateInfo {
   final String fileName;
   final String? existingFolderName; // null = Unorganized
   final String? existingFolderId;
+  final String existingFilePath; // Added for direct opening
+  final String existingName;
 
   DuplicateInfo({
     required this.sourcePath,
     required this.fileName,
     this.existingFolderName,
     this.existingFolderId,
+    required this.existingFilePath,
+    required this.existingName,
   });
   
   String get locationDisplay => existingFolderName ?? 'Unorganized Files';
@@ -71,28 +79,42 @@ class DocumentService {
 
   /// Import a file (Copy to App Storage + DB)
   /// Returns an ImportResult with path (if imported) or existing location info
-  Future<ImportResult> importFile(String sourcePath, String sourceName) async {
+  Future<ImportResult> importFile(String sourcePath, String sourceName, {String? targetName, bool allowDuplicate = false}) async {
     try {
       final file = File(sourcePath);
       if (!await file.exists()) return ImportResult.error('Source file not found');
 
       final srcLen = await file.length();
+      final duplicates = <DuplicateInfo>[];
 
       // 1. Check ALL existing files in app (including folders) for duplicate
-      for (final item in _items) {
-        if (!item.isFile || item.filePath == null) continue;
-        
-        if (item.name.toLowerCase() == sourceName.toLowerCase()) {
+      if (!allowDuplicate) {
+        for (final item in _items) {
+          if (!item.isFile || item.filePath == null) continue;
+          
+          // Check by Content (Size)
           final existingFile = File(item.filePath!);
           if (await existingFile.exists()) {
-            final existingLen = await existingFile.length();
-            if (srcLen == existingLen) {
-               // Found exact duplicate in app
-               String? folderPath = _getFolderPathForItem(item.id);
-               _log.info('DocumentService', 'File already exists: $sourceName in folder: $folderPath');
-               return ImportResult.duplicate(item.filePath!, folderPath, _getFolderIdForItem(item.id));
+             final existingLen = await existingFile.length();
+             if (srcLen == existingLen) {
+                 // Found exact duplicate in app
+                 String? folderPath = _getFolderPathForItem(item.id);
+                 duplicates.add(DuplicateInfo(
+                    sourcePath: sourcePath,
+                    fileName: sourceName,
+                    existingFolderName: folderPath,
+                    existingFolderId: _getFolderIdForItem(item.id),
+                    existingFilePath: item.filePath!,
+                    existingName: item.name,
+                 ));
+              }
             }
           }
+        
+        if (duplicates.isNotEmpty) {
+           final first = duplicates.first;
+           _log.info('DocumentService', 'File already exists: $sourceName in ${duplicates.length} locations');
+           return ImportResult.duplicate(first.existingFilePath, first.existingFolderName, first.existingFolderId, duplicates: duplicates);
         }
       }
 
@@ -104,7 +126,7 @@ class DocumentService {
       }
 
       // 3. Generate Unique Name (Safe Copy) if collision on filesystem
-      String fileName = sourceName;
+      String fileName = targetName ?? sourceName;
       String newPath = '${documentsDir.path}/$fileName';
       
       int copyCount = 0;
@@ -125,10 +147,10 @@ class DocumentService {
       await file.copy(newPath);
       
       // 5. Add to DB (Unorganized)
-      await addFile(newPath, customName: fileName);
+      final newItem = await addFile(newPath, customName: fileName);
       
       _log.info('DocumentService', 'Imported file: $sourceName as $fileName');
-      return ImportResult.success(newPath);
+      return ImportResult.success(newPath, newItem);
     } catch (e) {
       _log.error('DocumentService', 'Import failed', e);
       return ImportResult.error(e.toString());
@@ -168,23 +190,24 @@ class DocumentService {
       final fileSize = await file.length();
       
       // Check against ALL files in _items
+      // Check against ALL files in _items
       for (final item in _items) {
         if (!item.isFile || item.filePath == null) continue;
         
-        if (item.name.toLowerCase() == fileName.toLowerCase()) {
-          final existingFile = File(item.filePath!);
-          if (await existingFile.exists()) {
-            final existingSize = await existingFile.length();
-            if (fileSize == existingSize) {
-              // Found duplicate
-              duplicates.add(DuplicateInfo(
-                sourcePath: path,
-                fileName: fileName,
-                existingFolderName: _getFolderPathForItem(item.id),
-                existingFolderId: _getFolderIdForItem(item.id),
-              ));
-              break; // Only report first match
-            }
+        // Remove name check - check content only (Size)
+        final existingFile = File(item.filePath!);
+        if (await existingFile.exists()) {
+          final existingSize = await existingFile.length();
+          if (fileSize == existingSize) {
+            // Found duplicate (content match by size)
+            duplicates.add(DuplicateInfo(
+              sourcePath: path,
+              fileName: fileName,
+              existingFolderName: _getFolderPathForItem(item.id),
+              existingFolderId: _getFolderIdForItem(item.id),
+              existingFilePath: item.filePath!,
+              existingName: item.name,
+            ));
           }
         }
       }
@@ -223,6 +246,19 @@ class DocumentService {
         .toList();
   }
 
+  // Helper to check collision in specific folder (for overwrite/skip logic)
+  String? getFileIdInFolder(String fileName, String? folderId) {
+    for (final item in _items) {
+      if (!item.isFile) continue;
+      // Check parent folder matching
+      final itemFolderId = _getFolderIdForItem(item.id);
+      if (itemFolderId == folderId && item.name.toLowerCase() == fileName.toLowerCase()) {
+        return item.id;
+      }
+    }
+    return null;
+  }
+
   /// Get files not in any folder
   List<DocumentItem> getUnorganizedFiles() {
     final filesInFolders = <String>{};
@@ -237,6 +273,17 @@ class DocumentService {
 
   /// Create a folder
   Future<DocumentItem> createFolder(String name, {String? parentId}) async {
+    // Check for duplicate folder name
+    final exists = _items.any((item) => 
+      item.isFolder && 
+      item.parentId == parentId && 
+      item.name.toLowerCase() == name.toLowerCase()
+    );
+
+    if (exists) {
+      throw Exception('Folder "$name" already exists');
+    }
+
     final folder = DocumentItem(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: name,

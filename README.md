@@ -2,9 +2,21 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.25 - Advanced Conflicts & Notifications
+## Version 0.0.27 - All Docs Screen & Enhanced Open With
 
 ### 🚀 New Features
+
+#### All Docs Screen (v0.0.27)
+- **Device File Browser**: Browse all documents on your device (not just app-managed files)
+- **Quick Filters**: Filter by PDF, Word, Excel file types
+- **Multi-Select Import**: Select multiple files and import to any folder
+- **Single-Tap Open**: Tap to open files directly, or auto-navigate to existing location if already imported
+
+#### Enhanced "Open With" (v0.0.27)
+- **Reliable Background Handling**: Fixed issue where "Open With" only worked first time when app was in background
+- **Duplicate Detection**: Shows Android notification when opened file already exists in library
+- **Location Selection Popup**: Tap notification to see all locations and choose which to open
+- **Stay on Current Screen**: Notification popup appears on whatever tab you're currently on
 
 #### Advanced Conflict Resolution (v0.0.25)
 - **Batch Processing**: Handle multiple file conflicts at once when importing or maneuvering files.
@@ -69,6 +81,11 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 #### Password Manager
 - **Refresh Fix**: Pull-to-refresh works on empty lists.
+
+### v0.0.27
+- **All Docs Screen**: New device file browser with filtering and multi-select import.
+- **Enhanced Open With**: Reliable background intent handling, duplicate notifications with location selection.
+- **Auto-Rename**: Automatic incrementing suffixes (`_1`, `_2`) for conflict resolution.
 
 ### v0.0.26
 - **Developer Tools**: New suite of tools for database management and debugging.
@@ -170,6 +187,7 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 ### 📋 Version History
 
+- **v0.0.27**: All Docs screen, Enhanced Open With, Auto-rename conflict resolution.
 - **v0.0.26**: Developer tools, Database viewer optimizations, Generic Excel export.
 - **v0.0.25**: Advanced conflict resolution, Smart notifications.
 - **v0.0.24**: Password learning, Export queue, Smart filters.
@@ -258,5 +276,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.26 (Build 26)  
-**Last Updated**: January 1, 2026
+**Current Version**: 0.0.27 (Build 27)  
+**Last Updated**: January 2, 2026

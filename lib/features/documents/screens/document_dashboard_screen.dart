@@ -28,6 +28,7 @@ import '../widgets/conflict_resolution_dialog.dart';
 import '../../../models/conflict_resolution_model.dart';
 import 'folder_navigation_screen.dart';
 import '../widgets/duplicate_files_dialog.dart';
+import '../../documents/widgets/folder_selection_dialog.dart';
 import '../../../main.dart' show PendingFileOpen;
 
 /// Document Dashboard screen with folder management
@@ -53,9 +54,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _exportQueue.onJobsUpdated = () {
-      if (mounted) setState(() {});
-    };
+    _exportQueue.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
     _initialize();
@@ -63,8 +62,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   @override
   void dispose() {
+    _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
     super.dispose();
+  }
+
+  void _updateUI() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _initialize() async {
@@ -90,10 +94,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
       
       // Check for pending file to open (from Open With)
+      _log.info('DocumentDashboard', 'Checking PendingFileOpen: hasPending=${PendingFileOpen.hasPending}');
       if (PendingFileOpen.hasPending) {
         final filePath = PendingFileOpen.filePath!;
         final fileName = PendingFileOpen.fileName ?? 'Document';
-        PendingFileOpen.clear();
+        PendingFileOpen.clearOpen(); // Only clear file path, keep duplicate options for MainScreen
         
         // Create a temporary DocumentItem to use _openDocument
         final tempItem = DocumentItem(
@@ -425,7 +430,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                await _docService.addFile(filePath, folderId: folderId);
                addedCount++;
             } else if (action.type == ConflictActionType.rename) {
-               // Rename Source Logic
+               // Auto-Rename Logic: Find next unique suffix (_1, _2, etc.)
                final fileName = filePath.split(RegExp(r'[/\\]')).last;
                final parts = fileName.split('.');
                final ext = parts.length > 1 ? parts.last : '';
@@ -433,8 +438,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   ? parts.sublist(0, parts.length - 1).join('.') 
                   : fileName;
               
-               final suffix = action.renameSuffix ?? '_copy';
-               final newName = ext.isNotEmpty ? '$nameWithoutExt$suffix.$ext' : '$nameWithoutExt$suffix';
+               // Find unique name
+               String newName = fileName;
+               int counter = 1;
+               while (existingFiles.any((f) => f.name.toLowerCase() == newName.toLowerCase())) {
+                 newName = ext.isNotEmpty ? '${nameWithoutExt}_$counter.$ext' : '${nameWithoutExt}_$counter';
+                 counter++;
+               }
                
                // Create temp copy with new name
                try {
@@ -903,20 +913,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Future<void> _moveSelectedFiles() async {
     if (_selectedFileIds.isEmpty) return;
 
-    final allFolders = _docService.getFolders();
-    if (allFolders.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No folders available. Create a folder first.')),
-      );
-      return;
-    }
-
     // 1. Select Destination
-    final destinationId = await showDialog<String>(
+    final destinationId = await showDialog<String?>(
       context: context,
-      builder: (context) => _MoveDialogWithTree(
+      builder: (context) => FolderSelectionDialog(
         docService: _docService,
-        fileCount: _selectedFileIds.length,
+        title: 'Move Files',
+        subtitle: '${_selectedFileIds.length} file(s) selected',
         excludedFolderIds: _selectedFileIds.where((id) {
           final item = _docService.getAllItems().firstWhere(
             (e) => e.id == id, 
@@ -993,15 +996,20 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           final action = resolutions[file.id]!;
           
           if (action.type == ConflictActionType.rename) {
-            // Rename Source
+            // Auto-Rename: Find next unique suffix (_1, _2, etc.)
             final parts = file.name.split('.');
             final ext = parts.length > 1 ? parts.last : '';
             final nameWithoutExt = parts.length > 1 
                 ? parts.sublist(0, parts.length - 1).join('.') 
                 : file.name;
             
-            final suffix = action.renameSuffix ?? '_copy';
-            final newName = ext.isNotEmpty ? '$nameWithoutExt$suffix.$ext' : '$nameWithoutExt$suffix';
+            // Find unique name in destination
+            String newName = file.name;
+            int counter = 1;
+            while (destinationFiles.any((f) => f.name.toLowerCase() == newName.toLowerCase())) {
+              newName = ext.isNotEmpty ? '${nameWithoutExt}_$counter.$ext' : '${nameWithoutExt}_$counter';
+              counter++;
+            }
             
             await _docService.renameItem(file.id, newName);
             // currentFileId remains same, but name changed in DB
@@ -2399,143 +2407,4 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 }
 
 // Stateful tree widget for move dialog
-class _MoveDialogWithTree extends StatefulWidget {
-  final DocumentService docService;
-  final int fileCount;
-  final Set<String> excludedFolderIds;
-  
-  const _MoveDialogWithTree({
-    required this.docService,
-    required this.fileCount,
-    this.excludedFolderIds = const {},
-  });
 
-  @override
-  State<_MoveDialogWithTree> createState() => _MoveDialogWithTreeState();
-}
-
-class _MoveDialogWithTreeState extends State<_MoveDialogWithTree> {
-  final Set<String> _expandedFolders = {};
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Row(
-        children: [
-          Icon(
-            Icons.drive_file_move,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Move Files'),
-                Text(
-                  '${widget.fileCount} file(s) selected',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-      contentPadding: const EdgeInsets.fromLTRB(0, 20, 0, 0),
-      content: Container(
-        width: double.maxFinite,
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.6,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Text(
-                'Select destination folder',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Root option
-            ListTile(
-              leading: const Icon(Icons.home, color: Colors.orange),
-              title: const Text('Root (No Folder)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Move to main screen'),
-              onTap: () => Navigator.pop(context, '__ROOT__'),
-            ),
-            const Divider(),
-            Flexible(
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: _buildFolderTree(null, 0),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-      ],
-    );
-  }
-
-  List<Widget> _buildFolderTree(String? parentId, int depth) {
-    final folders = parentId == null
-        ? widget.docService.getRootFolders()
-        : widget.docService.getSubfolders(parentId);
-    
-    // Filter out excluded folders (selected folders being moved)
-    final filteredFolders = folders.where((f) => !widget.excludedFolderIds.contains(f.id)).toList();
-    
-    return filteredFolders.expand((folder) {
-      final hasChildren = widget.docService.getSubfolders(folder.id).isNotEmpty;
-      final isExpanded = _expandedFolders.contains(folder.id);
-      
-      return [
-        ListTile(
-          contentPadding: EdgeInsets.only(left: 16.0 + (depth * 24.0)),
-          leading: hasChildren
-              ? IconButton(
-                  icon: Icon(isExpanded ? Icons.expand_more : Icons.chevron_right),
-                  onPressed: () {
-                    setState(() {
-                      if (isExpanded) {
-                        _expandedFolders.remove(folder.id);
-                      } else {
-                        _expandedFolders.add(folder.id);
-                      }
-                    });
-                  },
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                )
-              : const SizedBox(width: 24),
-          title: Row(
-            children: [
-              Icon(Icons.folder, 
-                color: depth == 0 ? Colors.blue : Colors.blue.withOpacity(0.7),
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Expanded(child: Text(folder.name)),
-            ],
-          ),
-          onTap: () => Navigator.pop(context, folder.id),
-        ),
-        if (hasChildren && isExpanded)
-          ..._buildFolderTree(folder.id, depth + 1),
-      ];
-    }).toList();
-  }
-}

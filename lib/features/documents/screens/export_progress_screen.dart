@@ -21,9 +21,17 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
   @override
   void initState() {
     super.initState();
-    _exportQueue.onJobsUpdated = () {
-      if (mounted) setState(() {});
-    };
+    _exportQueue.addListener(_updateUI);
+  }
+
+  @override
+  void dispose() {
+    _exportQueue.removeListener(_updateUI);
+    super.dispose();
+  }
+
+  void _updateUI() {
+    if (mounted) setState(() {});
   }
 
   List<ExportJob> get _filteredJobs {
