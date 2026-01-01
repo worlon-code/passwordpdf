@@ -284,6 +284,36 @@ class StorageService {
     return await db.delete(AppConstants.recentDocumentsTable);
   }
 
+  // ==================== GENERIC DB OPERATIONS ====================
+
+  /// Get all table names
+  Future<List<String>> getTables() async {
+    final db = await database;
+    final tables = await db.query('sqlite_master', where: 'type = ?', whereArgs: ['table']);
+    return tables
+        .map((t) => t['name'] as String)
+        .where((t) => t != 'android_metadata' && t != 'sqlite_sequence')
+        .toList();
+  }
+
+  /// Get generic table data
+  Future<List<Map<String, dynamic>>> getTableData(String table) async {
+    final db = await database;
+    return await db.query(table);
+  }
+
+  /// Update generic record
+  Future<int> updateRecord(String table, String idColumn, dynamic idValue, Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.update(table, data, where: '$idColumn = ?', whereArgs: [idValue]);
+  }
+
+  /// Delete generic record
+  Future<int> deleteRecord(String table, String idColumn, dynamic idValue) async {
+    final db = await database;
+    return await db.delete(table, where: '$idColumn = ?', whereArgs: [idValue]);
+  }
+
   /// Close database
   Future<void> close() async {
     final db = await database;

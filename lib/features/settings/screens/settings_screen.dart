@@ -676,23 +676,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 ListTile(
-                  leading: const Icon(Icons.bug_report),
-                  title: const Text('Debug Logs'),
-                  subtitle: Text('${_log.logs.length} entries (password protected)'),
+                  leading: const Icon(Icons.build_circle),
+                  title: const Text('Developer Tools'),
+                  subtitle: const Text('Logs, Database & Export (password protected)'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: _openDebugLogs,
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.refresh),
-                  title: const Text('Refresh Status'),
-                  onTap: () {
-                    _checkBiometricSupport();
-                    _checkEncryptionKey();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Status refreshed')),
-                    );
-                  },
+                  onTap: _openDebugLogs, // Keep valid name, functional logic only
                 ),
               ],
             ),

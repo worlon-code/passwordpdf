@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/logging_service.dart';
-import '../../../services/document_service.dart';
 import '../../../services/storage_service.dart';
-import '../../../models/document_item_model.dart';
-import '../../../models/password_model.dart';
-import '../../../models/password_model.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:excel/excel.dart';
 import '../../settings/services/settings_service.dart';
 
-/// Developer Screen with password protection
+/// Developer Screen with password protection and generic DB viewer
 class DeveloperScreen extends StatefulWidget {
   const DeveloperScreen({super.key});
 
@@ -21,12 +18,11 @@ class DeveloperScreen extends StatefulWidget {
 
 class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  final LoggingService _log = LoggingService();
-
+  
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
   }
 
   @override
@@ -44,8 +40,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProv
           controller: _tabController,
           tabs: const [
             Tab(icon: Icon(Icons.bug_report), text: 'Logs'),
-            Tab(icon: Icon(Icons.table_chart), text: 'Documents'),
-            Tab(icon: Icon(Icons.key), text: 'Passwords'),
+            Tab(icon: Icon(Icons.category), text: 'Database'),
           ],
         ),
       ),
@@ -53,15 +48,14 @@ class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProv
         controller: _tabController,
         children: const [
           _DebugLogsTab(),
-          _DocumentsTableTab(),
-          _PasswordsTableTab(),
+          _DatabaseTab(),
         ],
       ),
     );
   }
 }
 
-/// Debug Logs Tab
+/// Debug Logs Tab with Pull-to-Refresh
 class _DebugLogsTab extends StatefulWidget {
   const _DebugLogsTab();
 
@@ -79,7 +73,9 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     _loadLogs();
   }
 
-  void _loadLogs() {
+  Future<void> _loadLogs() async {
+    // Simulate delay for pull-to-refresh feel
+    await Future.delayed(const Duration(milliseconds: 500));
     setState(() => _logs = _log.logs);
   }
 
@@ -94,10 +90,6 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
               Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
               const Spacer(),
               IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: _loadLogs,
-              ),
-              IconButton(
                 icon: const Icon(Icons.delete_outline),
                 onPressed: () {
                   _log.clearLogs();
@@ -108,34 +100,37 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            itemCount: _logs.length,
-            itemBuilder: (context, index) {
-              final log = _logs[_logs.length - 1 - index]; // Reverse order
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(
-                    log.level == 'error' ? Icons.error : 
-                    log.level == 'warn' ? Icons.warning : Icons.info,
-                    color: log.level == 'error' ? Colors.red :
-                           log.level == 'warn' ? Colors.orange : Colors.blue,
-                    size: 20,
+          child: RefreshIndicator(
+            onRefresh: _loadLogs,
+            child: ListView.builder(
+              itemCount: _logs.length,
+              itemBuilder: (context, index) {
+                final log = _logs[_logs.length - 1 - index]; // Reverse order
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  child: ListTile(
+                    dense: true,
+                    leading: Icon(
+                      log.level == 'error' ? Icons.error : 
+                      log.level == 'warn' ? Icons.warning : Icons.info,
+                      color: log.level == 'error' ? Colors.red :
+                             log.level == 'warn' ? Colors.orange : Colors.blue,
+                      size: 20,
+                    ),
+                    title: Text(
+                      log.message,
+                      style: const TextStyle(fontSize: 12),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      '${log.tag} • ${log.timestamp.toString().substring(0, 19)}',
+                      style: const TextStyle(fontSize: 10),
+                    ),
                   ),
-                  title: Text(
-                    log.message,
-                    style: const TextStyle(fontSize: 12),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    '${log.tag} • ${log.timestamp.toString().substring(0, 19)}',
-                    style: const TextStyle(fontSize: 10),
-                  ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ],
@@ -143,212 +138,172 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   }
 }
 
-/// Documents Table Tab
-class _DocumentsTableTab extends StatefulWidget {
-  const _DocumentsTableTab();
+/// Generic Database Viewer Tab
+class _DatabaseTab extends StatefulWidget {
+  const _DatabaseTab();
 
   @override
-  State<_DocumentsTableTab> createState() => _DocumentsTableTabState();
+  State<_DatabaseTab> createState() => _DatabaseTabState();
 }
 
-class _DocumentsTableTabState extends State<_DocumentsTableTab> {
-  final DocumentService _docService = DocumentService();
-  List<DocumentItem> _items = [];
-  int _limit = 50;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadItems();
-  }
-
-  Future<void> _loadItems() async {
-    await _docService.initialize();
-    final all = _docService.getAllItems();
-    setState(() {
-      _items = _limit == -1 ? all : all.take(_limit).toList();
-    });
-  }
-
-  Future<void> _exportToExcel() async {
-    try {
-      // Create CSV content
-      final buffer = StringBuffer();
-      buffer.writeln('ID,Name,Type,FilePath,CreatedAt');
-      
-      for (final item in _items) {
-        buffer.writeln('"${item.id}","${item.name}","${item.type}","${item.filePath ?? ''}","${item.createdAt}"');
-      }
-      
-      // Save to Developer folder in export path or app docs
-      final settings = Provider.of<SettingsService>(context, listen: false);
-      String basePath;
-      if (settings.exportPath != null) {
-        basePath = settings.exportPath!;
-      } else {
-        final appDir = await getApplicationDocumentsDirectory();
-        basePath = appDir.path;
-      }
-
-      final devDir = Directory('$basePath/Developer');
-      if (!await devDir.exists()) {
-        await devDir.create(recursive: true);
-      }
-      
-      final file = File('${devDir.path}/documents_export_${DateTime.now().millisecondsSinceEpoch}.csv');
-      await file.writeAsString(buffer.toString());
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Exported to: ${file.path}')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _updateItem(DocumentItem item) async {
-    final controller = TextEditingController(text: item.name);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Update Item'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Name'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
-        ],
-      ),
-    );
-    
-    if (confirm == true && controller.text.isNotEmpty) {
-      await _docService.renameItem(item.id, controller.text);
-      _loadItems();
-    }
-  }
-
-  Future<void> _deleteItem(DocumentItem item) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Item'),
-        content: Text('Are you sure you want to delete "${item.name}"?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
-        ],
-      ),
-    );
-    
-    if (confirm == true) {
-      await _docService.deleteItem(item.id);
-      _loadItems();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Toolbar
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            children: [
-              DropdownButton<int>(
-                value: _limit,
-                onChanged: (v) {
-                  setState(() => _limit = v ?? 50);
-                  _loadItems();
-                },
-                items: const [
-                  DropdownMenuItem(value: 50, child: Text('50')),
-                  DropdownMenuItem(value: 100, child: Text('100')),
-                  DropdownMenuItem(value: 200, child: Text('200')),
-                  DropdownMenuItem(value: 500, child: Text('500')),
-                  DropdownMenuItem(value: -1, child: Text('All')),
-                ],
-              ),
-              const SizedBox(width: 8),
-              Text('${_items.length} items', style: Theme.of(context).textTheme.bodySmall),
-              const Spacer(),
-              IconButton(icon: const Icon(Icons.refresh), onPressed: _loadItems),
-              IconButton(icon: const Icon(Icons.download), onPressed: _exportToExcel),
-            ],
-          ),
-        ),
-        // Table
-        Expanded(
-          child: ListView.builder(
-            itemCount: _items.length,
-            itemBuilder: (context, index) {
-              final item = _items[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: ListTile(
-                  dense: true,
-                  leading: Icon(item.isFolder ? Icons.folder : Icons.insert_drive_file),
-                  title: Text(item.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(item.id, style: const TextStyle(fontSize: 10)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 20),
-                    onPressed: () => _deleteItem(item),
-                  ),
-                  onTap: () => _updateItem(item),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Passwords Table Tab
-class _PasswordsTableTab extends StatefulWidget {
-  const _PasswordsTableTab();
-
-  @override
-  State<_PasswordsTableTab> createState() => _PasswordsTableTabState();
-}
-
-class _PasswordsTableTabState extends State<_PasswordsTableTab> {
+class _DatabaseTabState extends State<_DatabaseTab> {
   final StorageService _storage = StorageService();
-  List<PasswordModel> _passwords = [];
-  int _limit = 50;
+  List<String> _tables = [];
+  String? _selectedTable;
+  List<Map<String, dynamic>> _tableData = [];
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadPasswords();
+    _loadTables();
   }
 
-  Future<void> _loadPasswords() async {
-    final all = await _storage.getAllPasswords();
+  Future<void> _loadTables() async {
+    final tables = await _storage.getTables();
     setState(() {
-      _passwords = _limit == -1 ? all : all.take(_limit).toList();
+      _tables = tables;
+      if (_tables.isNotEmpty && _selectedTable == null) {
+        _selectedTable = _tables.first;
+        _loadTableData();
+      }
     });
   }
 
-  Future<void> _exportToExcel() async {
+  Future<void> _loadTableData() async {
+    if (_selectedTable == null) return;
+    setState(() => _isLoading = true);
+    
+    final data = await _storage.getTableData(_selectedTable!);
+    
+    setState(() {
+      _tableData = List.from(data); // Mutable copy
+      _isLoading = false;
+    });
+  }
+
+  // Check if this is the encryption key record
+  bool _isEncryptionKey(String key, dynamic value) {
+    return key == 'key_name' && value == 'encryption_key';
+  }
+
+  Future<void> _editRecord(Map<String, dynamic> record) async {
+    // Check for encryption key
+    if (record.values.any((v) => v == 'encryption_key')) {
+      final settings = Provider.of<SettingsService>(context, listen: false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Cannot modify Encryption Key!'),
+          backgroundColor: settings.accentColor, // Use accent color as requested
+        ),
+      );
+      return;
+    }
+
+    final id = record['id'];
+    if (id == null) return;
+
+    // Create controllers for all fields except ID
+    final controllers = <String, TextEditingController>{};
+    record.forEach((key, value) {
+      if (key != 'id') {
+        controllers[key] = TextEditingController(text: value.toString());
+      }
+    });
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit Record (ID: $id)'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: controllers.entries.map((e) {
+              return TextField(
+                controller: e.value,
+                decoration: InputDecoration(labelText: e.key),
+              );
+            }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final newData = <String, dynamic>{};
+      controllers.forEach((key, controller) {
+        newData[key] = controller.text;
+      });
+
+      await _storage.updateRecord(_selectedTable!, 'id', id, newData);
+      _loadTableData();
+    }
+  }
+
+  Future<void> _deleteRecord(Map<String, dynamic> record) async {
+     // Check for encryption key
+    if (record.values.any((v) => v == 'encryption_key')) {
+      final settings = Provider.of<SettingsService>(context, listen: false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Cannot delete Encryption Key!'),
+          backgroundColor: settings.accentColor, // Use accent color as requested
+        ),
+      );
+      return;
+    }
+
+    final id = record['id'];
+    if (id == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Record'),
+        content: Text('Delete record ID $id?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _storage.deleteRecord(_selectedTable!, 'id', id);
+      _loadTableData();
+    }
+  }
+
+  Future<void> _exportAllTables() async {
+    setState(() => _isLoading = true);
+    
     try {
-      final buffer = StringBuffer();
-      buffer.writeln('ID,KeyName,EncryptedValue');
+      final excel = Excel.createExcel();
       
-      for (final p in _passwords) {
-        buffer.writeln('"${p.id}","${p.keyName}","${p.encryptedValue}"');
+      // Process all tables
+      for (final table in _tables) {
+        final data = await _storage.getTableData(table);
+        if (data.isEmpty) continue;
+        
+        final sheetName = table.length > 30 ? table.substring(0, 30) : table;
+        final sheet = excel[sheetName];
+        
+        // Add headers
+        final headers = data.first.keys.map((k) => TextCellValue(k)).toList();
+        sheet.appendRow(headers);
+        
+        // Add rows
+        for (final row in data) {
+          final values = row.values.map((v) => TextCellValue(v?.toString() ?? '')).toList();
+          sheet.appendRow(values);
+        }
       }
       
-      // Save to Developer folder in export path or app docs
+      // Save file
       final settings = Provider.of<SettingsService>(context, listen: false);
       String basePath;
       if (settings.exportPath != null) {
@@ -363,13 +318,16 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
         await devDir.create(recursive: true);
       }
       
-      final file = File('${devDir.path}/passwords_export_${DateTime.now().millisecondsSinceEpoch}.csv');
-      await file.writeAsString(buffer.toString());
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Exported to: ${file.path}')),
-        );
+      final fileData = excel.encode();
+      if (fileData != null) {
+        final file = File('${devDir.path}/database_export_${DateTime.now().millisecondsSinceEpoch}.xlsx');
+        await file.writeAsBytes(fileData);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Exported to: ${file.path}')),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -377,53 +335,19 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
           SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
         );
       }
-    }
-  }
-
-  Future<void> _updatePassword(PasswordModel item) async {
-    final keyController = TextEditingController(text: item.keyName);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Update Password Key'),
-        content: TextField(
-          controller: keyController,
-          decoration: const InputDecoration(labelText: 'Key Name'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
-        ],
-      ),
-    );
-    
-    if (confirm == true && keyController.text.isNotEmpty && item.id != null) {
-      await _storage.renamePassword(item.id!, keyController.text);
-      _loadPasswords();
-    }
-  }
-
-  Future<void> _deletePassword(PasswordModel entry) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Password'),
-        content: Text('Are you sure you want to delete "${entry.keyName}"?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
-        ],
-      ),
-    );
-    
-    if (confirm == true && entry.id != null) {
-      await _storage.deletePassword(entry.id!);
-      _loadPasswords();
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_tables.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Column(
       children: [
         // Toolbar
@@ -431,62 +355,77 @@ class _PasswordsTableTabState extends State<_PasswordsTableTab> {
           padding: const EdgeInsets.all(8.0),
           child: Row(
             children: [
-              DropdownButton<int>(
-                value: _limit,
-                onChanged: (v) {
-                  setState(() => _limit = v ?? 50);
-                  _loadPasswords();
-                },
-                items: const [
-                  DropdownMenuItem(value: 50, child: Text('50')),
-                  DropdownMenuItem(value: 100, child: Text('100')),
-                  DropdownMenuItem(value: 200, child: Text('200')),
-                  DropdownMenuItem(value: 500, child: Text('500')),
-                  DropdownMenuItem(value: -1, child: Text('All')),
-                ],
+              // Table Selector
+              Expanded(
+                child: DropdownButton<String>(
+                  value: _selectedTable,
+                  isExpanded: true,
+                  hint: const Text('Select Table'),
+                  onChanged: (v) {
+                    setState(() => _selectedTable = v);
+                    _loadTableData();
+                  },
+                  items: _tables.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                ),
               ),
               const SizedBox(width: 8),
-              Text('${_passwords.length} entries', style: Theme.of(context).textTheme.bodySmall),
-              const Spacer(),
-              IconButton(icon: const Icon(Icons.refresh), onPressed: _loadPasswords),
-              IconButton(icon: const Icon(Icons.download), onPressed: _exportToExcel),
+              if (_isLoading)
+                const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                IconButton(icon: const Icon(Icons.refresh), onPressed: _loadTableData),
+              
+              IconButton(
+                icon: const Icon(Icons.download),
+                tooltip: 'Export All Tables to Excel',
+                onPressed: _exportAllTables,
+              ),
             ],
           ),
         ),
-        // Info banner
-        Container(
-          padding: const EdgeInsets.all(8),
-          color: Colors.amber.shade100,
-          child: const Row(
-            children: [
-              Icon(Icons.info_outline, size: 16),
-              SizedBox(width: 8),
-              Expanded(child: Text('Encryption key cannot be modified from this screen', style: TextStyle(fontSize: 12))),
-            ],
-          ),
-        ),
-        // Table
+        
+        // Data View
         Expanded(
-          child: ListView.builder(
-            itemCount: _passwords.length,
-            itemBuilder: (context, index) {
-              final p = _passwords[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.key),
-                  title: Text(p.keyName, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  subtitle: Text('ID: ${p.id ?? 'N/A'}', style: const TextStyle(fontSize: 10)),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 20),
-                    onPressed: () => _deletePassword(p),
+          child: _tableData.isEmpty
+              ? const Center(child: Text('No data'))
+              : SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                      columns: [
+                         ..._tableData.first.keys.map((k) => DataColumn(label: Text(k))),
+                         const DataColumn(label: Text('Actions')),
+                      ],
+                      rows: _tableData.map((row) {
+                        return DataRow(
+                          cells: [
+                            ...row.values.map((v) => DataCell(
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 200),
+                                child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis),
+                              ),
+                            )),
+                            DataCell(Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, size: 18),
+                                  onPressed: () => _editRecord(row),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete, size: 18),
+                                  color: Colors.red,
+                                  onPressed: () => _deleteRecord(row),
+                                ),
+                              ],
+                            )),
+                          ],
+                        );
+                      }).toList(),
+                    ),
                   ),
-                  onTap: () => _updatePassword(p),
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
