@@ -4,11 +4,15 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:excel/excel.dart';
 import 'logging_service.dart';
 import 'storage_service.dart';
 
 /// Status of an export job
 enum ExportStatus { queued, inProgress, completed, error }
+
+/// Type of export job
+enum ExportType { zip, excel }
 
 /// Model for an export job
 class ExportJob {
@@ -22,6 +26,7 @@ class ExportJob {
   final List<ExportItem> items;
   final String? zipPassword;
   final String? exportDir;
+  final ExportType type; // New field
   int progress;
   int processedItems;
   int totalItems;
@@ -30,6 +35,7 @@ class ExportJob {
     required this.id,
     required this.name,
     required this.items,
+    this.type = ExportType.zip, // Default to zip
     this.exportDir,
     this.zipPassword,
     this.status = ExportStatus.queued,
@@ -69,6 +75,7 @@ class ExportJob {
       'progress': progress,
       'processed_items': processedItems,
       'total_items': totalItems,
+      'type': type.name, // Save type
     };
   }
 
@@ -79,6 +86,9 @@ class ExportJob {
       items: (json['items'] as List).map((i) => ExportItem.fromJson(i)).toList(),
       exportDir: json['export_dir'],
       zipPassword: json['zip_password'],
+      type: json['type'] != null 
+          ? ExportType.values.firstWhere((e) => e.name == json['type'], orElse: () => ExportType.zip)
+          : ExportType.zip,
       status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
       progress: json['progress'] ?? 0,
       processedItems: json['processed_items'] ?? 0,
@@ -282,7 +292,7 @@ class ExportQueueService {
   }
 
   /// Add a new export job to queue
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword}) async {
+  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip}) async {
     // Cap history at 100 jobs
     if (_jobs.length >= 100) {
       // Remove oldest (completed/error) first, or just oldest
@@ -315,6 +325,7 @@ class ExportQueueService {
       exportDir: exportDir,
       zipPassword: zipPassword,
       totalItems: total,
+      type: type,
     );
     _jobs.add(job);
     _persistJob(job); // Save initial state
@@ -361,48 +372,11 @@ class ExportQueueService {
     await _showNotification(notificationId, 'Export Started', 'Exporting ${job.name}...');
 
     try {
-      final archive = Archive();
-
-      // Add all items to archive with progress tracking
-      await _addItemsToArchive(archive, job.items, '', job, notificationId);
-
-      if (archive.files.isEmpty) {
-        throw Exception('No files to export');
-      }
-
-      await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
-
-      // Encode ZIP in isolate
-      // Pass both archive and password
-      final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
-      if (zipData == null) throw Exception('Failed to encode ZIP');
-
-      // Determine save path
-      String savePath;
-      if (job.exportDir != null) {
-        final dir = Directory(job.exportDir!);
-        if (!dir.existsSync()) {
-          dir.createSync(recursive: true);
-        }
-        final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
-        savePath = '${dir.path}/$fileName';
+      if (job.type == ExportType.excel) {
+        await _processExcelJob(job, notificationId);
       } else {
-        // Fallback to app directory
-        savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
+        await _processZipJob(job, notificationId);
       }
-
-      // Save file
-      final file = File(savePath);
-      await file.writeAsBytes(zipData);
-
-      job.outputPath = file.path;
-      job.status = ExportStatus.completed;
-      job.completedAt = DateTime.now();
-      job.progress = 100;
-      _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
-      
-      await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
-      
     } catch (e, stack) {
       job.status = ExportStatus.error;
       job.errorMessage = e.toString();
@@ -496,18 +470,129 @@ class ExportQueueService {
     await _notificationsPlugin.cancel(jobId.hashCode);
     onJobsUpdated?.call();
   }
-}
+  Future<void> _processZipJob(ExportJob job, int notificationId) async {
+    final archive = Archive();
 
-/// Isolate function to encode archive
-// Accepts Map with 'archive' and optional 'password'
-List<int>? _encodeArchive(Map<String, dynamic> params) {
-  try {
-    final archive = params['archive'] as Archive;
-    final password = params['password'] as String?;
+    // Add all items to archive with progress tracking
+    await _addItemsToArchive(archive, job.items, '', job, notificationId);
+
+    if (archive.files.isEmpty) {
+      throw Exception('No files to export');
+    }
+
+    await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
+
+    // Encode ZIP in isolate
+    final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
+    if (zipData == null) throw Exception('Failed to encode ZIP');
+
+    // Determine save path
+    String savePath;
+    if (job.exportDir != null) {
+      final dir = Directory(job.exportDir!);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
+      savePath = '${dir.path}/$fileName';
+    } else {
+      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
+    }
+
+    // Save file
+    final file = File(savePath);
+    await file.writeAsBytes(zipData);
+
+    job.outputPath = file.path;
+    job.status = ExportStatus.completed;
+    job.completedAt = DateTime.now();
+    job.progress = 100;
+    _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
     
-    final encoder = ZipEncoder(password: password);
-    return encoder.encode(archive);
-  } catch (e) {
-    return null;
+    await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
+  }
+
+  Future<void> _processExcelJob(ExportJob job, int notificationId) async {
+    // Excel generation happens here. 
+    // Since items contains simple "table names" as name for this use case, we re-fetch data here.
+    // Or, we expect the caller to pass data? No, queue should be data-agnostic or fetch it.
+    // For simplicity, we'll fetch ALL tables here as that's the only Excel export we do.
+    
+    // BUT: The service shouldn't know about StorageService detail logic ideally.
+    // However, since this is a specific "Database Export" feature, we can usage StorageService.
+    
+    final excel = Excel.createExcel();
+    final tables = await _storage.getTables();
+    int processedTables = 0;
+
+    for (final table in tables) {
+      final data = await _storage.getTableData(table);
+      if (data.isNotEmpty) {
+        final sheetName = table.length > 30 ? table.substring(0, 30) : table;
+        final sheet = excel[sheetName];
+        
+        // Add headers
+        final headers = data.first.keys.map((k) => TextCellValue(k)).toList();
+        sheet.appendRow(headers);
+        
+        // Add rows
+        for (final row in data) {
+          final values = row.values.map((v) => TextCellValue(v?.toString() ?? '')).toList();
+          sheet.appendRow(values);
+        }
+      }
+      
+      processedTables++;
+      job.progress = ((processedTables / tables.length) * 100).round();
+      onJobsUpdated?.call();
+      
+      await _showNotification(
+         notificationId, 
+         'Exporting Database', 
+         'Processing $table...', 
+         progress: job.progress, 
+         maxProgress: 100
+      );
+    }
+
+    // Save file
+    String savePath;
+    if (job.exportDir != null) {
+      final dir = Directory(job.exportDir!);
+      if (!dir.existsSync()) {
+         dir.createSync(recursive: true);
+      }
+      final fileName = '${job.name}_${job.id}.xlsx';
+      savePath = '${dir.path}/$fileName';
+    } else {
+      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.xlsx';
+    }
+    
+    final fileData = excel.encode();
+    if (fileData == null) throw Exception('Failed to encode Excel');
+    
+    final file = File(savePath);
+    await file.writeAsBytes(fileData);
+    
+    job.outputPath = file.path;
+    job.status = ExportStatus.completed;
+    job.completedAt = DateTime.now();
+    job.progress = 100;
+    
+    await _showNotification(notificationId, 'Export Complete', 'Database saved successfully.');
+  }
+
+  /// Isolate function to encode archive
+  // Accepts Map with 'archive' and optional 'password'
+  static List<int>? _encodeArchive(Map<String, dynamic> params) {
+    try {
+      final archive = params['archive'] as Archive;
+      final password = params['password'] as String?;
+      
+      final encoder = ZipEncoder(password: password);
+      return encoder.encode(archive);
+    } catch (e) {
+      return null;
+    }
   }
 }

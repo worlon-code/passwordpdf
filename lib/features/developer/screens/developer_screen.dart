@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../services/export_queue_service.dart';
+import '../../documents/screens/export_progress_screen.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -79,6 +82,44 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     setState(() => _logs = _log.logs);
   }
 
+  Future<void> _exportLogs() async {
+    try {
+      final buffer = StringBuffer();
+      for (final log in _logs) {
+        buffer.writeln('[${log.timestamp}] [${log.level.toUpperCase()}] ${log.tag}: ${log.message}');
+      }
+      
+      final settings = Provider.of<SettingsService>(context, listen: false);
+      String basePath;
+      if (settings.exportPath != null) {
+        basePath = settings.exportPath!;
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        basePath = appDir.path;
+      }
+
+      final devDir = Directory('$basePath/Developer');
+      if (!await devDir.exists()) {
+        await devDir.create(recursive: true);
+      }
+      
+      final file = File('${devDir.path}/logs_export_${DateTime.now().millisecondsSinceEpoch}.txt');
+      await file.writeAsString(buffer.toString());
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Logs exported to: ${file.path}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -90,7 +131,13 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
               Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
               const Spacer(),
               IconButton(
+                icon: const Icon(Icons.download),
+                tooltip: 'Export Logs',
+                onPressed: _exportLogs,
+              ),
+              IconButton(
                 icon: const Icon(Icons.delete_outline),
+                tooltip: 'Clear Logs',
                 onPressed: () {
                   _log.clearLogs();
                   _loadLogs();
@@ -103,6 +150,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
           child: RefreshIndicator(
             onRefresh: _loadLogs,
             child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
               itemCount: _logs.length,
               itemBuilder: (context, index) {
                 final log = _logs[_logs.length - 1 - index]; // Reverse order
@@ -148,6 +196,8 @@ class _DatabaseTab extends StatefulWidget {
 
 class _DatabaseTabState extends State<_DatabaseTab> {
   final StorageService _storage = StorageService();
+  final ExportQueueService _exportQueue = ExportQueueService();
+  
   List<String> _tables = [];
   String? _selectedTable;
   List<Map<String, dynamic>> _tableData = [];
@@ -174,6 +224,8 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     if (_selectedTable == null) return;
     setState(() => _isLoading = true);
     
+    // Simulate network delay for effect if desired, or just load
+    await Future.delayed(const Duration(milliseconds: 300));
     final data = await _storage.getTableData(_selectedTable!);
     
     setState(() {
@@ -182,19 +234,15 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     });
   }
 
-  // Check if this is the encryption key record
-  bool _isEncryptionKey(String key, dynamic value) {
-    return key == 'key_name' && value == 'encryption_key';
-  }
-
   Future<void> _editRecord(Map<String, dynamic> record) async {
-    // Check for encryption key
+    final settings = Provider.of<SettingsService>(context, listen: false);
+    
+    // Check for encryption key record - Cannot edit AT ALL
     if (record.values.any((v) => v == 'encryption_key')) {
-      final settings = Provider.of<SettingsService>(context, listen: false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Cannot modify Encryption Key!'),
-          backgroundColor: settings.accentColor, // Use accent color as requested
+          backgroundColor: settings.accentColor,
         ),
       );
       return;
@@ -203,7 +251,7 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     final id = record['id'];
     if (id == null) return;
 
-    // Create controllers for all fields except ID
+    // Create controllers
     final controllers = <String, TextEditingController>{};
     record.forEach((key, value) {
       if (key != 'id') {
@@ -219,16 +267,46 @@ class _DatabaseTabState extends State<_DatabaseTab> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: controllers.entries.map((e) {
-              return TextField(
-                controller: e.value,
-                decoration: InputDecoration(labelText: e.key),
+              final isEncryptedValue = e.key == 'encrypted_value';
+              
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: e.value,
+                        decoration: InputDecoration(
+                          labelText: e.key,
+                          border: const OutlineInputBorder(),
+                          filled: isEncryptedValue,
+                        ),
+                        readOnly: isEncryptedValue,
+                        maxLines: isEncryptedValue ? 3 : 1,
+                      ),
+                    ),
+                    if (isEncryptedValue)
+                      IconButton(
+                        icon: const Icon(Icons.copy),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: e.value.text));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Copied to clipboard')),
+                          );
+                        },
+                      ),
+                  ],
+                ),
               );
             }).toList(),
           ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Update')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true), 
+            child: const Text('Update'),
+          ),
         ],
       ),
     );
@@ -236,11 +314,16 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     if (confirm == true) {
       final newData = <String, dynamic>{};
       controllers.forEach((key, controller) {
-        newData[key] = controller.text;
+        // Skip encrypted_value update as it's read-only
+        if (key != 'encrypted_value') {
+          newData[key] = controller.text;
+        }
       });
 
-      await _storage.updateRecord(_selectedTable!, 'id', id, newData);
-      _loadTableData();
+      if (newData.isNotEmpty) {
+        await _storage.updateRecord(_selectedTable!, 'id', id, newData);
+        _loadTableData();
+      }
     }
   }
 
@@ -251,7 +334,7 @@ class _DatabaseTabState extends State<_DatabaseTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Cannot delete Encryption Key!'),
-          backgroundColor: settings.accentColor, // Use accent color as requested
+          backgroundColor: settings.accentColor,
         ),
       );
       return;
@@ -278,67 +361,25 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     }
   }
 
-  Future<void> _exportAllTables() async {
-    setState(() => _isLoading = true);
+  Future<void> _exportDatabase() async {
+    final settings = Provider.of<SettingsService>(context, listen: false);
     
-    try {
-      final excel = Excel.createExcel();
-      
-      // Process all tables
-      for (final table in _tables) {
-        final data = await _storage.getTableData(table);
-        if (data.isEmpty) continue;
-        
-        final sheetName = table.length > 30 ? table.substring(0, 30) : table;
-        final sheet = excel[sheetName];
-        
-        // Add headers
-        final headers = data.first.keys.map((k) => TextCellValue(k)).toList();
-        sheet.appendRow(headers);
-        
-        // Add rows
-        for (final row in data) {
-          final values = row.values.map((v) => TextCellValue(v?.toString() ?? '')).toList();
-          sheet.appendRow(values);
-        }
-      }
-      
-      // Save file
-      final settings = Provider.of<SettingsService>(context, listen: false);
-      String basePath;
-      if (settings.exportPath != null) {
-        basePath = settings.exportPath!;
-      } else {
-        final appDir = await getApplicationDocumentsDirectory();
-        basePath = appDir.path;
-      }
-
-      final devDir = Directory('$basePath/Developer');
-      if (!await devDir.exists()) {
-        await devDir.create(recursive: true);
-      }
-      
-      final fileData = excel.encode();
-      if (fileData != null) {
-        final file = File('${devDir.path}/database_export_${DateTime.now().millisecondsSinceEpoch}.xlsx');
-        await file.writeAsBytes(fileData);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Exported to: ${file.path}')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+    // Add job to queue
+    await _exportQueue.addJob(
+      'Database Export',
+      [], // No items needed for this job type
+      exportDir: settings.exportPath,
+      type: ExportType.excel,
+    );
+    
+    if (mounted) {
+       // Navigate to Export Dashboard to show queue
+       Navigator.push(
+         context,
+         MaterialPageRoute(
+           builder: (context) => const ExportProgressScreen(),
+         ),
+       );
     }
   }
 
@@ -376,8 +417,8 @@ class _DatabaseTabState extends State<_DatabaseTab> {
               
               IconButton(
                 icon: const Icon(Icons.download),
-                tooltip: 'Export All Tables to Excel',
-                onPressed: _exportAllTables,
+                tooltip: 'Export Database to Excel',
+                onPressed: _exportDatabase,
               ),
             ],
           ),
@@ -385,47 +426,51 @@ class _DatabaseTabState extends State<_DatabaseTab> {
         
         // Data View
         Expanded(
-          child: _tableData.isEmpty
-              ? const Center(child: Text('No data'))
-              : SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
-                      columns: [
-                         ..._tableData.first.keys.map((k) => DataColumn(label: Text(k))),
-                         const DataColumn(label: Text('Actions')),
-                      ],
-                      rows: _tableData.map((row) {
-                        return DataRow(
-                          cells: [
-                            ...row.values.map((v) => DataCell(
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 200),
-                                child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis),
-                              ),
-                            )),
-                            DataCell(Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, size: 18),
-                                  onPressed: () => _editRecord(row),
+          child: RefreshIndicator(
+            onRefresh: _loadTableData,
+            child: _tableData.isEmpty
+                ? const Center(child: Text('No data'))
+                : SingleChildScrollView(
+                    scrollDirection: Axis.vertical,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                        columns: [
+                           ..._tableData.first.keys.map((k) => DataColumn(label: Text(k))),
+                           const DataColumn(label: Text('Actions')),
+                        ],
+                        rows: _tableData.map((row) {
+                          return DataRow(
+                            cells: [
+                              ...row.values.map((v) => DataCell(
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(maxWidth: 200),
+                                  child: Text(v?.toString() ?? '', overflow: TextOverflow.ellipsis),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete, size: 18),
-                                  color: Colors.red,
-                                  onPressed: () => _deleteRecord(row),
-                                ),
-                              ],
-                            )),
-                          ],
-                        );
-                      }).toList(),
+                              )),
+                              DataCell(Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit, size: 18),
+                                    onPressed: () => _editRecord(row),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete, size: 18),
+                                    color: Colors.red,
+                                    onPressed: () => _deleteRecord(row),
+                                  ),
+                                ],
+                              )),
+                            ],
+                          );
+                        }).toList(),
+                      ),
                     ),
                   ),
-                ),
+          ),
         ),
       ],
     );
