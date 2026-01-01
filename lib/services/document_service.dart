@@ -190,15 +190,23 @@ class DocumentService {
       final fileSize = await file.length();
       
       // Check against ALL files in _items
-      // Check against ALL files in _items
       for (final item in _items) {
         if (!item.isFile || item.filePath == null) continue;
         
-        // Remove name check - check content only (Size)
-        final existingFile = File(item.filePath!);
-        if (await existingFile.exists()) {
-          final existingSize = await existingFile.length();
-          if (fileSize == existingSize) {
+        // Optimize: Use cached size if available
+        int existingSize = item.size;
+        
+        if (existingSize == 0) {
+           // Fallback for legacy items (no size in DB)
+           final existingFile = File(item.filePath!);
+           if (await existingFile.exists()) {
+             existingSize = await existingFile.length();
+           } else {
+             continue; // File not found on disk, skip
+           }
+        }
+        
+        if (fileSize == existingSize) {
             // Found duplicate (content match by size)
             duplicates.add(DuplicateInfo(
               sourcePath: path,
@@ -208,7 +216,6 @@ class DocumentService {
               existingFilePath: item.filePath!,
               existingName: item.name,
             ));
-          }
         }
       }
     }
@@ -258,6 +265,16 @@ class DocumentService {
     }
     return null;
   }
+  
+  /// Find file ID by absolute path
+  String? findFileIdByPath(String path) {
+    try {
+      final item = _items.firstWhere((item) => item.filePath == path);
+      return item.id;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Get files not in any folder
   List<DocumentItem> getUnorganizedFiles() {
@@ -301,11 +318,15 @@ class DocumentService {
   /// Add file
   Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName}) async {
     final fileName = customName ?? filePath.split(RegExp(r'[/\\]')).last;
+    final fileObj = File(filePath);
+    final size = fileObj.existsSync() ? await fileObj.length() : 0;
+    
     final file = DocumentItem(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: fileName,
       type: DocumentItemType.file,
       filePath: filePath,
+      size: size,
     );
     
     _items.add(file);
@@ -316,7 +337,7 @@ class DocumentService {
     }
     
     await _saveDocuments();
-    _log.info('DocumentService', 'Added file: $fileName');
+    _log.info('DocumentService', 'Added file: $fileName (size: $size)');
     
     return file;
   }

@@ -3,6 +3,8 @@ import 'dart:io';
 import '../../../models/document_item_model.dart';
 import 'package:intl/intl.dart';
 import '../../../services/pdf_tools_service.dart';
+import '../../../services/document_service.dart';
+import 'file_occurrences_screen.dart';
 
 /// File Information Screen - shows detailed file metadata
 class FileInfoScreen extends StatefulWidget {
@@ -20,11 +22,14 @@ class FileInfoScreen extends StatefulWidget {
 class _FileInfoScreenState extends State<FileInfoScreen> {
   bool? _isProtected;
   bool _isLoadingProtection = false;
+  int _occurrencesCount = 0;
+  bool _isLoadingOccurrences = true;
 
   @override
   void initState() {
     super.initState();
     _checkProtection();
+    _loadOccurrences();
   }
 
   Future<void> _checkProtection() async {
@@ -37,6 +42,27 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
           _isLoadingProtection = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadOccurrences() async {
+    final docService = DocumentService();
+    await docService.initialize();
+    
+    // Find all files with same name and size (content match)
+    final allFiles = docService.getAllItems().where((item) => !item.isFolder).toList();
+    final file = widget.file;
+    
+    final matches = allFiles.where((f) {
+      return f.size == file.size && f.size > 0 && // Ensure size > 0
+             f.id != file.id; // Exclude self
+    }).toList();
+    
+    if (mounted) {
+      setState(() {
+        _occurrencesCount = matches.length + 1; // Include current file
+        _isLoadingOccurrences = false;
+      });
     }
   }
 
@@ -156,6 +182,11 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
               ],
             ),
 
+            const SizedBox(height: 16),
+
+            // Occurrences Card
+            _buildOccurrencesCard(context, fileSize),
+
             const SizedBox(height: 24),
 
             // Action Buttons
@@ -196,6 +227,71 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
             const SizedBox(height: 12),
             ...children,
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOccurrencesCard(BuildContext context, int fileSize) {
+    final file = widget.file;
+    
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _occurrencesCount > 1 ? () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => FileOccurrencesScreen(
+                fileName: file.name,
+                fileSize: fileSize,
+              ),
+            ),
+          );
+        } : null,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.copy_all, color: Colors.orange),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Occurrences',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isLoadingOccurrences 
+                          ? 'Checking...'
+                          : _occurrencesCount > 1
+                              ? 'Found in $_occurrencesCount locations'
+                              : 'Only in this location',
+                      style: TextStyle(
+                        color: _occurrencesCount > 1 ? Colors.orange : Colors.grey[600],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (_occurrencesCount > 1)
+                const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
         ),
       ),
     );

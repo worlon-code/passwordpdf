@@ -95,26 +95,54 @@ class _FolderSelectionDialogState extends State<FolderSelectionDialog> {
 
   Future<void> _showCreateFolderDialog() async {
     final controller = TextEditingController();
+    String? errorText;
+
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New Folder'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(labelText: 'Folder Name'),
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Create'),
-          ),
-        ],
+      barrierDismissible: false,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('New Folder'),
+            content: TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                labelText: 'Folder Name',
+                errorText: errorText,
+              ),
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              onChanged: (value) {
+                // Check if name exists in Root (since this dialog creates only in Root)
+                final existingFolders = widget.docService.getRootFolders();
+                final normalizedName = value.trim().toLowerCase();
+                final nameExists = existingFolders.any((f) => f.name.toLowerCase() == normalizedName);
+
+                setState(() {
+                  if (value.trim().isEmpty) {
+                    errorText = 'Name cannot be empty';
+                  } else if (nameExists) {
+                     errorText = 'A folder with this name already exists';
+                  } else {
+                    errorText = null;
+                  }
+                });
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: errorText == null && controller.text.trim().isNotEmpty 
+                    ? () => Navigator.of(context).pop(controller.text.trim())
+                    : null,
+                child: const Text('Create'),
+              ),
+            ],
+          );
+        }
       ),
     );
 

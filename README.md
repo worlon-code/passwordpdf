@@ -2,7 +2,23 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 0.0.27 - All Docs Screen & Enhanced Open With
+## Version 1.0.0-beta.1 - First Beta Release!
+
+### 🚀 New Features
+
+#### File Info & Occurrences (v1.0.0-beta.1)
+- **File Metadata**: View detailed info for any document (size, type, modified date).
+- **Duplicate Tracking**: "Occurrences" card shows how many copies of a file exist in your library.
+- **Visual Locations**: Navigate directly to any duplicate file's folder.
+
+#### Import & Folder Improvements (v1.0.0-beta.1)
+- **Trailing Menu**: New 3-dot menu in "All Docs" list for quick actions.
+- **Duplicate Prevention**: Smart validation prevents creating folders with duplicate names.
+- **Robust Navigation**: Improved tab switching when navigating from deep links or notifications.
+
+### Previous Versions
+
+#### Version 0.0.27 - All Docs Screen & Enhanced Open With
 
 ### 🚀 New Features
 

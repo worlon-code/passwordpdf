@@ -6,6 +6,7 @@ class DocumentItem {
   final String? filePath; // Only for files
   final String? parentId; // Parent folder ID for nested structure
   final List<String> fileIds; // Only for folders - contains file IDs
+  final int size; // File size in bytes (0 for folders or legacy)
   final DateTime createdAt;
   final DateTime modifiedAt;
 
@@ -16,6 +17,7 @@ class DocumentItem {
     this.filePath,
     this.parentId,
     List<String>? fileIds,
+    this.size = 0,
     DateTime? createdAt,
     DateTime? modifiedAt,
   })  : fileIds = fileIds ?? [],
@@ -30,6 +32,7 @@ class DocumentItem {
     String? parentId,
     bool clearParentId = false, // Set to true to explicitly set parentId to null
     List<String>? fileIds,
+    int? size,
     DateTime? modifiedAt,
   }) {
     return DocumentItem(
@@ -39,6 +42,7 @@ class DocumentItem {
       filePath: filePath,
       parentId: clearParentId ? null : (parentId ?? this.parentId),
       fileIds: fileIds ?? this.fileIds,
+      size: size ?? this.size,
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
     );
@@ -52,6 +56,7 @@ class DocumentItem {
       'filePath': filePath,
       'parentId': parentId,
       'fileIds': fileIds,
+      'size': size,
       'createdAt': createdAt.toIso8601String(),
       'modifiedAt': modifiedAt.toIso8601String(),
     };
@@ -67,6 +72,7 @@ class DocumentItem {
       filePath: json['filePath'] as String?,
       parentId: json['parentId'] as String?,
       fileIds: (json['fileIds'] as List<dynamic>?)?.cast<String>() ?? [],
+      size: json['size'] as int? ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       modifiedAt: DateTime.parse(json['modifiedAt'] as String),
     );

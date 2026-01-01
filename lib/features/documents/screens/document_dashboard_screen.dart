@@ -281,10 +281,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     ? _docService.getRootFolders()
                     : _docService.getSubfolders(_currentFolderId!);
                 
-                final nameExists = existingFolders.any((f) => f.name.toLowerCase() == value.toLowerCase());
+                final normalizedName = value.trim().toLowerCase();
+                final nameExists = existingFolders.any((f) => f.name.toLowerCase() == normalizedName);
                 
                 setState(() {
-                  if (value.isEmpty) {
+                  if (value.trim().isEmpty) {
                     errorText = 'Name cannot be empty';
                   } else if (nameExists) {
                     errorText = 'A folder with this name already exists';
@@ -300,7 +301,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
-                onPressed: errorText == null && controller.text.isNotEmpty
+                onPressed: errorText == null && controller.text.trim().isNotEmpty
                     ? () => Navigator.pop(context, true)
                     : null,
                 child: const Text('Create'),
@@ -311,10 +312,10 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       ),
     );
 
-    if (result == true && controller.text.isNotEmpty) {
+    if (result == true && controller.text.trim().isNotEmpty) {
       try {
         await _docService.createFolder(
-          controller.text,
+          controller.text.trim(),
           parentId: _currentFolderId, // Will be null for root, or current folder ID
         );
         setState(() {});

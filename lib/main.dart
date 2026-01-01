@@ -48,7 +48,7 @@ class PendingFileOpen {
 }
 
 // App version for tracking
-const String appVersion = '0.0.27';
+const String appVersion = '1.0.0-beta.1';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 

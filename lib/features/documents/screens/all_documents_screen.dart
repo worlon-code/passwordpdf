@@ -15,6 +15,7 @@ import 'package:passwordpdf_manager/models/conflict_resolution_model.dart';
 import 'package:passwordpdf_manager/models/document_item_model.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/folder_selection_dialog.dart';
+import 'package:passwordpdf_manager/features/documents/screens/file_info_screen.dart';
 
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -878,6 +879,39 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     }
   }
 
+  void _showFileInfo(FileSystemEntity file) {
+    // Navigate to File Info Screen
+    // Create temporary DocumentItem for display
+    final stat = file.statSync();
+    
+    // Check if imported
+    final docService = Provider.of<DocumentService>(context, listen: false);
+    final fileName = file.path.split(Platform.pathSeparator).last;
+    final existingId = docService.findFileIdByPath(file.path);
+
+    final item = DocumentItem(
+      id: existingId ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
+      name: fileName,
+      type: DocumentItemType.file,
+      filePath: file.path,
+      size: stat.size,
+      createdAt: stat.changed,
+      modifiedAt: stat.modified,
+    );
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => FileInfoScreen(file: item),
+      ),
+    ).then((result) {
+      if (result == 'open') {
+         // Handle 'Open' action from File Info
+         _handleFileTap(file);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -1031,7 +1065,26 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                                     onLongPress: () => _toggleSelection(file.path),
                                     trailing: _isSelectionMode 
                                         ? Checkbox(value: isSelected, onChanged: (v) => _toggleSelection(file.path))
-                                        : null,
+                                        : PopupMenuButton<String>(
+                                            icon: const Icon(Icons.more_vert),
+                                            onSelected: (value) {
+                                              if (value == 'info') {
+                                                _showFileInfo(file);
+                                              }
+                                            },
+                                            itemBuilder: (context) => [
+                                              const PopupMenuItem(
+                                                value: 'info',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(Icons.info_outline),
+                                                    SizedBox(width: 8),
+                                                    Text('File Info'),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                   );
                                 },
                               ),
