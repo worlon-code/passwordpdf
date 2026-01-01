@@ -313,13 +313,14 @@ class StorageService {
   // ==================== LOGS OPERATIONS ====================
 
   /// Insert a log entry
-  Future<void> insertLog(Map<String, dynamic> log) async {
+  Future<void> insertLog(Map<String, dynamic> log, {int retentionLimit = 8000}) async {
     final db = await database;
     await db.transaction((txn) async {
        await txn.insert(AppConstants.logsTable, log);
-       // Prune old logs (Keep last 8000)
+       // Prune old logs (Keep last N)
        await txn.rawDelete(
-         'DELETE FROM ${AppConstants.logsTable} WHERE id NOT IN (SELECT id FROM ${AppConstants.logsTable} ORDER BY id DESC LIMIT 8000)'
+         'DELETE FROM ${AppConstants.logsTable} WHERE id NOT IN (SELECT id FROM ${AppConstants.logsTable} ORDER BY id DESC LIMIT ?)',
+         [retentionLimit]
        );
     });
   }

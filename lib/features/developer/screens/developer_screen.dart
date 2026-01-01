@@ -110,6 +110,54 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
     });
   }
 
+  Future<void> _showLogSettings() async {
+    final settings = Provider.of<SettingsService>(context, listen: false);
+    final controller = TextEditingController(text: settings.maxLogCount.toString());
+    
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Log Settings'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Max Log Retention (1000 - 50000)'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                suffixText: 'entries',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final val = int.tryParse(controller.text);
+              if (val != null) {
+                await settings.setMaxLogCount(val);
+                if (mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(
+                     SnackBar(content: Text('Max logs set to ${settings.maxLogCount}')),
+                   );
+                   Navigator.pop(context);
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _exportLogs() async {
     try {
       final settings = Provider.of<SettingsService>(context, listen: false);
@@ -175,6 +223,11 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
             children: [
               Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
               const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                tooltip: 'Log Settings',
+                onPressed: _showLogSettings,
+              ),
               IconButton(
                 icon: const Icon(Icons.download),
                 tooltip: 'Export Logs',

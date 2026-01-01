@@ -561,6 +561,11 @@ class ExportQueueService {
          maxProgress: 100
       );
     }
+    
+    // Remove default Sheet1 if exists and we have other sheets
+    if (excel.sheets.length > 1) {
+      excel.delete('Sheet1');
+    }
 
     // Save file
     String savePath;
@@ -623,6 +628,9 @@ class ExportQueueService {
         TextCellValue(log['stack_trace']?.toString() ?? ''),
       ]);
     }
+    
+    // Remove default Sheet1
+    excel.delete('Sheet1');
 
     String savePath;
     if (job.exportDir != null) {

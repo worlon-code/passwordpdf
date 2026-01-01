@@ -30,6 +30,7 @@ class SettingsService extends ChangeNotifier {
   bool _hasPinSet = false;
   Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
   int _fontSizeAdjustment = -3; // -7 to 0, default -3
+  int _maxLogCount = 8000;
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -40,6 +41,7 @@ class SettingsService extends ChangeNotifier {
   bool get pinEnabled => _authMethod == AuthMethod.pinOnly || _authMethod == AuthMethod.both;
   Color get accentColor => _accentColor;
   int get fontSizeAdjustment => _fontSizeAdjustment;
+  int get maxLogCount => _maxLogCount;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -83,6 +85,13 @@ class SettingsService extends ChangeNotifier {
       _fontSizeAdjustment = fontAdj.clamp(-7, 0);
     }
 
+    // Load max log count
+    final maxLog = _prefs!.getInt('max_log_count');
+    if (maxLog != null) {
+      _maxLogCount = maxLog.clamp(1000, 50000);
+    }
+    _log.setMaxLogLimit(_maxLogCount);
+
     // Check if PIN is set
     final pin = await _secureStorage.read(key: 'app_pin');
     _hasPinSet = pin != null && pin.isNotEmpty;
@@ -118,6 +127,14 @@ class SettingsService extends ChangeNotifier {
   Future<void> setFontSizeAdjustment(int adjustment) async {
     _fontSizeAdjustment = adjustment.clamp(-7, 0);
     await _prefs?.setInt('font_size_adjustment', _fontSizeAdjustment);
+    notifyListeners();
+  }
+
+  /// Set max log count (1000 to 50000)
+  Future<void> setMaxLogCount(int count) async {
+    _maxLogCount = count.clamp(1000, 50000);
+    await _prefs?.setInt('max_log_count', _maxLogCount);
+    _log.setMaxLogLimit(_maxLogCount);
     notifyListeners();
   }
 

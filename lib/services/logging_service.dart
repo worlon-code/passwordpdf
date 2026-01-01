@@ -46,9 +46,14 @@ class LoggingService {
 
   final StorageService _storage = StorageService();
   final List<LogEntry> _logs = [];
-  final int _maxLogs = 500;
+  final int _maxLogsInMem = 100; // Reduced memory logs
+  int _maxLogLimit = 8000; // Default for persistence
 
   List<LogEntry> get logs => List.unmodifiable(_logs);
+  
+  void setMaxLogLimit(int limit) {
+    if (limit > 0) _maxLogLimit = limit;
+  }
 
   void _addLog(String level, String tag, String message, [String? stackTrace]) {
     final entry = LogEntry(
@@ -61,8 +66,8 @@ class LoggingService {
     
     _logs.insert(0, entry); // Add at beginning for newest first
     
-    // Keep max logs limit
-    if (_logs.length > _maxLogs) {
+    // Keep max logs limit (memory)
+    if (_logs.length > _maxLogsInMem) {
       _logs.removeLast();
     }
     
@@ -73,7 +78,7 @@ class LoggingService {
     }
     
     // Persist async
-    _storage.insertLog(entry.toMap());
+    _storage.insertLog(entry.toMap(), retentionLimit: _maxLogLimit);
   }
 
   void info(String tag, String message) {
