@@ -25,21 +25,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final LoggingService _log = LoggingService();
   final EncryptionService _encryptionService = EncryptionService();
   bool _biometricSupported = false;
-  bool _encryptionKeySet = false;
+
 
   @override
   void initState() {
     super.initState();
     _log.info('SettingsScreen', 'Screen initialized');
     _checkBiometricSupport();
-    _checkEncryptionKey();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // Refresh encryption key status when screen is revisited
-    _checkEncryptionKey();
+    _checkBiometricSupport();
   }
 
   Future<void> _checkBiometricSupport() async {
@@ -49,12 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  Future<void> _checkEncryptionKey() async {
-    final isSet = await _encryptionService.isKeySet();
-    setState(() {
-      _encryptionKeySet = isSet;
-    });
-  }
+
 
   void _setupPin(BuildContext context) {
     Navigator.push(
@@ -97,152 +91,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _setupEncryptionKey() async {
-    // First check if key is already set
-    final keyExists = await _encryptionService.isKeySet();
-    if (keyExists) {
-      if (!mounted) return;
-      await showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.check_circle, color: Colors.green),
-              SizedBox(width: 8),
-              Text('Key Already Set'),
-            ],
-          ),
-          content: const Text('Encryption key is already configured.'),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-      // Update state to reflect key is set
-      setState(() {
-        _encryptionKeySet = true;
-      });
-      return;
-    }
-    
-    final controller = TextEditingController();
-    final generatedKey = _encryptionService.generateRandomKey(24);
-    controller.text = generatedKey;
 
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.key, color: Colors.amber),
-            SizedBox(width: 8),
-            Text('Set Encryption Key'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'This key will be used to encrypt all your stored passwords. '
-              'You can enter your own key or use the generated one.',
-              style: TextStyle(fontSize: 14),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '⚠️ WARNING: This cannot be changed later!',
-              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              decoration: InputDecoration(
-                labelText: 'Encryption Key',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Generate new key',
-                  onPressed: () {
-                    controller.text = _encryptionService.generateRandomKey(24);
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Set Key'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true && controller.text.isNotEmpty) {
-      final success = await _encryptionService.setEncryptionKey(controller.text);
-      if (success) {
-        setState(() {
-          _encryptionKeySet = true;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Encryption key set successfully')),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to set encryption key'), backgroundColor: Colors.red),
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _viewEncryptionKey() async {
-    final authorized = await showDeveloperPasswordDialog(
-      context,
-      title: 'View Encryption Key',
-      description: 'Enter developer password to view the encryption key',
-    );
-
-    if (authorized) {
-      final key = await _encryptionService.getEncryptionKey('Portal123!');
-      if (key != null && mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.key, color: Colors.amber),
-                SizedBox(width: 8),
-                Text('Encryption Key'),
-              ],
-            ),
-            content: SelectableText(
-              key,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        );
-      }
-    }
-  }
 
   Future<void> _openDebugLogs() async {
     final authorized = await showDeveloperPasswordDialog(
@@ -639,34 +488,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 24),
           
-          // Encryption Section
-          _buildSectionHeader('Encryption'),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: Icon(
-                    Icons.key,
-                    color: _encryptionKeySet ? Colors.green : Colors.orange,
-                  ),
-                  title: const Text('Encryption Key'),
-                  subtitle: Text(
-                    _encryptionKeySet ? 'Key is set' : 'No key set - tap to configure',
-                  ),
-                  trailing: _encryptionKeySet
-                      ? IconButton(
-                          icon: const Icon(Icons.visibility),
-                          tooltip: 'View key (requires password)',
-                          onPressed: _viewEncryptionKey,
-                        )
-                      : ElevatedButton(
-                          onPressed: _setupEncryptionKey,
-                          child: const Text('Set Key'),
-                        ),
-                ),
-              ],
-            ),
-          ),
+
           
           const SizedBox(height: 24),
           

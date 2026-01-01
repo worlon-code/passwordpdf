@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:excel/excel.dart';
 import '../../settings/services/settings_service.dart';
+import '../../../services/encryption_service.dart';
 import 'dart:convert';
 
 /// Developer Screen with password protection and generic DB viewer
@@ -22,11 +23,111 @@ class DeveloperScreen extends StatefulWidget {
 
 class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final EncryptionService _encryptionService = EncryptionService();
   
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+  }
+
+  Future<void> _manageEncryptionKey() async {
+    final isSet = await _encryptionService.isKeySet();
+    
+    if (isSet) {
+      // View Key
+      final key = await _encryptionService.getEncryptionKey('Portal123!'); // Developer password verified
+      if (key != null && mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.key, color: Colors.amber),
+                SizedBox(width: 8),
+                Text('Encryption Key'),
+              ],
+            ),
+            content: SelectableText(
+              key,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      // Set Key
+      final controller = TextEditingController();
+      final generatedKey = _encryptionService.generateRandomKey(24);
+      controller.text = generatedKey;
+
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.key, color: Colors.amber),
+              SizedBox(width: 8),
+              Text('Set Encryption Key'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This key will be used to encrypt all your stored passwords.',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                  labelText: 'Encryption Key',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Generate new key',
+                    onPressed: () {
+                      controller.text = _encryptionService.generateRandomKey(24);
+                    },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Set Key'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == true && controller.text.isNotEmpty) {
+        final success = await _encryptionService.setEncryptionKey(controller.text);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(success ? 'Encryption key set' : 'Failed to set key'),
+              backgroundColor: success ? Colors.green : Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   @override
@@ -50,6 +151,11 @@ class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProv
       appBar: AppBar(
         title: const Text('Developer Tools'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.key),
+            tooltip: 'Encryption Key',
+            onPressed: _manageEncryptionKey,
+          ),
           IconButton(
             icon: const Icon(Icons.list_alt),
             tooltip: 'Export Queue',
