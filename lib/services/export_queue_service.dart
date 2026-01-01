@@ -175,10 +175,10 @@ class ExportQueueService {
   }
   
   /// Get counts by status
-  Map<ExportStatus, int> get statusCounts {
+  Map<ExportStatus, int> getStatusCounts({bool showDeveloper = false}) {
     return {
       for (var status in ExportStatus.values)
-        status: _jobs.where((j) => j.status == status).length,
+        status: _jobs.where((j) => j.status == status && j.isDeveloper == showDeveloper).length,
     };
   }
   

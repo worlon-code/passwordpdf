@@ -106,7 +106,7 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final counts = _exportQueue.statusCounts;
+    final counts = _exportQueue.getStatusCounts(showDeveloper: widget.showDeveloper);
     
     return Scaffold(
       appBar: AppBar(

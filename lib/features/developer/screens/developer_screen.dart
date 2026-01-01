@@ -87,6 +87,8 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   final LoggingService _log = LoggingService();
   final ExportQueueService _exportQueue = ExportQueueService();
   List<LogEntry> _logs = [];
+  String _selectedFilter = 'All';
+  final List<String> _filters = ['All', 'Info', 'Warn', 'Error'];
 
   @override
   void initState() {
@@ -96,7 +98,14 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
 
   Future<void> _loadLogs() async {
     await Future.delayed(const Duration(milliseconds: 500));
-    setState(() => _logs = _log.logs);
+    final allLogs = _log.logs;
+    setState(() {
+      if (_selectedFilter == 'All') {
+        _logs = allLogs;
+      } else {
+        _logs = allLogs.where((l) => l.level.toLowerCase() == _selectedFilter.toLowerCase()).toList();
+      }
+    });
   }
 
   Future<void> _exportLogs() async {
@@ -146,6 +155,34 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: _filters.map((filter) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: ChoiceChip(
+                    label: Text(filter, style: TextStyle(
+                      fontSize: 12,
+                      color: _selectedFilter == filter ? Colors.white : Colors.black87,
+                    )),
+                    selected: _selectedFilter == filter,
+                    selectedColor: Theme.of(context).primaryColor,
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() => _selectedFilter = filter);
+                        _loadLogs();
+                      }
+                    },
+                    visualDensity: VisualDensity.compact,
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.all(8.0),
           child: Row(

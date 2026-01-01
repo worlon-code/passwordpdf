@@ -70,8 +70,6 @@ class StorageService {
         items_json TEXT NOT NULL,
         progress INTEGER NOT NULL DEFAULT 0,
         processed_items INTEGER NOT NULL DEFAULT 0,
-        progress INTEGER NOT NULL DEFAULT 0,
-        processed_items INTEGER NOT NULL DEFAULT 0,
         total_items INTEGER NOT NULL DEFAULT 0,
         type TEXT DEFAULT 'zip',
         is_developer INTEGER DEFAULT 0
@@ -126,28 +124,12 @@ class StorageService {
   /// Insert or update an export job
   Future<int> insertOrUpdateExportJob(Map<String, dynamic> jobMap) async {
     final db = await database;
-    // We need to stringify items_json
-    final mapToSave = Map<String, dynamic>.from(jobMap);
-    if (mapToSave['items'] != null) {
-      // Convert list of items to JSON string
-      // Note: The UI/Service uses 'items' list, but DB uses 'items_json' string
-      // We assume the service prepares the map correctly or we handle it here.
-      // Actually, ExportJob.toJson returns 'items' as List<Map>.
-      // We need to JSON encode it for storage.
-    }
-    
     return await db.insert(
       AppConstants.exportJobsTable,
       jobMap, // Caller must ensure this matches DB schema or we adapt it
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
-  
-  // Note: Since ExportJob.toJson() returns nested maps, sqflite insert might complain if we pass List objects directly 
-  // into TEXT columns. We should handle the conversion in ExportQueueService or here. 
-  // Unifying implementation: I will make StorageService accept the raw map and handle JSON encoding if needed, 
-  // OR expects simple types.
-  // Standard pattern: Service creates the map suitable for DB.
   
   /// Insert/Update export job raw
   Future<void> saveExportJob(String id, Map<String, dynamic> data) async {
