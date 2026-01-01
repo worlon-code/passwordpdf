@@ -78,7 +78,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[400], 
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Remove'),
           ),
         ],

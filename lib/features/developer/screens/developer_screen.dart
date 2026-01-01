@@ -12,6 +12,8 @@ import 'package:excel/excel.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../services/encryption_service.dart';
 import 'dart:convert';
+import 'package:flutter/foundation.dart'; // For compute
+import '../utils/json_parser.dart'; // Helper for isolate
 
 /// Developer Screen with password protection and generic DB viewer
 class DeveloperScreen extends StatefulWidget {
@@ -324,7 +326,9 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
                   child: FilterChip(
                     label: Text('${filter} (${_logCounts[filter] ?? 0})', style: TextStyle(
                       fontSize: 12,
-                      color: _selectedFilter == filter ? Colors.white : Colors.black87,
+                      color: _selectedFilter == filter 
+                          ? Colors.white 
+                          : Theme.of(context).colorScheme.onSurface,
                     )),
                     selected: _selectedFilter == filter,
                     selectedColor: Theme.of(context).primaryColor,
@@ -461,16 +465,8 @@ class _DatabaseTabState extends State<_DatabaseTab> {
       final prefs = await SharedPreferences.getInstance();
       final jsonStr = prefs.getString(key);
       if (jsonStr != null) {
-        try {
-          final decoded = jsonDecode(jsonStr);
-          if (decoded is List) {
-            data = List<Map<String, dynamic>>.from(decoded.map((e) => Map<String, dynamic>.from(e)));
-          } else if (decoded is Map) {
-             data = [Map<String, dynamic>.from(decoded)];
-          }
-        } catch (e) {
-          data = [{'error': 'Failed to parse JSON: $e'}];
-        }
+        // Use compute to parse JSON in background isolate to prevent UI freeze
+        data = await compute(parseJsonTableData, jsonStr);
       }
     } else {
       // Load SQL data
