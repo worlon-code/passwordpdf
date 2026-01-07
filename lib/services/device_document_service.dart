@@ -2,8 +2,8 @@ import 'dart:io';
 import 'dart:isolate';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-
-import 'package:passwordpdf_manager/services/logging_service.dart';
+import '../services/logging_service.dart';
+import '../features/common/models/sort_option.dart';
 
 class DeviceDocumentService {
   List<FileSystemEntity> _cachedDocuments = [];
@@ -79,46 +79,50 @@ class DeviceDocumentService {
     final end = (offset + limit < filtered.length) ? offset + limit : filtered.length;
     return filtered.sublist(offset, end);
   }
-  
   /// Sort documents in cache
-  Future<void> sortDocuments(String sortType) async {
-      _log.info('DeviceDocumentService', 'Sorting documents by $sortType');
+  Future<void> sortDocuments(SortOption option, {bool ascending = true}) async {
+      _log.info('DeviceDocumentService', 'Sorting documents by $option (Asc: $ascending)');
+      
+      // Capture list reference to pass to isolate (Isolate.run handles sending/copying)
+      final docsToSort = List<FileSystemEntity>.from(_cachedDocuments); 
+      
       // Run sort in Isolate to avoid UI freeze for large lists
+      // IMPORTANT: Use a static method or top-level function to avoid capturing 'this'
       _cachedDocuments = await Isolate.run(() {
-         // ... (keep isolate logic)
-         try {
-             final List<FileSystemEntity> docs = List.from(_cachedDocuments); // Copy for isolation
-             // ... same sort logic ...
-          } catch(e) {
-             return _cachedDocuments; // Fallback? No, isolate needs to return value
+         return _sortDocsInternal(docsToSort, option, ascending);
+      });
+  }
+
+  /// Static helper for sorting to avoid Isolate capture issues
+  static List<FileSystemEntity> _sortDocsInternal(List<FileSystemEntity> docs, SortOption option, bool ascending) {
+     docs.sort((a, b) {
+        try {
+          // Cache stats if possible or just read sync (Isolate makes it safe)
+          final statA = a.statSync();
+          final statB = b.statSync();
+          
+          int comparison = 0;
+          switch (option) {
+            case SortOption.name:
+               comparison = a.path.split('/').last.toLowerCase().compareTo(b.path.split('/').last.toLowerCase());
+               break;
+            case SortOption.size:
+               comparison = statA.size.compareTo(statB.size);
+               break;
+            case SortOption.dateCreated:
+               comparison = statA.accessed.compareTo(statB.accessed);
+               break;
+            case SortOption.dateModified:
+               comparison = statA.modified.compareTo(statB.modified);
+               break;
           }
-           final List<FileSystemEntity> docs = List.from(_cachedDocuments); // Copy for isolation
-           docs.sort((a, b) {
-            try {
-              final statA = a.statSync();
-              final statB = b.statSync();
-              
-              switch (sortType) {
-                case 'Date (Oldest)':
-                   return statA.modified.compareTo(statB.modified);
-                case 'Name (A-Z)':
-                   return a.path.split('/').last.toLowerCase().compareTo(b.path.split('/').last.toLowerCase());
-                case 'Name (Z-A)':
-                   return b.path.split('/').last.toLowerCase().compareTo(a.path.split('/').last.toLowerCase());
-                case 'Size (Largest)':
-                   return statB.size.compareTo(statA.size);
-                case 'Size (Smallest)':
-                   return statA.size.compareTo(statB.size);
-                case 'Date (Newest)':
-                default:
-                   return statB.modified.compareTo(statA.modified);
-              }
-            } catch (_) {
-              return 0;
-            }
-          });
-          return docs;
-      }, debugName: 'sortIsolate');
+          
+          return ascending ? comparison : -comparison;
+        } catch (_) {
+          return 0;
+        }
+      });
+      return docs;
   }
 // ...
 
@@ -155,39 +159,65 @@ class DeviceDocumentService {
       '.', // Hidden files
       'cache',
       'thumb',
+      'backups',
+      'backup'
     };
+    
+    // Explicitly scan these if they exist, to handle scoped storage quirks
+    final priorityDirs = [
+      Directory('${root.path}/Download'),
+      Directory('${root.path}/Documents'),
+      Directory('${root.path}/DCIM'),
+      Directory('${root.path}/Pictures'),
+      Directory('${root.path}/WhatsApp/Media/WhatsApp Documents'),
+      Directory('${root.path}/Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Documents'),
+      Directory('${root.path}/Telegram/Telegram Documents'),
+    ];
 
-    try {
-      final List<Directory> stack = [root];
-      
-      while (stack.isNotEmpty) {
-        final current = stack.removeLast();
-        
-        try {
-          final entities = current.listSync(recursive: false, followLinks: false);
-          
-          for (final entity in entities) {
-            final name = entity.path.split('/').last;
+    final Set<String> visitedPaths = {};
+    final List<Directory> stack = [];
 
-            // Skip hidden items/ignored folders
-            if (name.startsWith('.') || ignoredDirs.contains(name)) continue;
+    // Add root
+    stack.add(root);
 
-             if (entity is Directory) {
-               stack.add(entity);
-             } else if (entity is File) {
-               final ext = name.toLowerCase().split('.').last;
-               if (allowedExtensions.contains('.$ext')) {
-                 documents.add(entity);
-               }
-             }
-          }
-        } catch (e) {
-          // Access denied to specific folder, skip
-          continue;
-        }
+    // Add priority dirs (in case root listing fails to include them due to permissions)
+    for (final dir in priorityDirs) {
+      if (dir.existsSync()) {
+        stack.add(dir);
       }
-    } catch (e) {
-      // General failure
+    }
+
+    while (stack.isNotEmpty) {
+      final current = stack.removeLast();
+      
+      if (visitedPaths.contains(current.path)) continue;
+      visitedPaths.add(current.path);
+      
+      try {
+        final entities = current.listSync(recursive: false, followLinks: false);
+        
+        for (final entity in entities) {
+          final name = entity.path.split('/').last;
+
+          // Skip hidden items/ignored folders
+          if (name.startsWith('.') || ignoredDirs.contains(name)) continue;
+
+           if (entity is Directory) {
+             // Don't re-add if already visited (though stack check handles processing)
+             if (!visitedPaths.contains(entity.path)) {
+               stack.add(entity);
+             }
+           } else if (entity is File) {
+             final ext = name.toLowerCase().split('.').last;
+             if (allowedExtensions.contains('.$ext')) {
+               documents.add(entity);
+             }
+           }
+        }
+      } catch (e) {
+        // Access denied to specific folder, skip
+        continue;
+      }
     }
     
     // Default sort: Newest first

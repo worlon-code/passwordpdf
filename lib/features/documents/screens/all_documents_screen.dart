@@ -16,9 +16,10 @@ import 'package:passwordpdf_manager/models/document_item_model.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/folder_selection_dialog.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_info_screen.dart';
-
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
+import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
+import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
 
 class AllDocumentsScreen extends StatefulWidget {
   const AllDocumentsScreen({super.key});
@@ -37,6 +38,10 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   bool _isLoadingMore = false;
   String _selectedFilter = 'PDF'; // Default to PDF
   String _errorMessage = '';
+  
+  // Sorting
+  SortOption _sortOption = SortOption.dateModified;
+  bool _sortAscending = false; // Default Newest first
   
   // Selection
   final Set<String> _selectedPaths = {};
@@ -105,6 +110,8 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     }
   }
 
+  // ... inside _AllDocumentsScreenState
+
   Future<void> _loadDocuments() async {
     setState(() {
       _isLoading = true;
@@ -117,7 +124,14 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
     try {
       // 1. Scan and cache
-      await _deviceService.scanDevice();
+      // Only rescan if not already cached or forced? 
+      // For now, scanDevice checks _isScanning but ideally we trust the cache unless pulled to refresh
+      if (_displayedFiles.isEmpty) { 
+         await _deviceService.scanDevice();
+      }
+      
+      // Apply Sort
+      await _deviceService.sortDocuments(_sortOption, ascending: _sortAscending);
       
       // 2. Get first page
       final files = _deviceService.getDocuments(
@@ -126,6 +140,9 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
         filterType: _selectedFilter,
         searchQuery: _searchQuery,
       );
+
+      // ... rest of method
+
 
       if (mounted) {
         setState(() {
@@ -816,67 +833,21 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     );
   }
 
-  Future<void> _showSortDialog() async {
-    final sortOptions = [
-      'Date (Newest)',
-      'Date (Oldest)',
-      'Name (A-Z)',
-      'Name (Z-A)',
-      'Size (Largest)',
-      'Size (Smallest)',
-    ];
-    
-    await showDialog(
+  void _showSortOptions() {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Sort By'),
-        children: sortOptions.map((option) => SimpleDialogOption(
-          onPressed: () {
-            Navigator.pop(context);
-            _applySort(option);
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: Text(option),
-          ),
-        )).toList(),
+      builder: (context) => SortBottomSheet(
+        currentOption: _sortOption,
+        isAscending: _sortAscending,
+        onSortChanged: (option, ascending) {
+          setState(() {
+            _sortOption = option;
+            _sortAscending = ascending;
+          });
+          _loadDocuments();
+        },
       ),
     );
-  }
-
-  Future<void> _applySort(String sortType) async {
-    setState(() {
-      _isLoading = true;
-      _displayedFiles = [];
-      _currentOffset = 0;
-      _hasMore = true;
-      _selectedPaths.clear();
-    });
-
-    try {
-      await _deviceService.sortDocuments(sortType);
-      
-      // Reload first page
-       final files = _deviceService.getDocuments(
-          offset: 0,
-          limit: _pageSize,
-          filterType: _selectedFilter,
-          searchQuery: _searchQuery,
-       );
-       
-       if (mounted) {
-         setState(() {
-           _displayedFiles = files;
-           _isLoading = false;
-           _hasMore = files.length >= _pageSize;
-           _currentOffset = files.length;
-         });
-       }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
   }
 
   void _showFileInfo(FileSystemEntity file) {
@@ -972,7 +943,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
             ),
             IconButton(
                icon: const Icon(Icons.sort),
-               onPressed: _showSortDialog,
+               onPressed: _showSortOptions,
             ),
             IconButton(
               icon: const Icon(Icons.refresh),

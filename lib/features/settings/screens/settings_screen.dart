@@ -11,6 +11,7 @@ import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
 import '../../developer/screens/developer_screen.dart';
+import '../../../main.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -521,7 +522,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: Icon(Icons.info),
                   title: Text('App Version'),
-                  subtitle: Text('0.0.24'),
+                  subtitle: Text(appVersion),
                 ),
                 Divider(height: 1),
                 ListTile(

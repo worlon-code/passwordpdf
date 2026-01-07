@@ -146,8 +146,18 @@ class DocumentService {
       // 4. Copy File
       await file.copy(newPath);
       
+      // Get source file stats to preserve dates
+      final stat = await file.stat();
+      final modified = stat.modified;
+      final accessed = stat.accessed; // We can use accessed as created time if needed, or just modification time for both
+      
       // 5. Add to DB (Unorganized)
-      final newItem = await addFile(newPath, customName: fileName);
+      final newItem = await addFile(
+        newPath, 
+        customName: fileName,
+        createdAt: accessed, // Best effort for creation time
+        modifiedAt: modified,
+      );
       
       _log.info('DocumentService', 'Imported file: $sourceName as $fileName');
       return ImportResult.success(newPath, newItem);
@@ -316,10 +326,14 @@ class DocumentService {
   }
 
   /// Add file
-  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName}) async {
+  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName, DateTime? createdAt, DateTime? modifiedAt}) async {
     final fileName = customName ?? filePath.split(RegExp(r'[/\\]')).last;
     final fileObj = File(filePath);
     final size = fileObj.existsSync() ? await fileObj.length() : 0;
+    
+    // Default to current time if not provided
+    // BUT for imported files, we want to respect the original file's dates if possible
+    final now = DateTime.now();
     
     final file = DocumentItem(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -327,6 +341,8 @@ class DocumentService {
       type: DocumentItemType.file,
       filePath: filePath,
       size: size,
+      createdAt: createdAt ?? now,
+      modifiedAt: modifiedAt ?? now,
     );
     
     _items.add(file);

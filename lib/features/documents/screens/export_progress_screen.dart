@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:share_plus/share_plus.dart';
 import 'package:cross_file/cross_file.dart';
 import '../../../services/export_queue_service.dart';
+import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
+import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
 
 /// Screen showing export queue progress with filters
 class ExportProgressScreen extends StatefulWidget {
@@ -17,6 +19,10 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
   final ExportQueueService _exportQueue = ExportQueueService();
   ExportStatus? _filterStatus; // null = all
   final Set<String> _selectedJobIds = {};
+  
+  // Sorting State
+  SortOption _sortOption = SortOption.dateCreated;
+  bool _sortAscending = false; // Default newest first
 
   @override
   void initState() {
@@ -36,8 +42,37 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
 
   List<ExportJob> get _filteredJobs {
     final jobs = _exportQueue.jobs.where((j) => j.isDeveloper == widget.showDeveloper).toList();
-    if (_filterStatus == null) return jobs;
-    return jobs.where((j) => j.status == _filterStatus).toList();
+    
+    // Filter
+    final filtered = _filterStatus == null 
+        ? jobs 
+        : jobs.where((j) => j.status == _filterStatus).toList();
+
+    // Sort
+    filtered.sort((a, b) {
+      int comparison = 0;
+      switch (_sortOption) {
+        case SortOption.name:
+          comparison = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          break;
+        case SortOption.size:
+          // Estimate size or use 0 if not available (ExportJob might not have size always)
+          comparison = 0; 
+          break;
+        case SortOption.dateCreated:
+           comparison = a.createdAt.compareTo(b.createdAt);
+           break;
+        case SortOption.dateModified:
+           // Use completedAt if available, else created timestamp
+           final timeA = a.completedAt ?? a.createdAt;
+           final timeB = b.completedAt ?? b.createdAt;
+           comparison = timeA.compareTo(timeB);
+           break;
+      }
+      return _sortAscending ? comparison : -comparison;
+    });
+
+    return filtered;
   }
 
   void _toggleSelection(String id) {
@@ -140,14 +175,33 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
               onPressed: _deleteSelectedJobs,
             ),
           ] else if (_exportQueue.jobs.any((j) => 
-            j.status == ExportStatus.completed || j.status == ExportStatus.error))
-            IconButton(
+            j.status == ExportStatus.completed || j.status == ExportStatus.error)) ...[
+             IconButton(
+               icon: const Icon(Icons.sort),
+               onPressed: () {
+                 showModalBottomSheet(
+                    context: context,
+                    builder: (context) => SortBottomSheet(
+                      currentOption: _sortOption,
+                      isAscending: _sortAscending,
+                      onSortChanged: (option, ascending) {
+                        setState(() {
+                          _sortOption = option;
+                          _sortAscending = ascending;
+                        });
+                      },
+                    ),
+                  );
+               },
+             ),
+             IconButton(
               icon: const Icon(Icons.delete_sweep),
               tooltip: 'Clear finished',
               onPressed: () {
                 _exportQueue.clearFinished(isDeveloper: widget.showDeveloper);
               },
             ),
+          ],
         ],
       ),
       body: Column(
