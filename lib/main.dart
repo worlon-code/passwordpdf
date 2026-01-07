@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'services/cleanup_service.dart';
 import 'package:provider/provider.dart';
 import 'core/theme/app_theme.dart';
 import 'features/settings/services/settings_service.dart';
@@ -53,116 +55,136 @@ const String appVersion = '1.0.0-beta.2';
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  
-  final log = LoggingService();
-  log.info('App', '=== PDF Password Manager v$appVersion Starting ===');
-  
-  // Initialize settings service
-  final settingsService = SettingsService();
-  await settingsService.initialize();
-  
-  // Setup Notification Listener
-  final exportService = ExportQueueService();
-  // Ensure init is called so notification plugin is ready
-  await exportService.init();
-  
-  exportService.onNotificationTap.listen((payload) {
-    log.info('App', 'Notification tapped: $payload');
+  runZonedGuarded<Future<void>>(() async {
+    WidgetsFlutterBinding.ensureInitialized();
     
-    if (payload.startsWith('open_folder:')) {
-      // Navigate to specific folder in Dashboard
-      final folderId = payload.replaceFirst('open_folder:', '');
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => FolderNavigationScreen(folderId: folderId == 'root' ? null : folderId)),
-        (route) => false,
-      );
-    } else if (payload == 'open_duplicates') {
-       // Show duplicates sheet on current screen without navigating away
-       PendingFileOpen.showDuplicatesSheet = true;
-       
-       // Get the current context from navigatorKey and show sheet directly
-       final ctx = navigatorKey.currentContext;
-       if (ctx != null && PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
-         final duplicates = PendingFileOpen.duplicateOptions!;
-         final fileName = PendingFileOpen.fileName ?? 
-             (duplicates.isNotEmpty ? duplicates.first.existingName : 'File');
+    final log = LoggingService();
+    log.info('App', '=== PDF Password Manager v$appVersion Starting ===');
+    
+    // Global Flutter Error Handler (Layout errors, etc)
+    FlutterError.onError = (FlutterErrorDetails details) {
+      log.error('Flutter', 'Uncaught Flutter Error', details.exception, details.stack);
+      // Optional: Dump to console for dev
+      FlutterError.dumpErrorToConsole(details);
+    };
+
+    // Run Cleanup in Background
+    CleanupService().runCleanup().then((_) {
+      log.info('App', 'Startup cleanup finished');
+    }).catchError((e) {
+      log.error('App', 'Startup cleanup failed', e);
+    });
+    
+    // Initialize settings service
+    final settingsService = SettingsService();
+    await settingsService.initialize();
+    
+    // Setup Notification Listener
+    final exportService = ExportQueueService();
+    // Ensure init is called so notification plugin is ready
+    await exportService.init();
+    
+    exportService.onNotificationTap.listen((payload) {
+      log.info('App', 'Notification tapped: $payload');
+      
+      if (payload.startsWith('open_folder:')) {
+        // Navigate to specific folder in Dashboard
+        final folderId = payload.replaceFirst('open_folder:', '');
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => FolderNavigationScreen(folderId: folderId == 'root' ? null : folderId)),
+          (route) => false,
+        );
+      } else if (payload == 'open_duplicates') {
+         // Show duplicates sheet on current screen without navigating away
+         PendingFileOpen.showDuplicatesSheet = true;
          
-         showModalBottomSheet(
-           context: ctx,
-           isScrollControlled: true,
-           shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-           builder: (context) => Container(
-             padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-             height: MediaQuery.of(context).size.height * 0.5,
-             child: Column(
-               crossAxisAlignment: CrossAxisAlignment.start,
-               children: [
-                 Text('File "$fileName" exists in multiple locations', 
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-                 const SizedBox(height: 8),
-                 Text('Select location to open:', 
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
-                 const SizedBox(height: 16),
-                 Expanded(
-                   child: ListView.separated(
-                     itemCount: duplicates.length,
-                     separatorBuilder: (_,__) => const Divider(),
-                     itemBuilder: (context, index) {
-                        final dup = duplicates[index];
-                        return ListTile(
-                          leading: const Icon(Icons.folder_open, color: Colors.blue),
-                          title: Text(dup.locationDisplay, style: const TextStyle(fontWeight: FontWeight.w500)),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                             Navigator.pop(context);
-                             PendingFileOpen.clearDuplicates();
-                             
-                             // Set pending folder for Dashboard to navigate to
-                             DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
-                             
-                             // Navigate to MainScreen with Documents tab (index 1)
-                             navigatorKey.currentState?.pushAndRemoveUntil(
-                               MaterialPageRoute(
-                                 builder: (_) => const MainScreen(initialIndex: 1),
-                               ),
-                               (route) => false,
-                             );
-                          },
-                        );
-                     },
+         // Get the current context from navigatorKey and show sheet directly
+         final ctx = navigatorKey.currentContext;
+         if (ctx != null && PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
+           final duplicates = PendingFileOpen.duplicateOptions!;
+           final fileName = PendingFileOpen.fileName ?? 
+               (duplicates.isNotEmpty ? duplicates.first.existingName : 'File');
+           
+           showModalBottomSheet(
+             context: ctx,
+             isScrollControlled: true,
+             shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+             builder: (context) => Container(
+               padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+               height: MediaQuery.of(context).size.height * 0.5,
+               child: Column(
+                 crossAxisAlignment: CrossAxisAlignment.start,
+                 children: [
+                   Text('File "$fileName" exists in multiple locations', 
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                   const SizedBox(height: 8),
+                   Text('Select location to open:', 
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600])),
+                   const SizedBox(height: 16),
+                   Expanded(
+                     child: ListView.separated(
+                       itemCount: duplicates.length,
+                       separatorBuilder: (_,__) => const Divider(),
+                       itemBuilder: (context, index) {
+                          final dup = duplicates[index];
+                          return ListTile(
+                            leading: const Icon(Icons.folder_open, color: Colors.blue),
+                            title: Text(dup.locationDisplay, style: const TextStyle(fontWeight: FontWeight.w500)),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                               Navigator.pop(context);
+                               PendingFileOpen.clearDuplicates();
+                               
+                               // Set pending folder for Dashboard to navigate to
+                               DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
+                               
+                               // Navigate to MainScreen with Documents tab (index 1)
+                               navigatorKey.currentState?.pushAndRemoveUntil(
+                                 MaterialPageRoute(
+                                   builder: (_) => const MainScreen(initialIndex: 1),
+                                 ),
+                                 (route) => false,
+                               );
+                            },
+                          );
+                       },
+                     ),
                    ),
-                 ),
-               ],
+                 ],
+               ),
              ),
-           ),
-         );
-       }
-    } else {
-      // Default: Export Progress
-      navigatorKey.currentState?.push(
-        MaterialPageRoute(builder: (_) => const ExportProgressScreen()),
-      );
-    }
+           );
+         }
+      } else {
+        // Default: Export Progress
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(builder: (_) => const ExportProgressScreen()),
+        );
+      }
+    });
+    
+    log.info('App', 'Settings loaded:');
+    log.info('App', '  - AuthMethod: ${settingsService.authMethod}');
+    log.info('App', '  - biometricEnabled: ${settingsService.biometricEnabled}');
+    log.info('App', '  - pinEnabled: ${settingsService.pinEnabled}');
+    log.info('App', '  - hasPinSet: ${settingsService.hasPinSet}');
+    
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: settingsService),
+          ChangeNotifierProvider.value(value: exportService), // Added for Notifications
+          Provider<EncryptionService>.value(value: EncryptionService()),
+          Provider<DocumentService>.value(value: DocumentService()),
+        ],
+        child: const MyApp(),
+      ),
+    );
+  }, (error, stack) {
+    // Global Async Error Handler
+    final log = LoggingService();
+    log.error('App', 'Uncaught Async Error', error, stack);
   });
-  
-  log.info('App', 'Settings loaded:');
-  log.info('App', '  - AuthMethod: ${settingsService.authMethod}');
-  log.info('App', '  - biometricEnabled: ${settingsService.biometricEnabled}');
-  log.info('App', '  - pinEnabled: ${settingsService.pinEnabled}');
-  log.info('App', '  - hasPinSet: ${settingsService.hasPinSet}');
-  
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: settingsService),
-        ChangeNotifierProvider.value(value: exportService), // Added for Notifications
-        Provider<EncryptionService>.value(value: EncryptionService()),
-        Provider<DocumentService>.value(value: DocumentService()),
-      ],
-      child: const MyApp(),
-    ),
-  );
 }
 
 class MyApp extends StatelessWidget {

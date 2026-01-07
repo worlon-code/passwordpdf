@@ -56,7 +56,9 @@ Transition from copying files to app storage ("import") to referencing original 
 ### Phase 1: Model & Service Refactor
 - [x] Rename `DocumentItem.filePath` → `sourcePath`.
 - [x] Remove `DocumentService.importFile()`. Add `addReference(String originalPath)`.
-- [ ] Add `cleanupTempFiles()` utility.
+- [x] Add `cleanupTempFiles()` utility.
+- [x] **Global Error Handler**: Wrap app in `runZonedGuarded` + `FlutterError.onError`.
+- [x] Connect Global Error Handler to `LoggingService`.
 
 ### Phase 2: Password Service
 - [x] Change key strategy: Use original path with filename fallback.
