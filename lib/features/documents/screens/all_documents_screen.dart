@@ -381,7 +381,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
         _log.info('AllDocumentsScreen', 'Imported: $fileName');
         
         // 3. Open the imported file using PendingFileOpen flow
-        PendingFileOpen.filePath = result.importItem!.filePath;
+        PendingFileOpen.filePath = result.importItem!.sourcePath;
         PendingFileOpen.fileName = result.importItem!.name;
         
         Navigator.of(context).pushAndRemoveUntil(
@@ -864,7 +864,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       id: existingId ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
       name: fileName,
       type: DocumentItemType.file,
-      filePath: file.path,
+      sourcePath: file.path,
       size: stat.size,
       createdAt: stat.changed,
       modifiedAt: stat.modified,

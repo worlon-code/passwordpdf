@@ -3,7 +3,7 @@ class DocumentItem {
   final String id;
   final String name;
   final DocumentItemType type;
-  final String? filePath; // Only for files
+  final String? sourcePath; // Original device path (Zero Copy: no app storage copy)
   final String? parentId; // Parent folder ID for nested structure
   final List<String> fileIds; // Only for folders - contains file IDs
   final int size; // File size in bytes (0 for folders or legacy)
@@ -14,7 +14,7 @@ class DocumentItem {
     required this.id,
     required this.name,
     required this.type,
-    this.filePath,
+    this.sourcePath,
     this.parentId,
     List<String>? fileIds,
     this.size = 0,
@@ -29,6 +29,7 @@ class DocumentItem {
 
   DocumentItem copyWith({
     String? name,
+    String? sourcePath,
     String? parentId,
     bool clearParentId = false, // Set to true to explicitly set parentId to null
     List<String>? fileIds,
@@ -39,7 +40,7 @@ class DocumentItem {
       id: id,
       name: name ?? this.name,
       type: type,
-      filePath: filePath,
+      sourcePath: sourcePath ?? this.sourcePath,
       parentId: clearParentId ? null : (parentId ?? this.parentId),
       fileIds: fileIds ?? this.fileIds,
       size: size ?? this.size,
@@ -53,7 +54,8 @@ class DocumentItem {
       'id': id,
       'name': name,
       'type': type.toString(),
-      'filePath': filePath,
+      'sourcePath': sourcePath, // Changed from 'filePath'
+      'filePath': sourcePath, // Keep for backward compat (migration)
       'parentId': parentId,
       'fileIds': fileIds,
       'size': size,
@@ -63,13 +65,16 @@ class DocumentItem {
   }
 
   factory DocumentItem.fromJson(Map<String, dynamic> json) {
+    // Support both old 'filePath' and new 'sourcePath' keys
+    final path = json['sourcePath'] as String? ?? json['filePath'] as String?;
+    
     return DocumentItem(
       id: json['id'] as String,
       name: json['name'] as String,
       type: DocumentItemType.values.firstWhere(
         (e) => e.toString() == json['type'],
       ),
-      filePath: json['filePath'] as String?,
+      sourcePath: path,
       parentId: json['parentId'] as String?,
       fileIds: (json['fileIds'] as List<dynamic>?)?.cast<String>() ?? [],
       size: json['size'] as int? ?? 0,
@@ -87,8 +92,8 @@ enum DocumentItemType {
 /// Helper to get file extension
 extension DocumentItemExtension on DocumentItem {
   String? get fileExtension {
-    if (isFile && filePath != null) {
-      final parts = filePath!.split('.');
+    if (isFile && sourcePath != null) {
+      final parts = sourcePath!.split('.');
       if (parts.length > 1) {
         return parts.last.toLowerCase();
       }

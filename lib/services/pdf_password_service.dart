@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'encryption_service.dart';
+import 'logging_service.dart';
 
 /// Service for managing PDF document passwords
 /// Tracks which documents have been opened successfully with which passwords
@@ -11,7 +12,10 @@ class PdfPasswordService {
   PdfPasswordService._internal();
 
   final EncryptionService _encryptionService = EncryptionService();
+  final LoggingService _log = LoggingService();
+  
   static const String _documentsPasswordsKey = 'document_passwords';
+  static const String _migrationCompleteKey = 'password_paths_migrated_v2';
   
   /// Map of file path -> encrypted password
   Map<String, String> _documentPasswords = {};
@@ -42,10 +46,31 @@ class PdfPasswordService {
   }
 
   /// Get stored password for a document (decrypted)
+  /// Checks both exact path and filename match for backward compatibility
   Future<String?> getPasswordForDocument(String filePath) async {
     await initialize();
     
-    final encryptedPassword = _documentPasswords[filePath];
+    // 1. Try exact path match first
+    var encryptedPassword = _documentPasswords[filePath];
+    
+    // 2. If not found, try matching by filename (for migrated files)
+    if (encryptedPassword == null || encryptedPassword.isEmpty) {
+      final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+      
+      for (final entry in _documentPasswords.entries) {
+        final storedFileName = entry.key.split(RegExp(r'[/\\]')).last.toLowerCase();
+        if (storedFileName == fileName) {
+          encryptedPassword = entry.value;
+          
+          // Migrate: Add new path as alias
+          _documentPasswords[filePath] = encryptedPassword;
+          await _save();
+          _log.info('PdfPasswordService', 'Migrated password from old path to: $filePath');
+          break;
+        }
+      }
+    }
+    
     if (encryptedPassword == null || encryptedPassword.isEmpty) {
       return null;
     }
@@ -80,13 +105,36 @@ class PdfPasswordService {
   /// Check if document has a stored password
   Future<bool> hasStoredPassword(String filePath) async {
     await initialize();
-    return _documentPasswords.containsKey(filePath);
+    
+    // Check exact match
+    if (_documentPasswords.containsKey(filePath)) {
+      return true;
+    }
+    
+    // Check by filename (for migrated files)
+    final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+    for (final key in _documentPasswords.keys) {
+      final storedFileName = key.split(RegExp(r'[/\\]')).last.toLowerCase();
+      if (storedFileName == fileName) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /// Clear stored password for a document
   Future<void> clearDocumentPassword(String filePath) async {
     await initialize();
     _documentPasswords.remove(filePath);
+    
+    // Also clear by filename match
+    final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+    _documentPasswords.removeWhere((key, _) {
+      final storedFileName = key.split(RegExp(r'[/\\]')).last.toLowerCase();
+      return storedFileName == fileName;
+    });
+    
     await _save();
   }
 
@@ -94,5 +142,42 @@ class PdfPasswordService {
   Future<void> clearAll() async {
     _documentPasswords.clear();
     await _save();
+  }
+  
+  /// Migrate password keys from old app storage paths to new original paths
+  /// Called during app startup with the new document list
+  Future<void> migratePasswordPaths(Map<String, String> oldToNewPathMap) async {
+    await initialize();
+    
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_migrationCompleteKey) == true) {
+      return; // Already migrated
+    }
+    
+    int migratedCount = 0;
+    final newPasswords = <String, String>{};
+    
+    for (final entry in _documentPasswords.entries) {
+      final oldPath = entry.key;
+      final newPath = oldToNewPathMap[oldPath];
+      
+      if (newPath != null && newPath != oldPath) {
+        // Map old path to new path
+        newPasswords[newPath] = entry.value;
+        migratedCount++;
+        _log.info('PdfPasswordService', 'Migrated: $oldPath -> $newPath');
+      } else {
+        // Keep as-is
+        newPasswords[oldPath] = entry.value;
+      }
+    }
+    
+    if (migratedCount > 0) {
+      _documentPasswords = newPasswords;
+      await _save();
+      _log.info('PdfPasswordService', 'Migration complete: $migratedCount passwords updated');
+    }
+    
+    await prefs.setBool(_migrationCompleteKey, true);
   }
 }

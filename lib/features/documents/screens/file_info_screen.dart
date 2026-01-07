@@ -33,9 +33,9 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
   }
 
   Future<void> _checkProtection() async {
-    if (widget.file.isPdf && widget.file.filePath != null) {
+    if (widget.file.isPdf && widget.file.sourcePath != null) {
       if (mounted) setState(() => _isLoadingProtection = true);
-      final isProtected = await PdfToolsService().isProtected(widget.file.filePath!);
+      final isProtected = await PdfToolsService().isProtected(widget.file.sourcePath!);
       if (mounted) {
         setState(() {
           _isProtected = isProtected;
@@ -80,8 +80,8 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
   @override
   Widget build(BuildContext context) {
     final file = widget.file;
-    final fileExists = file.filePath != null && File(file.filePath!).existsSync();
-    final fileSize = fileExists ? File(file.filePath!).lengthSync() : 0;
+    final fileExists = file.sourcePath != null && File(file.sourcePath!).existsSync();
+    final fileSize = fileExists ? File(file.sourcePath!).lengthSync() : 0;
     final extension = file.name.split('.').last.toUpperCase();
 
     return Scaffold(
@@ -178,7 +178,7 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
               context,
               'Location',
               [
-                _buildInfoRow(context, 'Path', file.filePath ?? 'Unknown', isPath: true),
+                _buildInfoRow(context, 'Path', file.sourcePath ?? 'Unknown', isPath: true),
               ],
             ),
 

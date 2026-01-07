@@ -351,53 +351,32 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
        Navigator.of(context).pop();
     }
     
-    // Always auto-open the file (whether imported or duplicate)
-    // Route through Dashboard which has password handling logic
-    if (fileToOpenPath != null && _isAuthenticated) {
+    // Always set pending file for later opening (even if not authenticated yet)
+    // Dashboard will check PendingFileOpen after authentication completes
+    if (fileToOpenPath != null) {
       final isPdf = fileToOpenPath.toLowerCase().endsWith('.pdf');
       
       if (isPdf) {
-         // Show "Opening file..." loader
-         if (mounted) {
-            _log.info('AppEntry', 'Showing opening dialog');
-            showDialog(
-              context: context,
-              barrierDismissible: false,
-              builder: (_) => const PopScope(
-                 canPop: false,
-                 child: Center(
-                   child: Card(
-                     child: Padding(
-                       padding: EdgeInsets.all(24),
-                       child: Column(
-                         mainAxisSize: MainAxisSize.min,
-                         children: [
-                           CircularProgressIndicator(),
-                           SizedBox(height: 16),
-                           Text('Opening file...'),
-                         ],
-                       ),
-                     ),
-                   ),
-                ),
-              ),
-            );
-         }
-         
-         // Set pending file for Dashboard to open with password handling
+         // Set pending file for MainScreen/Dashboard to open with password handling
          PendingFileOpen.filePath = fileToOpenPath;
          PendingFileOpen.fileName = fileToOpenName ?? 'Document';
          
-         _log.info('AppEntry', 'Pushing MainScreen with PendingFile: $fileToOpenName');
+         _log.info('AppEntry', 'PendingFileOpen set: ${PendingFileOpen.fileName}');
          
-         // Navigate to MainScreen (Dashboard will detect pending file and dismiss loader)
-         navigatorKey.currentState?.pushAndRemoveUntil(
-           MaterialPageRoute(builder: (_) => const MainScreen()),
-           (route) => false,
-         );
+         // Only navigate if already authenticated (hot path)
+         // Cold start with auth: User will see lock screen first, Dashboard opens pending file after auth
+         if (_isAuthenticated) {
+            _log.info('AppEntry', 'Already authenticated - navigating to MainScreen now');
+            navigatorKey.currentState?.pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)),
+              (route) => false,
+            );
+         } else {
+            _log.info('AppEntry', 'Not yet authenticated - file will open after auth via Dashboard');
+         }
       }
     } else {
-       _log.info('AppEntry', 'Not navigating: Path=$fileToOpenPath, Auth=$_isAuthenticated');
+       _log.info('AppEntry', 'No file to open: Path=$fileToOpenPath');
     }
 
     _log.info('AppEntry', 'Post-loop: importedCount=$importedCount, skippedCount=$skippedCount');

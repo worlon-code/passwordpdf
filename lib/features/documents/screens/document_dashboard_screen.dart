@@ -101,7 +101,30 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           });
         }
         
-        // ... (rest of finally block logic)
+        // [ZERO COPY] Check for pending file open (from All Docs add)
+        if (PendingFileOpen.hasPending) {
+          final filePath = PendingFileOpen.filePath!;
+          final fileName = PendingFileOpen.fileName ?? filePath.split(RegExp(r'[/\\]')).last;
+          PendingFileOpen.clearOpen();
+          
+          // Find or create the DocumentItem for this file
+          final fileId = _docService.findFileIdByPath(filePath);
+          if (fileId != null) {
+            final item = _docService.getAllItems().firstWhere((i) => i.id == fileId);
+            _openDocument(item);
+          } else {
+            // Fallback: open directly via viewer
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PdfViewerScreen(
+                  filePath: filePath,
+                  fileName: fileName,
+                ),
+              ),
+            );
+          }
+        }
         
         // Check mandatory settings
         _checkDownloadLocation();
@@ -592,7 +615,23 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             final parentPath = entity.parent.path;
             final parentId = folderMap[parentPath];
             
-            await _docService.addFile(entity.path, folderId: parentId);
+            // Get file stats for original dates
+            DateTime? createdAt;
+            DateTime? modifiedAt;
+            try {
+              final stat = await entity.stat();
+              createdAt = stat.accessed; // Use accessed as proxy for creation if needed, or check os nuances
+              modifiedAt = stat.modified;
+            } catch (e) {
+              // Ignore stat errors
+            }
+
+            await _docService.addFile(
+              entity.path, 
+              folderId: parentId,
+              createdAt: createdAt,
+              modifiedAt: modifiedAt,
+            );
             processedFiles++;
             
             // Update progress
@@ -691,11 +730,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     // Add files in this folder
     final files = _docService.getFilesInFolder(folderId);
     for (final file in files) {
-      if (file.filePath != null) {
+      if (file.sourcePath != null) {
         items.add(ExportItem(
           itemId: file.id,
           name: file.name,
-          filePath: file.filePath,
+          filePath: file.sourcePath,
           isFolder: false,
         ));
       }
@@ -945,7 +984,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           conflictingItems.add(ConflictItem(
             sourceId: file.id,
             name: file.name,
-            originalPath: file.filePath ?? '',
+            originalPath: file.sourcePath ?? '',
             isFolder: false,
           ));
         }
@@ -1067,11 +1106,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       final filesToShare = <XFile>[];
       for (final id in _selectedFileIds) {
         final item = allItems.firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
-        if (item.filePath != null) {
+        if (item.sourcePath != null) {
           // Verify file exists
-          final file = File(item.filePath!);
+          final file = File(item.sourcePath!);
           if (await file.exists()) {
-             filesToShare.add(XFile(item.filePath!));
+             filesToShare.add(XFile(item.sourcePath!));
           }
         }
       }
@@ -1156,7 +1195,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
     
-    final filePath = item.filePath; // Use actual file path, not ID
+    final filePath = item.sourcePath; // Use actual file path, not ID
     if (filePath == null) {
        if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1556,7 +1595,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       setState(() => _currentFolderId = result.id);
                     } else {
                       // It's a file
-                      if (result.filePath != null) {
+                      if (result.sourcePath != null) {
                         _openDocument(result);
                       }
                     }
@@ -1754,12 +1793,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           _buildFilterBar(),
           // Content
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: () async {
-                await _initialize(showLoading: false);
-              },
-              child: ListView(
-                padding: const EdgeInsets.all(16),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
                 children: [
                   if (folders.isNotEmpty) ...[
                     Text(
@@ -1792,7 +1827,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 ],
               ),
             ),
-          ),
+
         ],
       );
     } else {
@@ -1839,17 +1874,15 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         children: [
           _buildFilterBar(),
           Expanded(
-            child: RefreshIndicator(
-              onRefresh: _initialize,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
+            child: ListView(
+              padding: const EdgeInsets.all(16),
                 children: [
                   ...subfolders.map((folder) => _buildFolderCard(folder)),
                   ...files.map((file) => _buildFileCard(file)),
                 ],
               ),
             ),
-          ),
+
         ],
       );
     }
@@ -2126,35 +2159,52 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   Widget _buildFileCard(DocumentItem file) {
     final isSelected = _selectedFileIds.contains(file.id);
-    final fileExists = file.filePath != null && File(file.filePath!).existsSync();
-    final fileSize = fileExists ? File(file.filePath!).lengthSync() : 0;
+    final fileExists = file.sourcePath != null && File(file.sourcePath!).existsSync();
+    final fileSize = fileExists ? File(file.sourcePath!).lengthSync() : 0;
     final fileSizeKb = (fileSize / 1024).toStringAsFixed(1);
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
-      child: ListTile(
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            color: _getFileColor(file).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
+    return Opacity(
+      opacity: fileExists ? 1.0 : 0.6,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 12),
+        color: isSelected 
+            ? Theme.of(context).colorScheme.primaryContainer 
+            : (!fileExists ? Colors.red.withOpacity(0.05) : null),
+        child: ListTile(
+          leading: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: fileExists 
+                  ? _getFileColor(file).withOpacity(0.1)
+                  : Colors.red.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              fileExists ? _getFileIcon(file) : Icons.warning_amber_rounded,
+              color: fileExists ? _getFileColor(file) : Colors.red,
+            ),
           ),
-          child: Icon(_getFileIcon(file), color: _getFileColor(file)),
-        ),
-        title: Text(
-          file.name,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(fileExists ? '$fileSizeKb KB' : 'File not found'),
-        trailing: isSelected
-            ? IconButton(
-                icon: const Icon(Icons.check_circle),
-                color: Theme.of(context).colorScheme.primary,
-                onPressed: () => _toggleFileSelection(file.id),
-              )
+          title: Text(
+            file.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: fileExists ? null : Colors.grey,
+            ),
+          ),
+          subtitle: Text(
+            fileExists ? '$fileSizeKb KB' : 'File missing - tap to remove',
+            style: TextStyle(
+              color: fileExists ? null : Colors.red,
+            ),
+          ),
+          trailing: isSelected
+              ? IconButton(
+                  icon: const Icon(Icons.check_circle),
+                  color: Theme.of(context).colorScheme.primary,
+                  onPressed: () => _toggleFileSelection(file.id),
+                )
             : PopupMenuButton<String>(
                 icon: const Icon(Icons.more_vert),
                 onSelected: (value) async {
@@ -2221,22 +2271,54 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   ),
                 ],
               ),
-        onTap: () async {
-          if (_selectedFileIds.isNotEmpty) {
-            // In selection/move mode - toggle selection
-            setState(() {
-              if (isSelected) {
-                _selectedFileIds.remove(file.id);
-              } else {
-                _selectedFileIds.add(file.id);
+          onTap: () async {
+            if (_selectedFileIds.isNotEmpty) {
+              // In selection/move mode - toggle selection
+              setState(() {
+                if (isSelected) {
+                  _selectedFileIds.remove(file.id);
+                } else {
+                  _selectedFileIds.add(file.id);
+                }
+              });
+            } else if (!fileExists) {
+              // [ZERO COPY] File missing - offer to remove reference
+              final shouldRemove = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('File Not Found'),
+                  content: Text(
+                    'The original file "${file.name}" has been moved or deleted from the device.\n\nWould you like to remove this reference from the app?',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Keep'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                      child: const Text('Remove'),
+                    ),
+                  ],
+                ),
+              );
+              
+              if (shouldRemove == true) {
+                await _docService.deleteItem(file.id);
+                setState(() {});
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Removed "${file.name}" from app')),
+                  );
+                }
               }
-            });
-          } else if (file.isPdf) {
-            // Smart PDF password handling
-            await _openDocument(file);
-          }
-          // For non-PDF files when not in move mode - do nothing on tap
-        },
+            } else if (file.isPdf) {
+              // Smart PDF password handling
+              await _openDocument(file);
+            }
+            // For non-PDF files when not in move mode - do nothing on tap
+          },
         onLongPress: () {
           // Long-press enters move mode by selecting this file
           setState(() {
@@ -2253,6 +2335,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           }
         },
       ),
+    ),
     );
   }
 
@@ -2398,11 +2481,11 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               isFolder: true,
               children: _buildExportItemsFromFolder(item.id),
             ));
-          } else if (item.filePath != null) {
+          } else if (item.sourcePath != null) {
             exportItems.add(ExportItem(
               itemId: item.id,
               name: item.name,
-              filePath: item.filePath,
+              filePath: item.sourcePath,
               isFolder: false,
             ));
           }

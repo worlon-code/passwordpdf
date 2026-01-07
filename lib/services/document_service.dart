@@ -77,94 +77,85 @@ class DocumentService {
     await _loadDocuments();
   }
 
-  /// Import a file (Copy to App Storage + DB)
-  /// Returns an ImportResult with path (if imported) or existing location info
-  Future<ImportResult> importFile(String sourcePath, String sourceName, {String? targetName, bool allowDuplicate = false}) async {
+  /// [ZERO COPY] Add a reference to a file without copying it
+  /// Stores the original device path directly. No file copy is made.
+  /// Returns an ImportResult with the item (if added) or duplicate info
+  Future<ImportResult> addReference(String originalPath, String fileName, {bool allowDuplicate = false}) async {
     try {
-      final file = File(sourcePath);
-      if (!await file.exists()) return ImportResult.error('Source file not found');
+      final file = File(originalPath);
+      if (!await file.exists()) return ImportResult.error('File not found at path');
 
       final srcLen = await file.length();
       final duplicates = <DuplicateInfo>[];
 
-      // 1. Check ALL existing files in app (including folders) for duplicate
+      // 1. Check for duplicates by path or content size
       if (!allowDuplicate) {
         for (final item in _items) {
-          if (!item.isFile || item.filePath == null) continue;
+          if (!item.isFile || item.sourcePath == null) continue;
           
-          // Check by Content (Size)
-          final existingFile = File(item.filePath!);
+          // Check exact path match first
+          if (item.sourcePath == originalPath) {
+            return ImportResult.duplicate(item.sourcePath!, _getFolderPathForItem(item.id), _getFolderIdForItem(item.id), duplicates: [
+              DuplicateInfo(
+                sourcePath: originalPath,
+                fileName: fileName,
+                existingFolderName: _getFolderPathForItem(item.id),
+                existingFolderId: _getFolderIdForItem(item.id),
+                existingFilePath: item.sourcePath!,
+                existingName: item.name,
+              )
+            ]);
+          }
+          
+          // Check by content size (same file, different path)
+          final existingFile = File(item.sourcePath!);
           if (await existingFile.exists()) {
-             final existingLen = await existingFile.length();
-             if (srcLen == existingLen) {
-                 // Found exact duplicate in app
-                 String? folderPath = _getFolderPathForItem(item.id);
-                 duplicates.add(DuplicateInfo(
-                    sourcePath: sourcePath,
-                    fileName: sourceName,
-                    existingFolderName: folderPath,
-                    existingFolderId: _getFolderIdForItem(item.id),
-                    existingFilePath: item.filePath!,
-                    existingName: item.name,
-                 ));
-              }
+            final existingLen = await existingFile.length();
+            if (srcLen == existingLen) {
+              duplicates.add(DuplicateInfo(
+                sourcePath: originalPath,
+                fileName: fileName,
+                existingFolderName: _getFolderPathForItem(item.id),
+                existingFolderId: _getFolderIdForItem(item.id),
+                existingFilePath: item.sourcePath!,
+                existingName: item.name,
+              ));
             }
           }
+        }
         
         if (duplicates.isNotEmpty) {
-           final first = duplicates.first;
-           _log.info('DocumentService', 'File already exists: $sourceName in ${duplicates.length} locations');
-           return ImportResult.duplicate(first.existingFilePath, first.existingFolderName, first.existingFolderId, duplicates: duplicates);
+          final first = duplicates.first;
+          _log.info('DocumentService', 'File already referenced: $fileName in ${duplicates.length} locations');
+          return ImportResult.duplicate(first.existingFilePath, first.existingFolderName, first.existingFolderId, duplicates: duplicates);
         }
       }
 
-      // 2. Get App Documents Directory
-      final appDir = await getApplicationDocumentsDirectory();
-      final documentsDir = Directory('${appDir.path}/documents');
-      if (!documentsDir.existsSync()) {
-        documentsDir.createSync(recursive: true);
-      }
-
-      // 3. Generate Unique Name (Safe Copy) if collision on filesystem
-      String fileName = targetName ?? sourceName;
-      String newPath = '${documentsDir.path}/$fileName';
-      
-      int copyCount = 0;
-      while (File(newPath).existsSync()) {
-        copyCount++;
-        final parts = sourceName.split('.');
-        if (parts.length > 1) {
-           final ext = parts.last;
-           final name = parts.sublist(0, parts.length - 1).join('.');
-           fileName = '${name}_$copyCount.$ext';
-        } else {
-           fileName = '${sourceName}_$copyCount';
-        }
-        newPath = '${documentsDir.path}/$fileName';
-      }
-
-      // 4. Copy File
-      await file.copy(newPath);
-      
-      // Get source file stats to preserve dates
+      // 2. Get file stats for metadata
       final stat = await file.stat();
-      final modified = stat.modified;
-      final accessed = stat.accessed; // We can use accessed as created time if needed, or just modification time for both
       
-      // 5. Add to DB (Unorganized)
+      // 3. Add reference to DB (store ORIGINAL path, no copy)
       final newItem = await addFile(
-        newPath, 
+        originalPath,  // Store original path, NOT a copy
         customName: fileName,
-        createdAt: accessed, // Best effort for creation time
-        modifiedAt: modified,
+        createdAt: stat.accessed,
+        modifiedAt: stat.modified,
       );
       
-      _log.info('DocumentService', 'Imported file: $sourceName as $fileName');
-      return ImportResult.success(newPath, newItem);
+      _log.info('DocumentService', '[ZERO COPY] Added reference: $fileName -> $originalPath');
+      return ImportResult.success(originalPath, newItem);
     } catch (e) {
-      _log.error('DocumentService', 'Import failed', e);
+      _log.error('DocumentService', 'Add reference failed', e);
       return ImportResult.error(e.toString());
     }
+  }
+
+  /// @deprecated Use addReference instead for Zero Copy architecture
+  /// Import a file (Copy to App Storage + DB) - LEGACY
+  Future<ImportResult> importFile(String sourcePath, String sourceName, {String? targetName, bool allowDuplicate = false}) async {
+    // Redirect to Zero Copy addReference
+    _log.info('DocumentService', '[LEGACY] importFile called, redirecting to addReference');
+    return addReference(sourcePath, targetName ?? sourceName, allowDuplicate: allowDuplicate);
   }
 
   /// Get folder path string for an item
@@ -201,14 +192,14 @@ class DocumentService {
       
       // Check against ALL files in _items
       for (final item in _items) {
-        if (!item.isFile || item.filePath == null) continue;
+        if (!item.isFile || item.sourcePath == null) continue;
         
         // Optimize: Use cached size if available
         int existingSize = item.size;
         
         if (existingSize == 0) {
            // Fallback for legacy items (no size in DB)
-           final existingFile = File(item.filePath!);
+           final existingFile = File(item.sourcePath!);
            if (await existingFile.exists()) {
              existingSize = await existingFile.length();
            } else {
@@ -223,7 +214,7 @@ class DocumentService {
               fileName: fileName,
               existingFolderName: _getFolderPathForItem(item.id),
               existingFolderId: _getFolderIdForItem(item.id),
-              existingFilePath: item.filePath!,
+              existingFilePath: item.sourcePath!,
               existingName: item.name,
             ));
         }
@@ -279,7 +270,7 @@ class DocumentService {
   /// Find file ID by absolute path
   String? findFileIdByPath(String path) {
     try {
-      final item = _items.firstWhere((item) => item.filePath == path);
+      final item = _items.firstWhere((item) => item.sourcePath == path);
       return item.id;
     } catch (_) {
       return null;
@@ -339,7 +330,7 @@ class DocumentService {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: fileName,
       type: DocumentItemType.file,
-      filePath: filePath,
+      sourcePath: filePath,
       size: size,
       createdAt: createdAt ?? now,
       modifiedAt: modifiedAt ?? now,
