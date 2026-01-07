@@ -116,7 +116,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
   // ... inside _AllDocumentsScreenState
 
-  Future<void> _loadDocuments() async {
+  Future<void> _loadDocuments({bool forceRescan = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -127,17 +127,15 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     });
 
     try {
-      // 1. Scan and cache
-      // Only rescan if not already cached or forced? 
-      // For now, scanDevice checks _isScanning but ideally we trust the cache unless pulled to refresh
-      if (_displayedFiles.isEmpty) { 
+      // Only rescan on explicit refresh (pull-to-refresh or refresh button)
+      if (forceRescan) { 
          await _deviceService.scanDevice();
       }
       
       // Apply Sort
       await _deviceService.sortDocuments(_sortOption, ascending: _sortAscending);
       
-      // 2. Get first page
+      // 2. Get first page from cached DB
       final files = await _deviceService.getDocuments(
         offset: 0,
         limit: _pageSize,
@@ -992,7 +990,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                icon: const Icon(Icons.refresh),
                onPressed: () {
                   setState(() => _isLoading = true);
-                  _loadDocuments();
+                  _loadDocuments(forceRescan: true);
                },
                tooltip: 'Refresh',
             ),
