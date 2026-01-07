@@ -2,21 +2,30 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 1.0.0-beta.1 - First Beta Release!
+## Version 1.0.0-beta.2 - Performance & Folder Optimization!
 
 ### 🚀 New Features
 
-#### File Info & Occurrences (v1.0.0-beta.1)
-- **File Metadata**: View detailed info for any document (size, type, modified date).
-- **Duplicate Tracking**: "Occurrences" card shows how many copies of a file exist in your library.
-- **Visual Locations**: Navigate directly to any duplicate file's folder.
+#### All Docs Optimization (v0.0.28)
+- **Database Caching**: File index is now stored in SQLite for instant load times.
+- **Smart Folder View**: Toggle between Flat List (files only) and Hierarchical Folder browsing.
+- **Recursive Folder Indexing**: All parent folders are automatically indexed, ensuring complete hierarchy.
+- **Smart Filtering**: In Folder View, filters (PDF, Word, Excel) only show folders that *contain* matching files.
+- **Consistent UI**: Folder icons now match Dashboard styling (Blue with rounded background).
 
-#### Import & Folder Improvements (v1.0.0-beta.1)
-- **Trailing Menu**: New 3-dot menu in "All Docs" list for quick actions.
-- **Duplicate Prevention**: Smart validation prevents creating folders with duplicate names.
-- **Robust Navigation**: Improved tab switching when navigating from deep links or notifications.
+#### Zero Copy Architecture (v0.0.28)
+- **No File Duplication**: Files are referenced by their original path, saving significant storage space.
+- **Missing File Detection**: Visual indicators and removal prompts for files moved/deleted externally.
+- **Automatic Cache Cleanup**: Temporary files from "Add Files" and "Open With" are cleaned on app start.
+
+#### Stability Improvements (v0.0.28)
+- **Global Error Handler**: Uncaught exceptions are now logged via `LoggingService`.
+- **"Open With" Cold Start Fix**: Files shared via "Open With" now open reliably on cold start.
+- **RAM Optimization**: PDF pre-checks use header inspection instead of full file load.
 
 ### Previous Versions
+
+#### Version 1.0.0-beta.1 - First Beta Release!
 
 #### Version 0.0.27 - All Docs Screen & Enhanced Open With
 
@@ -203,6 +212,7 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 ### 📋 Version History
 
+- **v0.0.28**: All Docs Optimization, Zero Copy, Smart Folder Views, RAM Optimization.
 - **v0.0.27**: All Docs screen, Enhanced Open With, Auto-rename conflict resolution.
 - **v0.0.26**: Developer tools, Database viewer optimizations, Generic Excel export.
 - **v0.0.25**: Advanced conflict resolution, Smart notifications.
@@ -292,5 +302,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 0.0.27 (Build 27)  
-**Last Updated**: January 2, 2026
+**Current Version**: 1.0.0-beta.2 (Build 28)  
+**Last Updated**: January 8, 2026
