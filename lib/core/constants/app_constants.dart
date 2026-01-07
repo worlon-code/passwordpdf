@@ -14,6 +14,7 @@ class AppConstants {
   static const String settingsTable = 'settings';
   static const String exportJobsTable = 'export_jobs';
   static const String logsTable = 'logs';
+  static const String filesIndexTable = 'files_index';
   
   // Encryption
   static const String encryptionKeyName = 'pdf_encryption_key';

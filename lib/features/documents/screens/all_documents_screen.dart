@@ -39,6 +39,10 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   String _selectedFilter = 'PDF'; // Default to PDF
   String _errorMessage = '';
   
+  // Folder View State
+  bool _isFolderView = false;
+  String _currentFolderPath = '/storage/emulated/0'; // Default root
+  
   // Sorting
   SortOption _sortOption = SortOption.dateModified;
   bool _sortAscending = false; // Default Newest first
@@ -134,11 +138,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       await _deviceService.sortDocuments(_sortOption, ascending: _sortAscending);
       
       // 2. Get first page
-      final files = _deviceService.getDocuments(
+      final files = await _deviceService.getDocuments(
         offset: 0,
         limit: _pageSize,
         filterType: _selectedFilter,
         searchQuery: _searchQuery,
+        parentPath: _isFolderView ? _currentFolderPath : null,
+        flatList: !_isFolderView,
       );
 
       // ... rest of method
@@ -171,11 +177,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
     await Future.delayed(const Duration(milliseconds: 100));
 
-    final moreFiles = _deviceService.getDocuments(
+    final moreFiles = await _deviceService.getDocuments(
       offset: _currentOffset,
       limit: _pageSize,
       filterType: _selectedFilter,
       searchQuery: _searchQuery,
+      parentPath: _isFolderView ? _currentFolderPath : null,
+      flatList: !_isFolderView,
     );
 
     if (mounted) {
@@ -201,11 +209,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-       final files = _deviceService.getDocuments(
+       final files = await _deviceService.getDocuments(
           offset: 0,
           limit: _pageSize,
           filterType: _selectedFilter,
           searchQuery: _searchQuery,
+          parentPath: _isFolderView ? _currentFolderPath : null,
+          flatList: !_isFolderView,
        );
        
        if (mounted) {
@@ -886,10 +896,20 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_isSelectionMode,
+      canPop: !_isSelectionMode && (!_isFolderView || _currentFolderPath == '/storage/emulated/0'),
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _isSelectionMode) {
-          setState(() => _selectedPaths.clear());
+        if (!didPop) {
+           if (_isSelectionMode) {
+              setState(() => _selectedPaths.clear());
+           } else if (_isFolderView && _currentFolderPath != '/storage/emulated/0') {
+              // Go up one level
+              final parent = Directory(_currentFolderPath).parent.path;
+              setState(() {
+                _currentFolderPath = parent;
+                _isLoading = true;
+              });
+              _loadDocuments();
+           }
         }
       },
       child: Scaffold(
@@ -935,7 +955,30 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                tooltip: 'Import Selected',
              ),
              
-          if (!_isSearching && !_isSelectionMode) ...[
+            IconButton(
+               icon: Icon(_isFolderView ? Icons.list_alt : Icons.folder),
+               onPressed: () {
+                 if (_isFolderView) {
+                    // Switch to List
+                    setState(() {
+                       _isFolderView = false;
+                       _isLoading = true;
+                       _displayedFiles.clear();
+                    });
+                 } else {
+                    // Switch to Folder
+                    setState(() {
+                       _isFolderView = true;
+                       _isLoading = true;
+                       _displayedFiles.clear();
+                       // _currentFolderPath is already set to default or last visited
+                    });
+                 }
+                 _loadDocuments();
+               },
+               tooltip: _isFolderView ? 'List View' : 'Folder View',
+            ),
+             if (!_isSearching && !_isSelectionMode) ...[
             IconButton(
                icon: const Icon(Icons.search),
                onPressed: _startSearch,
@@ -946,12 +989,12 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                onPressed: _showSortOptions,
             ),
             IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                 setState(() => _isLoading = true);
-                 _loadDocuments();
-              },
-              tooltip: 'Refresh',
+               icon: const Icon(Icons.refresh),
+               onPressed: () {
+                  setState(() => _isLoading = true);
+                  _loadDocuments();
+               },
+               tooltip: 'Refresh',
             ),
           ]
         ],
@@ -971,6 +1014,27 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
               ],
             ),
           ),
+          
+          // Breadcrumbs (Folder View Only)
+          if (_isFolderView)
+            Container(
+               width: double.infinity,
+               color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+               child: Row(
+                 children: [
+                    const Icon(Icons.folder_open, size: 20, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _currentFolderPath,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                 ],
+               ),
+            ),
           
           // Content
           Expanded(
@@ -1010,53 +1074,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                                     );
                                   }
                                   
-                                  final file = _displayedFiles[index];
-                                  final name = file.path.split('/').last;
-                                  final stat = file.statSync();
-                                  final date = DateFormat('MMM d, y • H:mm').format(stat.modified);
-                                  final size = (stat.size / 1024 / 1024).toStringAsFixed(2);
-                                  final isSelected = _selectedPaths.contains(file.path);
-                                  
-                                  return ListTile(
-                                    leading: Stack(
-                                      children: [
-                                         Icon(_getFileIcon(name), color: _getFileColor(name), size: 32),
-                                         if (isSelected)
-                                           const Positioned(
-                                             bottom: 0,
-                                             right: 0,
-                                             child: Icon(Icons.check_circle, color: Colors.green, size: 16),
-                                           )
-                                      ],
-                                    ),
-                                    title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                    subtitle: Text('$date • $size MB'),
-                                    tileColor: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
-                                    onTap: () => _handleFileTap(file),
-                                    onLongPress: () => _toggleSelection(file.path),
-                                    trailing: _isSelectionMode 
-                                        ? Checkbox(value: isSelected, onChanged: (v) => _toggleSelection(file.path))
-                                        : PopupMenuButton<String>(
-                                            icon: const Icon(Icons.more_vert),
-                                            onSelected: (value) {
-                                              if (value == 'info') {
-                                                _showFileInfo(file);
-                                              }
-                                            },
-                                            itemBuilder: (context) => [
-                                              const PopupMenuItem(
-                                                value: 'info',
-                                                child: Row(
-                                                  children: [
-                                                    Icon(Icons.info_outline),
-                                                    SizedBox(width: 8),
-                                                    Text('File Info'),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                  );
+                                  return _buildDocumentItem(_displayedFiles[index]);
                                 },
                               ),
                       ),
@@ -1065,6 +1083,106 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       ),
       ), // Close Scaffold
     ); // Close PopScope
+  }
+
+
+  void _openFolder(String path) {
+      setState(() {
+          _currentFolderPath = path;
+          _isLoading = true;
+          _displayedFiles.clear();
+      });
+      _loadDocuments();
+  }
+
+  Widget _buildDocumentItem(FileSystemEntity file) {
+      final name = file.path.split('/').last;
+      
+      if (file is Directory) {
+          return ListTile(
+            leading: Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.folder, color: Colors.blue, size: 28),
+            ),
+            title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: const Text('Folder'),
+            onTap: () {
+               if (_isSelectionMode) {
+                  // Optional: Allow folder selection if we implement "Import Folder" via selection
+               } else {
+                  _openFolder(file.path);
+               }
+            },
+            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+          );
+      }
+      
+      // File Logic
+      FileStat stat; 
+      try {
+         stat = file.statSync();
+      } catch (e) {
+         // Fallback if stat fails
+         return const SizedBox.shrink(); 
+      }
+      
+      final date = DateFormat('MMM d, y • H:mm').format(stat.modified);
+      final size = (stat.size / 1024 / 1024).toStringAsFixed(2);
+      final isSelected = _selectedPaths.contains(file.path);
+      
+      return ListTile(
+        leading: Stack(
+          children: [
+             Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: _getFileColor(name).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(_getFileIcon(name), color: _getFileColor(name), size: 28),
+             ),
+             if (isSelected)
+               const Positioned(
+                 bottom: 0,
+                 right: 0,
+                 child: Icon(Icons.check_circle, color: Colors.green, size: 16),
+               )
+          ],
+        ),
+        title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text('$date • $size MB'),
+        tileColor: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+        onTap: () => _handleFileTap(file),
+        onLongPress: () => _toggleSelection(file.path),
+        trailing: _isSelectionMode 
+            ? Checkbox(value: isSelected, onChanged: (v) => _toggleSelection(file.path))
+            : PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  if (value == 'info') {
+                    _showFileInfo(file);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'info',
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline),
+                        SizedBox(width: 8),
+                        Text('File Info'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+      );
   }
 }
 

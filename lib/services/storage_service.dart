@@ -26,7 +26,7 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: 5, // Increased version
+      version: 7, // Increased version
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -87,6 +87,25 @@ class StorageService {
         stack_trace TEXT
       )
     ''');
+
+    // Files Index table (v6+)
+    await db.execute('''
+      CREATE TABLE ${AppConstants.filesIndexTable} (
+        path TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        extension TEXT NOT NULL,
+        parent_path TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        created_at INTEGER,
+        modified_at INTEGER,
+        last_scanned INTEGER,
+        is_folder INTEGER DEFAULT 0
+      )
+    ''');
+    
+    // Indexes
+    await db.execute('CREATE INDEX idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
+    await db.execute('CREATE INDEX idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
   }
 
   // Handle database upgrades
@@ -142,6 +161,37 @@ class StorageService {
           stack_trace TEXT
         )
       ''');
+    }
+
+    if (oldVersion < 6) {
+      // Add Files Index table
+      await db.execute('''
+        CREATE TABLE ${AppConstants.filesIndexTable} (
+          path TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          extension TEXT NOT NULL,
+          parent_path TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          created_at INTEGER,
+          modified_at INTEGER,
+          last_scanned INTEGER
+        )
+      ''');
+      
+      await db.execute('CREATE INDEX idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
+      await db.execute('CREATE INDEX idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
+    }
+
+    if (oldVersion < 7) {
+      // Fix missing is_folder column from v6 migration if it exists
+      // Check if column exists first to avoid error, or just try-catch ALTER TABLE
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_folder INTEGER DEFAULT 0');
+      } catch (e) {
+        // Warning: Column might already exist if fresh install v6 (which had correct _onCreate) 
+        // vs upgrade v6 (which had broken _onUpgrade).
+        // If error is "duplicate column", ignore.
+      }
     }
   }
 
