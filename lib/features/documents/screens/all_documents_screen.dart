@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/material.dart' as material;
@@ -392,9 +393,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
         PendingFileOpen.filePath = result.importItem!.sourcePath;
         PendingFileOpen.fileName = result.importItem!.name;
         
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)),
-          (route) => false,
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PdfViewerScreen(
+              filePath: result.importItem!.sourcePath!,
+              fileName: result.importItem!.name,
+            ),
+          ),
         );
       } else if (result.isDuplicate) {
         // Bug Fix: Check for multiple duplicates
@@ -440,12 +445,8 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                            contentPadding: EdgeInsets.zero,
                            onTap: () {
                               Navigator.pop(context); // Close sheet
-                              // Navigate
-                              DashboardFolderNavigation.pendingFolderId = dup.existingFolderId;
-                              navigatorKey.currentState?.pushAndRemoveUntil(
-                                MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)),
-                                (route) => false,
-                              );
+                              // Open the duplicate file
+                              _openFile(File(dup.existingFilePath), true);
                            },
                          );
                       },
@@ -463,11 +464,8 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
               action: SnackBarAction(
                 label: 'View',
                 onPressed: () {
-                  DashboardFolderNavigation.pendingFolderId = result.existingFolderId;
-                  navigatorKey.currentState?.pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)),
-                    (route) => false,
-                  );
+                  // Open existing copy directly
+                  _openFile(File(result.importedPath ?? ''), true);
                 },
               ),
             ),
@@ -492,14 +490,17 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     _log.info('AllDocumentsScreen', '=== _importAndOpenSingle END ===');
   }
 
+
   Future<void> _openFile(FileSystemEntity file, bool isPdf) async {
     if (isPdf) {
-      PendingFileOpen.filePath = file.path;
-      PendingFileOpen.fileName = file.path.split(Platform.pathSeparator).last;
-      
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MainScreen()),
-        (route) => false,
+      // Don't restart app, just push viewer
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PdfViewerScreen(
+            filePath: file.path,
+            fileName: file.path.split(Platform.pathSeparator).last,
+          ),
+        ),
       );
     } else {
       await OpenFilex.open(file.path);

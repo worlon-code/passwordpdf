@@ -55,40 +55,25 @@
 
 ---
 
-## Phase 1: Performance Fixes (Critical) 🔴
+## Phase 1: Performance Fixes (Critical) 🟢 DONE
 
 ### 1.1 Remove Rescan on Folder Navigation
-**File**: `all_documents_screen.dart`
-
-```dart
-// BEFORE (slow)
-Future<void> _loadDocuments() async {
-  if (_displayedFiles.isEmpty) { 
-     await _deviceService.scanDevice(); // ❌ RESCANS ALL FILES
-  }
-}
-
-// AFTER (fast)
-Future<void> _loadDocuments({bool forceRescan = false}) async {
-  if (forceRescan) { 
-     await _deviceService.scanDevice();
-  }
-  // Query cached DB only
-}
-```
+- ✅ Removed `scanDevice()` from `_loadDocuments` (unless forced).
+- ✅ Only queries database on folder navigation.
 
 ### 1.2 Optimize Folder Filter Query
-**File**: `device_document_service.dart`
-
-Add pre-computed flags during scan:
-```sql
-ALTER TABLE files_index ADD COLUMN has_pdf INTEGER DEFAULT 0;
-ALTER TABLE files_index ADD COLUMN has_doc INTEGER DEFAULT 0;
-```
+- ✅ Added `has_pdf`, `has_doc`, `has_excel` columns to `files_index`.
+- ✅ Implemented recursive flag calculation during scan.
+- ✅ Replaced slow `EXISTS` subquery with fast `has_xxx = 1` check.
 
 ---
 
-## Phase 2: Custom File Picker
+### 1.3 Fix State Loss on Navigation 🟢 DONE
+- ✅ Replaced `pushAndRemoveUntil` with `Navigator.push` when opening PDFs.
+- ✅ Preserves `AllDocumentsScreen` state (scroll position, folder depth) when returning from viewer.
+- ✅ Fixed app restart behavior on file open.
+
+## Phase 2: Custom File Browser 🟡 PLANNED
 
 ### Replace "Add Files" Flow
 ```

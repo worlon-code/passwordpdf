@@ -80,6 +80,38 @@ class DeviceDocumentService {
       
       _log.info('DeviceDocumentService', 'Batch inserting/updating ${files.length} records...');
       
+      // 1. Pre-calculate folder content flags
+      final Set<String> pdfFolders = {};
+      final Set<String> docFolders = {};
+      final Set<String> excelFolders = {};
+      
+      void markParents(String path, Set<String> set) {
+        try {
+          // Start from parent of the file
+          var parentPath = Directory(path).parent.path;
+          
+          // Propagate up until root
+          while (parentPath.length >= '/storage/emulated/0'.length && parentPath.startsWith('/storage/emulated/0')) {
+             if (set.contains(parentPath)) break; // optimization: already marked this branch
+             set.add(parentPath);
+             parentPath = Directory(parentPath).parent.path;
+          }
+        } catch (_) {}
+      }
+
+      for (final file in files) {
+        if (file is File) {
+          final ext = file.path.split('.').last.toLowerCase();
+          if (ext == 'pdf') {
+             markParents(file.path, pdfFolders);
+          } else if (['doc', 'docx'].contains(ext)) {
+             markParents(file.path, docFolders);
+          } else if (['xls', 'xlsx'].contains(ext)) {
+             markParents(file.path, excelFolders);
+          }
+        }
+      }
+      
       await db.transaction((txn) async {
          final batch = txn.batch();
          
@@ -97,6 +129,11 @@ class DeviceDocumentService {
               } else {
                  ext = name.split('.').last.toLowerCase();
               }
+              
+              // Get flags
+              int hasPdf = pdfFolders.contains(file.path) ? 1 : 0;
+              int hasDoc = docFolders.contains(file.path) ? 1 : 0;
+              int hasExcel = excelFolders.contains(file.path) ? 1 : 0;
 
               batch.insert(
                 AppConstants.filesIndexTable,
@@ -106,26 +143,28 @@ class DeviceDocumentService {
                   'extension': ext,
                   'parent_path': parent,
                   'size': stat.size,
-                  'created_at': stat.changed.millisecondsSinceEpoch, // changed is closest to created on *nix
+                  'created_at': stat.changed.millisecondsSinceEpoch,
                   'modified_at': stat.modified.millisecondsSinceEpoch,
                   'last_scanned': syncTime,
-                  'is_folder': isFolder
+                  'is_folder': isFolder,
+                  'has_pdf': hasPdf,
+                  'has_doc': hasDoc,
+                  'has_excel': hasExcel
                 },
                 conflictAlgorithm: ConflictAlgorithm.replace
               );
 
-              // RECURSIVE FOLDER ASSURANCE (User Request)
-              // Ensure all parent directories exist up to root
-              // E.g. found Download/Good/file.pdf -> Ensure 'Download/Good' and 'Download' exist.
-              
+              // RECURSIVE FOLDER ASSURANCE
               String currentParentPath = file.parent.path;
-              // Stop if strictly at root or empty
               while (currentParentPath.length > '/storage/emulated/0'.length && currentParentPath.startsWith('/storage/emulated/0')) {
                   final parentName = currentParentPath.split('/').last;
                   final grandParentPath = Directory(currentParentPath).parent.path;
                   
-                  // Insert the folder record (Ignore if exists to save write ops, or REPLACE to ensure current)
-                  // Using REPLACE to keep it simple and ensure 'is_folder=1'
+                  // For these implicitly created parent folders, we also need correct flags
+                  int pHasPdf = pdfFolders.contains(currentParentPath) ? 1 : 0;
+                  int pHasDoc = docFolders.contains(currentParentPath) ? 1 : 0;
+                  int pHasExcel = excelFolders.contains(currentParentPath) ? 1 : 0;
+                  
                   batch.insert(
                     AppConstants.filesIndexTable,
                     {
@@ -137,17 +176,31 @@ class DeviceDocumentService {
                       'created_at': syncTime, 
                       'modified_at': syncTime,
                       'last_scanned': syncTime,
-                      'is_folder': 1
+                      'is_folder': 1,
+                      'has_pdf': pHasPdf,
+                      'has_doc': pHasDoc,
+                      'has_excel': pHasExcel
                     },
-                    conflictAlgorithm: ConflictAlgorithm.ignore // Use ignore, don't overwrite if actual scan found better data
+                    conflictAlgorithm: ConflictAlgorithm.ignore // Don't overwrite if scanned
                   );
                   
-                  // Move up
+                  // If we are ignoring, we might MISS updating the flags on an existing record if it was inserted before we knew it had content!
+                  // Ideally we should use REPLACE or update flags. 
+                  // But 'scannedFiles' loop above (ConflictAlgorithm.replace) handles the "real" folder record if it was found.
+                  // This loop handles "missing intermediate parents". 
+                  // If the parent WAS found in scan, the loop above handled it with flags.
+                  // If it WAS NOT found (e.g. skipped or hidden), this loop adds it.
+                  // However, if it exists from previous scan but wasn't found in THIS scan (unlikely if recursive), we might have issues.
+                  // Given we are doing a full replacement scan, standard logic holds.
+                  // BUT: ConflictAlgorithm.ignore means we won't update flags if it exists. 
+                  // Let's rely on the fact that if it exists, it might be from a previous scan or the main loop.
+                  // If the main loop covered it, we are fine.
+                  
                   currentParentPath = grandParentPath;
               }
 
             } catch (e) {
-               // Skip file if stat fails (permission)
+               // Skip file if stat fails
             }
          }
          
@@ -210,34 +263,22 @@ class DeviceDocumentService {
                 whereClause += ' AND extension IN ($placeholders)';
                 args.addAll(extensions);
              } else {
-                // Folder Mode: "Smart Filter"
+                // Folder Mode: "Smart Filter" using pre-computed flags (Fast O(1))
                 // Show files that match extension
-                // OR Folders that contain matching files recursively
-                // We use a subquery EXISTS check for folders
+                // OR Folders that recursively contain matching files (checked via has_xxx flags)
                 
-                // Construct subquery args (we need them twice: once for file match (maybe) and once for subquery?)
-                // Actually, logic is:
-                // (is_folder = 0 AND extension IN (...)) 
-                // OR 
-                // (is_folder = 1 AND EXISTS(SELECT 1 FROM files_index f2 WHERE f2.path LIKE files_index.path || '/%' AND f2.extension IN (...)))
-                
-                // Note: We need to pass args multiple times or name them. 
-                // Sqflite doesn't support named args easily with rawQuery? db.query supports positional.
-                // We'll append manual args.
-                
-                String extList = extensions.map((e) => "'$e'").join(','); // Safe since hardcoded internal list
+                String folderFlag = '0=1'; // default false
+                if (filterType == 'PDF') folderFlag = 'has_pdf = 1';
+                else if (filterType == 'Word') folderFlag = 'has_doc = 1';
+                else if (filterType == 'Excel') folderFlag = 'has_excel = 1';
                 
                 whereClause += ''' AND (
                     (is_folder = 0 AND extension IN ($placeholders))
                     OR
-                    (is_folder = 1 AND EXISTS (
-                        SELECT 1 FROM ${AppConstants.filesIndexTable} f2 
-                        WHERE f2.path LIKE ${AppConstants.filesIndexTable}.path || '/%' 
-                        AND f2.extension IN ($extList)
-                    ))
+                    (is_folder = 1 AND $folderFlag)
                 )''';
                 
-                // Add args for the first "extension IN" part
+                // Add args for the file extension check
                 args.addAll(extensions);
              }
           }

@@ -26,7 +26,7 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: 7, // Increased version
+      version: 8, // Increased version
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -191,6 +191,16 @@ class StorageService {
         // Warning: Column might already exist if fresh install v6 (which had correct _onCreate) 
         // vs upgrade v6 (which had broken _onUpgrade).
         // If error is "duplicate column", ignore.
+      }
+    }
+    if (oldVersion < 8) {
+      // Add smart filter flags to avoid slow recursive subqueries
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN has_pdf INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN has_doc INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN has_excel INTEGER DEFAULT 0');
+      } catch (e) {
+        // Ignore if exists
       }
     }
   }
