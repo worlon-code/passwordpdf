@@ -10,6 +10,10 @@ class DocumentItem {
   final DateTime createdAt;
   final DateTime modifiedAt;
   final bool isImported; // True if created via Folder Import (Restricted Move/Sync Managed)
+  final bool isNew; // For "NEW" badge
+  final bool missingOnDevice; // For "Removed" files
+  final DateTime? addedAt;
+  final DateTime? lastSynced;
 
   DocumentItem({
     required this.id,
@@ -22,6 +26,10 @@ class DocumentItem {
     DateTime? createdAt,
     DateTime? modifiedAt,
     this.isImported = false,
+    this.isNew = false,
+    this.missingOnDevice = false,
+    this.addedAt,
+    this.lastSynced,
   })  : fileIds = fileIds ?? [],
         createdAt = createdAt ?? DateTime.now(),
         modifiedAt = modifiedAt ?? DateTime.now();
@@ -38,6 +46,10 @@ class DocumentItem {
     int? size,
     DateTime? modifiedAt,
     bool? isImported,
+    bool? isNew,
+    bool? missingOnDevice,
+    DateTime? addedAt,
+    DateTime? lastSynced,
   }) {
     return DocumentItem(
       id: id,
@@ -50,6 +62,10 @@ class DocumentItem {
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
       isImported: isImported ?? this.isImported,
+      isNew: isNew ?? this.isNew,
+      missingOnDevice: missingOnDevice ?? this.missingOnDevice,
+      addedAt: addedAt ?? this.addedAt,
+      lastSynced: lastSynced ?? this.lastSynced,
     );
   }
 
@@ -66,6 +82,10 @@ class DocumentItem {
       'createdAt': createdAt.toIso8601String(),
       'modifiedAt': modifiedAt.toIso8601String(),
       'isImported': isImported,
+      'isNew': isNew,
+      'missingOnDevice': missingOnDevice,
+      'addedAt': addedAt?.toIso8601String(),
+      'lastSynced': lastSynced?.toIso8601String(),
     };
   }
 
@@ -85,6 +105,10 @@ class DocumentItem {
       createdAt: DateTime.parse(json['createdAt'] as String),
       modifiedAt: DateTime.parse(json['modifiedAt'] as String),
       isImported: json['isImported'] as bool? ?? false,
+      isNew: json['isNew'] as bool? ?? false,
+      missingOnDevice: json['missingOnDevice'] as bool? ?? false,
+      addedAt: json['addedAt'] != null ? DateTime.parse(json['addedAt']) : null,
+      lastSynced: json['lastSynced'] != null ? DateTime.parse(json['lastSynced']) : null,
     );
   }
 }

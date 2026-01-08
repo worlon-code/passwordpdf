@@ -401,8 +401,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
         _log.info('AllDocumentsScreen', 'Imported: $fileName');
         
         // 3. Open the imported file using PendingFileOpen flow
-        PendingFileOpen.filePath = result.importItem!.sourcePath;
-        PendingFileOpen.fileName = result.importItem!.name;
+        
         
         Navigator.of(context).push(
           MaterialPageRoute(

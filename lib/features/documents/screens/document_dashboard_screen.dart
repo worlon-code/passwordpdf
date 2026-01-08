@@ -18,6 +18,7 @@ import '../../../services/encryption_service.dart';
 import '../../../services/export_queue_service.dart';
 import '../../../models/document_item_model.dart';
 import '../../../models/password_model.dart';
+import 'removed_files_screen.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/pdf_tools_service.dart';
 import 'pdf_viewer_screen.dart';
@@ -50,6 +51,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   final LoggingService _log = LoggingService();
   final DocumentService _docService = DocumentService();
   final ExportQueueService _exportQueue = ExportQueueService();
+  Set<String> _foldersWithNewContent = {}; // Cache for folder badges
   bool _isLoading = false;
   bool _isInitialized = false;
   String? _currentFolderId; // null = show all folders
@@ -74,6 +76,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   void _startAutoSync() {
     // Initial Sync
     _docService.syncAllFolders().then((_) {
+        _updateFolderBadges();
         if (mounted) setState(() {}); 
     });
     
@@ -81,6 +84,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _syncTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
         if (mounted) {
             _docService.syncAllFolders().then((_) {
+                 _updateFolderBadges();
                  if (mounted) setState(() {});
                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-Sync Completed'), duration: Duration(seconds: 1)));
             });
@@ -97,7 +101,26 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   void _updateUI() {
+    _updateFolderBadges();
     if (mounted) setState(() {});
+  }
+
+  void _updateFolderBadges() {
+    final allItems = _docService.getAllItems();
+    final newItems = allItems.where((i) => i.isNew).toList();
+    final foldersWithNew = <String>{};
+    final itemMap = {for (var i in allItems) i.id: i};
+
+    for (var item in newItems) {
+      // Mark all ancestors as having new content
+      var parentId = item.parentId;
+      while (parentId != null) {
+         if (foldersWithNew.contains(parentId)) break; // Optimization
+         foldersWithNew.add(parentId);
+         parentId = itemMap[parentId]?.parentId;
+      }
+    }
+    _foldersWithNewContent = foldersWithNew;
   }
 
   Future<void> _importFiles(List<String> paths) async {
@@ -110,7 +133,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       final fileName = path.split(Platform.pathSeparator).last;
       
       // 1. Try Zero-Copy Import (Check for Global Duplicates)
-      var result = await _docService.addReference(path, fileName, allowDuplicate: false, folderId: _currentFolderId);
+      var result = await _docService.addReference(path, fileName, allowDuplicate: false, folderId: _currentFolderId, isNew: true);
       
       if (result.isDuplicate) {
         // Found duplicate(s) in library
@@ -168,21 +191,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                          i++;
                      }
                      // Import with new name
-                     await _docService.addReference(path, newName, allowDuplicate: true, folderId: _currentFolderId);
+                     await _docService.addReference(path, newName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
                      successCount++;
                      break;
                      
                 case ConflictActionType.overwrite:
                      // Overwrite: Delete existing item from DB, then add new ref
                      await _docService.deleteItem(existingId); 
-                     await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId);
+                     await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
                      successCount++;
                      break;
             }
             
         } else {
              // No name collision, just add (allowDuplicate=true because we already passed the global check)
-             await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId);
+             await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
              successCount++;
         }
         
@@ -195,6 +218,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
 
     // Refresh UI
+    _updateFolderBadges();
     setState(() => _isLoading = false); // This triggers rebuild, _buildContent will fetch new service state
     
     if (mounted) {
@@ -264,6 +288,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         setState(() {
           _isLoading = false;
           _isInitialized = true;
+          _updateFolderBadges();
         });
         
         // Check for pending folder navigation (from notification tap)
@@ -2029,16 +2054,19 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     });
   }
 
-  void _navigateUp() {
+  void _navigateUp() async {
     if (_currentFolderId != null) {
-      final currentFolder = _docService.getAllItems().firstWhere(
-        (item) => item.id == _currentFolderId,
-        orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.folder),
-      );
+      // Clear badges when leaving folder
+      await _docService.clearFolderBadges(_currentFolderId!);
       
       setState(() {
+        _selectedFileIds.clear(); // Clear selection when navigating
+        // Logic to find parent
+        final currentFolder = _docService.getAllItems().firstWhere(
+          (item) => item.id == _currentFolderId,
+          orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.folder),
+        );
         _currentFolderId = currentFolder.parentId;
-        _selectedFileIds.clear();
       });
     }
   }
@@ -2046,20 +2074,10 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _currentFolderId == null && _selectedFileIds.isEmpty,
+      canPop: _currentFolderId == null,
       onPopInvoked: (didPop) {
-        if (!didPop) {
-          // If in move/selection mode, clear selection first
-          if (_selectedFileIds.isNotEmpty) {
-            setState(() {
-              _selectedFileIds.clear();
-            });
-          } 
-          // If inside a folder (and not in selection mode), go back to parent
-          else if (_currentFolderId != null) {
-            _navigateUp();
-          }
-        }
+        if (didPop) return;
+        _navigateUp();
       },
       child: Scaffold(
         appBar: AppBar(
@@ -2191,6 +2209,16 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                     _createFolder();
                   } else if (value == 'import_folder') {
                     _importFolder();
+                  } else if (value == 'removed_files') {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => RemovedFilesScreen(
+                          docService: _docService,
+                          folderId: _currentFolderId,
+                        ),
+                      ),
+                    ).then((_) => setState(() {}));
                   }
                 },
                 itemBuilder: (context) => [
@@ -2211,6 +2239,16 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                         Icon(Icons.drive_folder_upload),
                         SizedBox(width: 8),
                         Text('Import Folder'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'removed_files',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_sweep),
+                        SizedBox(width: 8),
+                        Text('Removed Files'),
                       ],
                     ),
                   ),
@@ -2536,7 +2574,12 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Widget _buildEmptyState() {
-    return Center(
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: SizedBox(
+          height: constraints.maxHeight,
+          child: Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -2560,7 +2603,10 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           ),
         ],
       ),
-    );
+    ),
+          ),
+        ),
+      );
   }
 
   Widget _buildFolderCard(DocumentItem folder) {
@@ -2634,7 +2680,18 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 if (folder.isImported) ...[
                     const SizedBox(width: 8),
                     Icon(Icons.sync, size: 16, color: Theme.of(context).colorScheme.primary),
-                ]
+                ],
+                if (_foldersWithNewContent.contains(folder.id)) ...[
+                    const SizedBox(width: 8),
+                     Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('NEW', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+                    ),
+                ],
             ],
         ),
         subtitle: Text(_buildFolderSubtitle(folder.id)),
@@ -2739,183 +2796,138 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   Widget _buildFileCard(DocumentItem file) {
     final isSelected = _selectedFileIds.contains(file.id);
-    final fileExists = file.sourcePath != null && File(file.sourcePath!).existsSync();
-    final fileSize = fileExists ? File(file.sourcePath!).lengthSync() : 0;
-    final fileSizeKb = (fileSize / 1024).toStringAsFixed(1);
+    final fileSizeKb = (file.size / 1024).toStringAsFixed(1);
+    final isMissing = file.missingOnDevice;
 
     return Opacity(
-      opacity: fileExists ? 1.0 : 0.6,
+      opacity: isMissing ? 0.6 : 1.0,
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
         color: isSelected 
             ? Theme.of(context).colorScheme.primaryContainer 
-            : (!fileExists ? Colors.red.withOpacity(0.05) : null),
-        child: ListTile(
-          leading: Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: fileExists 
-                  ? _getFileColor(file).withOpacity(0.1)
-                  : Colors.red.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              fileExists ? _getFileIcon(file) : Icons.warning_amber_rounded,
-              color: fileExists ? _getFileColor(file) : Colors.red,
-            ),
-          ),
-          title: Text(
-            file.name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: fileExists ? null : Colors.grey,
-            ),
-          ),
-          subtitle: Text(
-            fileExists ? '$fileSizeKb KB' : 'File missing - tap to remove',
-            style: TextStyle(
-              color: fileExists ? null : Colors.red,
-            ),
-          ),
-          trailing: isSelected
-              ? IconButton(
-                  icon: const Icon(Icons.check_circle),
-                  color: Theme.of(context).colorScheme.primary,
-                  onPressed: () => _toggleFileSelection(file.id),
-                )
-            : PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (value) async {
-                  if (value == 'info') {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => FileInfoScreen(file: file),
-                      ),
-                    );
-                    if (result == 'open' && file.isPdf && mounted) {
-                      // Smart PDF password handling
-                      await _openDocument(file);
-                    }
-                  } else if (value == 'select') {
-                    _toggleFileSelection(file.id);
-                  } else if (value == 'rename') {
-                    await _renameItem(file);
-                  } else if (value == 'delete') {
-                    await _docService.deleteItem(file.id);
-                    setState(() {});
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'info',
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline),
-                        SizedBox(width: 8),
-                        Text('File Info'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'select',
-                    child: Row(
-                      children: [
-                        Icon(Icons.check_circle_outline),
-                        SizedBox(width: 8),
-                        Text('Select'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'rename',
-                    child: Row(
-                      children: [
-                        Icon(Icons.edit),
-                        SizedBox(width: 8),
-                        Text('Rename'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete, color: Colors.red),
-                        SizedBox(width: 8),
-                        Text('Delete', style: TextStyle(color: Colors.red)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-          onTap: () async {
-            if (_selectedFileIds.isNotEmpty) {
-              // In selection/move mode - toggle selection
-              setState(() {
-                if (isSelected) {
-                  _selectedFileIds.remove(file.id);
-                } else {
-                  _selectedFileIds.add(file.id);
-                }
-              });
-            } else if (!fileExists) {
-              // [ZERO COPY] File missing - offer to remove reference
-              final shouldRemove = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('File Not Found'),
-                  content: Text(
-                    'The original file "${file.name}" has been moved or deleted from the device.\n\nWould you like to remove this reference from the app?',
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Keep'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                      child: const Text('Remove'),
-                    ),
-                  ],
-                ),
-              );
-              
-              if (shouldRemove == true) {
-                await _docService.deleteItem(file.id);
-                setState(() {});
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Removed "${file.name}" from app')),
-                  );
-                }
-              }
-            } else if (file.isPdf) {
-              // Smart PDF password handling
-              await _openDocument(file);
-            }
-            // For non-PDF files when not in move mode - do nothing on tap
+            : (isMissing ? Colors.red.withOpacity(0.05) : null),
+        child: InkWell(
+          onLongPress: () {
+            _toggleFileSelection(file.id);
           },
-        onLongPress: () {
-          // Long-press enters move mode by selecting this file
-          setState(() {
-            _selectedFileIds.add(file.id);
-          });
-          // Show snackbar to indicate move mode
-          if (_selectedFileIds.length == 1) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Tap more files to select, then tap Move icon'),
-                duration: Duration(seconds: 2),
+          onTap: () {
+            if (_selectedFileIds.isNotEmpty) {
+              _toggleFileSelection(file.id);
+            } else {
+              if (isMissing) {
+                 ScaffoldMessenger.of(context).showSnackBar(
+                   const SnackBar(
+                     content: Text('File is missing. Leave folder to remove permanently.'),
+                     backgroundColor: Colors.red
+                   ),
+                 );
+              } else {
+                 _openDocument(file);
+              }
+            }
+          },
+          child: ListTile(
+            leading: Stack(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: isMissing 
+                        ? Colors.red.withOpacity(0.1) 
+                        : _getFileColor(file).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Center(
+                    child: isMissing
+                        ? const Icon(Icons.delete_forever, color: Colors.red, size: 28)
+                        : Icon(
+                            _getFileIcon(file),
+                            color: _getFileColor(file),
+                          ),
+                  ),
+                ),
+                if (isSelected)
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.check, size: 12, color: Colors.white),
+                    ),
+                  ),
+                if (file.isNew && !isMissing)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.green,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text('NEW', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+              ],
+            ),
+            title: Text(
+              file.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isMissing ? Colors.grey : null,
+                decoration: isMissing ? TextDecoration.lineThrough : null,
               ),
-            );
-          }
-        },
+            ),
+            subtitle: Text(
+              isMissing ? 'Missing from device' : '$fileSizeKb KB',
+              style: TextStyle(
+                color: isMissing ? Colors.red : null,
+              ),
+            ),
+            trailing: isSelected
+                ? IconButton(
+                    icon: const Icon(Icons.check_circle),
+                    color: Theme.of(context).colorScheme.primary,
+                    onPressed: () => _toggleFileSelection(file.id),
+                  )
+                : PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert),
+                    onSelected: (value) async {
+                       if (value == 'info') {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => FileInfoScreen(file: file),
+                          ),
+                        );
+                        if (result == 'open' && file.isPdf && mounted && !isMissing) {
+                          await _openDocument(file);
+                        }
+                      } else if (value == 'select') {
+                        _toggleFileSelection(file.id);
+                      } else if (value == 'rename') {
+                        await _renameItem(file);
+                      } else if (value == 'delete') {
+                        await _docService.deleteItem(file.id);
+                        setState(() {});
+                      }
+                    },
+                    itemBuilder: (context) => [
+                        const PopupMenuItem(value: 'info', child: Row(children: [Icon(Icons.info_outline), SizedBox(width: 8), Text('File Info')])),
+                        const PopupMenuItem(value: 'select', child: Row(children: [Icon(Icons.check_circle_outline), SizedBox(width: 8), Text('Select')])),
+                        if (!isMissing) const PopupMenuItem(value: 'rename', child: Row(children: [Icon(Icons.edit), SizedBox(width: 8), Text('Rename')])),
+                        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red), SizedBox(width: 8), Text('Delete')])),
+                    ],
+                ),
+          ),
+        ),
       ),
-    ),
     );
   }
 

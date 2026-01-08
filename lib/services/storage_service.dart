@@ -6,7 +6,7 @@ import '../models/recent_document_model.dart';
 
 /// Service for local SQLite database operations
 class StorageService {
-  static const int _databaseVersion = 12;
+  static const int _databaseVersion = 13;
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
   StorageService._internal();
@@ -103,7 +103,11 @@ class StorageService {
         is_folder INTEGER DEFAULT 0,
         has_pdf INTEGER DEFAULT 0,
         has_doc INTEGER DEFAULT 0,
-        has_excel INTEGER DEFAULT 0
+        has_excel INTEGER DEFAULT 0,
+        is_new INTEGER DEFAULT 0,
+        missing_on_device INTEGER DEFAULT 0,
+        added_at INTEGER,
+        last_synced INTEGER
       )
     ''');
     
@@ -124,6 +128,10 @@ class StorageService {
       
       // Composite Index for "Ultra Fast" Folder View (Parent + Sort)
       await db.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_composite ON ${AppConstants.filesIndexTable} (parent_path, is_folder, modified_at)');
+
+      // New Indexes for Badges/Missing
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_is_new ON ${AppConstants.filesIndexTable} (is_new)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_missing ON ${AppConstants.filesIndexTable} (missing_on_device)');
 
       // Phase 1.10: Trigram Search (Ultra Fast Substring)
       await db.execute('''
@@ -267,15 +275,17 @@ class StorageService {
       } catch (_) {}
     }
     
-    if (oldVersion < 11) {
-       // Phase 1.11: Performance Tuning (Sort & Folder View)
-       try {
-         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_modified ON ${AppConstants.filesIndexTable} (modified_at)');
-         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_size ON ${AppConstants.filesIndexTable} (size)');
-         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_name ON ${AppConstants.filesIndexTable} (name)');
-         // Composite: Instant Folder Opening
-         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_composite ON ${AppConstants.filesIndexTable} (parent_path, is_folder, modified_at)');
-       } catch (_) {}
+    if (oldVersion < 13) {
+      // Phase 3-5: Sync Tracking & Badges
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_new INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN missing_on_device INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN added_at INTEGER');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN last_synced INTEGER');
+        
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_files_is_new ON ${AppConstants.filesIndexTable} (is_new)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_files_missing ON ${AppConstants.filesIndexTable} (missing_on_device)');
+      } catch (_) {}
     }
   }
 

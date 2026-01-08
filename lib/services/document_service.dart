@@ -80,7 +80,7 @@ class DocumentService {
   /// [ZERO COPY] Add a reference to a file without copying it
   /// Stores the original device path directly. No file copy is made.
   /// Returns an ImportResult with the item (if added) or duplicate info
-  Future<ImportResult> addReference(String originalPath, String fileName, {bool allowDuplicate = false, String? folderId}) async {
+  Future<ImportResult> addReference(String originalPath, String fileName, {bool allowDuplicate = false, String? folderId, bool isNew = false}) async {
     try {
       final file = File(originalPath);
       if (!await file.exists()) return ImportResult.error('File not found at path');
@@ -138,15 +138,15 @@ class DocumentService {
       final newItem = await addFile(
         originalPath,  // Store original path, NOT a copy
         customName: fileName,
-        createdAt: stat.accessed,
-        modifiedAt: stat.modified,
         folderId: folderId,
+        createdAt: stat.changed,
+        modifiedAt: stat.modified,
+        isNew: isNew, // Pass isNew flag
       );
       
-      _log.info('DocumentService', '[ZERO COPY] Added reference: $fileName -> $originalPath');
       return ImportResult.success(originalPath, newItem);
     } catch (e) {
-      _log.error('DocumentService', 'Add reference failed', e);
+      _log.error('DocumentService', 'Failed to add reference: $e', e);
       return ImportResult.error(e.toString());
     }
   }
@@ -156,7 +156,11 @@ class DocumentService {
     _log.info('DocumentService', 'Starting Auto-Sync...');
     final folders = _items.where((i) => i.isFolder && i.isImported && i.sourcePath != null).toList();
     for (final folder in folders) {
-        await syncFolder(folder.id);
+        try {
+          await syncFolder(folder.id);
+        } catch (e, stack) {
+          _log.error('DocumentService', 'Sync failed for folder ${folder.name}', e, stack);
+        }
     }
     _log.info('DocumentService', 'Auto-Sync Completed');
   }
@@ -245,7 +249,7 @@ class DocumentService {
                      final existingByName = _items.where((i) => 
                          i.isFolder && 
                          i.parentId == folderId && 
-                         i.name == name
+                         i.name.toLowerCase() == name.toLowerCase()
                      ).toList();
                      
                      DocumentItem targetFolder;
@@ -285,11 +289,15 @@ class DocumentService {
                      if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
                          _log.info('DocumentService', '[Sync] Step: ADD_FILE_START - $name to folder $folderId');
                          try {
-                             final result = await addReference(entity.path, name, folderId: folderId, allowDuplicate: true);
-                             _log.info('DocumentService', '[Sync] Step: ADD_FILE_DONE - $name: success=${result.success}, error=${result.errorMessage}');
+                             await addReference(entity.path, name, 
+                                 folderId: folderId, 
+                                 allowDuplicate: true, // Sync should allow duplicate if logic reached here (new file)
+                                 isNew: true // NEW FILE
+                             );
+                             _log.info('DocumentService', '[Sync] Step: ADD_FILE_DONE - $name');
                          } catch (fileError, fileStack) {
                              _log.error('DocumentService', '[Sync] Step: ADD_FILE_FAILED - $name: $fileError\n$fileStack', fileError);
-                             rethrow;
+                             // Don't rethrow, just skip file
                          }
                      } else {
                          _log.info('DocumentService', '[Sync] Step: SKIP_EXT - $name (unsupported: $ext)');
@@ -298,16 +306,64 @@ class DocumentService {
             }
         }
         
-        // 2. Handle Deleted Files? - Skipped for safety
-        _log.info('DocumentService', '[Sync] Step: COMPLETE - All entities processed for ${folder.name}');
+        // 2. Identify Missing Files (In DB but NOT on Disk)
+        // Get all files currently in this folder (DB view)
+        // Only check FILES, let folders handle themselves via recursion (or handle empty folders separately)
+        final dbFiles = _items.where((i) => i.isFile && i.parentId == folderId).toList();
         
+        for (final dbFile in dbFiles) {
+             // Check if this file was found in current scan
+             // entities contains disk entities
+             final stillExists = entities.any((e) => e.path == dbFile.sourcePath);
+             
+             if (!stillExists) {
+                 if (!dbFile.missingOnDevice) {
+                     _log.info('DocumentService', '[Sync] Step: MISSING - Marking ${dbFile.name} as missing on device');
+                     
+                     // Update item to be missing
+                     final updated = dbFile.copyWith(
+                         missingOnDevice: true, 
+                         isNew: false // Cannot be new if missing
+                     );
+                     
+                     // In-memory update
+                     final idx = _items.indexWhere((i) => i.id == dbFile.id);
+                     if (idx != -1) {
+                         _items[idx] = updated;
+                         // Save to storage
+                          await _saveDocuments();
+                     }
+                 }
+             } else {
+                 // File exists: Ensure missingOnDevice is FALSE (Restoration)
+                 if (dbFile.missingOnDevice) {
+                     _log.info('DocumentService', '[Sync] Step: RESTORED - ${dbFile.name} found on device');
+                     final updated = dbFile.copyWith(missingOnDevice: false);
+                     final idx = _items.indexWhere((i) => i.id == dbFile.id);
+                     if (idx != -1) {
+                         _items[idx] = updated;
+                         await _saveDocuments();
+                     }
+                 }
+             }
+        }
+        
+        // 3. Update Folder Last Synced
+        final folderIdx = _items.indexWhere((i) => i.id == folderId);
+        if (folderIdx != -1) {
+             _items[folderIdx] = _items[folderIdx].copyWith(lastSynced: DateTime.now());
+             // No need to save here if we saved above, but for safety:
+             if (dbFiles.every((f) => !f.missingOnDevice)) { // optimization: save only if no changes above? NO, save for timestamp
+                 await _saveDocuments();
+             }
+        }
+
+        _log.info('DocumentService', '[Sync] SUCCESS - ${folder.name}');
+        return true;
     } catch (e, stackTrace) {
         _log.error('DocumentService', '[Sync] FAILED for ${folder.name}: $e\nStack trace:\n$stackTrace', e);
         return false;
     }
-    
-    _log.info('DocumentService', '[Sync] SUCCESS - ${folder.name}');
-    return true;
   }
 
   /// @deprecated Use addReference instead for Zero Copy architecture
@@ -486,36 +542,41 @@ class DocumentService {
   }
 
   /// Add file
-  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName, DateTime? createdAt, DateTime? modifiedAt}) async {
-    final fileName = customName ?? filePath.split(RegExp(r'[/\\]')).last;
-    final fileObj = File(filePath);
-    final size = fileObj.existsSync() ? await fileObj.length() : 0;
+  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName, DateTime? createdAt, DateTime? modifiedAt, bool isNew = false}) async {
+    final file = File(filePath);
+    final stat = await file.stat();
+    final size = await file.length();
+    final name = customName ?? filePath.split(Platform.pathSeparator).last;
     
-    // Default to current time if not provided
-    // BUT for imported files, we want to respect the original file's dates if possible
-    final now = DateTime.now();
-    
-    final file = DocumentItem(
+    final newItem = DocumentItem(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: fileName,
+      name: name,
       type: DocumentItemType.file,
-      sourcePath: filePath,
+      sourcePath: filePath, // Storing ORIGINAL path
+      parentId: folderId,
       size: size,
-      createdAt: createdAt ?? now,
-      modifiedAt: modifiedAt ?? now,
+      createdAt: createdAt ?? stat.changed,
+      modifiedAt: modifiedAt ?? stat.modified,
+      isNew: isNew,
+      addedAt: isNew ? DateTime.now() : null,
     );
+
+    _items.add(newItem);
     
-    _items.add(file);
-    
-    // Add to folder if specified
+    // If added to a folder, update folder's file list
     if (folderId != null) {
-      await addFileToFolder(file.id, folderId);
+      final folderIndex = _items.indexWhere((item) => item.id == folderId);
+      if (folderIndex != -1) {
+        final folder = _items[folderIndex];
+        final updatedFolder = folder.copyWith(
+          fileIds: [...folder.fileIds, newItem.id],
+        );
+        _items[folderIndex] = updatedFolder;
+      }
     }
     
     await _saveDocuments();
-    _log.info('DocumentService', 'Added file: $fileName (size: $size)');
-    
-    return file;
+    return newItem;
   }
 
   /// Add file to folder
@@ -772,5 +833,35 @@ class DocumentService {
     _items.clear();
     await _prefs?.remove(_documentsKey);
     _log.info('DocumentService', 'Cleared all documents');
+  }
+  /// Clear "New" badges and remove "Missing" files for a folder
+  Future<void> clearFolderBadges(String folderId) async {
+    bool changed = false;
+    final itemsToRemove = <String>[];
+    
+    for (int i = 0; i < _items.length; i++) {
+        final item = _items[i];
+        if (item.parentId == folderId) {
+            // 1. Clear New Badge
+            if (item.isNew) {
+                _items[i] = item.copyWith(isNew: false);
+                changed = true;
+            }
+            // 2. Remove Missing Files
+            if (item.missingOnDevice) {
+                itemsToRemove.add(item.id);
+            }
+        }
+    }
+    
+    if (itemsToRemove.isNotEmpty) {
+        _items.removeWhere((item) => itemsToRemove.contains(item.id));
+        changed = true;
+        _log.info('DocumentService', 'Removed ${itemsToRemove.length} missing files from folder $folderId');
+    }
+    
+    if (changed) {
+        await _saveDocuments();
+    }
   }
 }
