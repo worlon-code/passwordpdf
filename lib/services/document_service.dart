@@ -80,7 +80,7 @@ class DocumentService {
   /// [ZERO COPY] Add a reference to a file without copying it
   /// Stores the original device path directly. No file copy is made.
   /// Returns an ImportResult with the item (if added) or duplicate info
-  Future<ImportResult> addReference(String originalPath, String fileName, {bool allowDuplicate = false}) async {
+  Future<ImportResult> addReference(String originalPath, String fileName, {bool allowDuplicate = false, String? folderId}) async {
     try {
       final file = File(originalPath);
       if (!await file.exists()) return ImportResult.error('File not found at path');
@@ -140,6 +140,7 @@ class DocumentService {
         customName: fileName,
         createdAt: stat.accessed,
         modifiedAt: stat.modified,
+        folderId: folderId,
       );
       
       _log.info('DocumentService', '[ZERO COPY] Added reference: $fileName -> $originalPath');
@@ -148,6 +149,165 @@ class DocumentService {
       _log.error('DocumentService', 'Add reference failed', e);
       return ImportResult.error(e.toString());
     }
+  }
+
+  /// Sync all imported folders
+  Future<void> syncAllFolders() async {
+    _log.info('DocumentService', 'Starting Auto-Sync...');
+    final folders = _items.where((i) => i.isFolder && i.isImported && i.sourcePath != null).toList();
+    for (final folder in folders) {
+        await syncFolder(folder.id);
+    }
+    _log.info('DocumentService', 'Auto-Sync Completed');
+  }
+
+  /// Sync specific folder with its source path
+  /// Returns true if sync successful, false if failed
+  Future<bool> syncFolder(String folderId) async {
+    final folderIndex = _items.indexWhere((i) => i.id == folderId);
+    if (folderIndex == -1) {
+      _log.error('DocumentService', 'Sync failed: Folder not found with ID $folderId');
+      return false;
+    }
+    final folder = _items[folderIndex];
+    
+    if (folder.sourcePath == null) {
+      _log.error('DocumentService', 'Sync failed: Folder ${folder.name} has no sourcePath');
+      return false;
+    }
+    
+    final dir = Directory(folder.sourcePath!);
+    if (!await dir.exists()) {
+      _log.error('DocumentService', 'Sync failed: Source directory not found: ${folder.sourcePath}');
+      return false; // Source folder deleted?
+    }
+    
+    _log.info('DocumentService', 'Syncing folder: ${folder.name}');
+    
+    try {
+        final entities = await dir.list(recursive: false, followLinks: false).toList();
+        
+        // 1. Sync Files/Folders from Disk to App
+        // Special case: Download folder should only sync files, not subfolders
+        final isDownloadFolder = folder.name.toLowerCase() == 'download';
+        
+        _log.info('DocumentService', 'Sync: Processing ${entities.length} entities in ${folder.name} (isDownload: $isDownloadFolder)');
+        
+        for (final entity in entities) {
+            final name = entity.path.split(Platform.pathSeparator).last;
+            
+            // Skip subdirectories for Download folder
+            if (isDownloadFolder && entity is Directory) {
+                _log.info('DocumentService', '[Sync] Step: SKIP - Subfolder in Download: $name');
+                continue;
+            }
+            
+            // Check if already in App globally
+            final existingIndex = _items.indexWhere((i) => i.sourcePath == entity.path);
+            
+            _log.info('DocumentService', '[Sync] Step: CHECK - $name -> existingIndex: $existingIndex');
+            
+            if (existingIndex != -1) {
+                // Item exists in App
+                final existingItem = _items[existingIndex];
+                
+                _log.info('DocumentService', '[Sync] Step: FOUND - ${existingItem.name} in parentId=${existingItem.parentId}, expected=$folderId');
+                
+                // Enforce Structure: If it belongs to this imported folder, ensure it's inside it
+                if (existingItem.parentId != folderId) {
+                    _log.info('DocumentService', '[Sync] Step: MOVE - Moving ${existingItem.name} back to ${folder.name}');
+                    try {
+                        if (existingItem.isFolder) {
+                            await moveFolderToFolder(existingItem.id, folderId);
+                        } else {
+                            await moveFilesToFolder([existingItem.id], folderId);
+                        }
+                        _log.info('DocumentService', '[Sync] Step: MOVE_DONE - ${existingItem.name}');
+                    } catch (moveError, moveStack) {
+                        _log.error('DocumentService', '[Sync] Step: MOVE_FAILED - ${existingItem.name}: $moveError\n$moveStack', moveError);
+                        rethrow;
+                    }
+                }
+                
+                // Recursion for Subfolders (but not for Download folder)
+                if (!isDownloadFolder && existingItem.isFolder && existingItem.isImported) {
+                    _log.info('DocumentService', '[Sync] Step: RECURSE - Into subfolder ${existingItem.name}');
+                    await syncFolder(existingItem.id);
+                }
+                
+            } else {
+                // New Item found on Disk -> Import it
+                _log.info('DocumentService', '[Sync] Step: NEW - $name (isDir: ${entity is Directory})');
+                
+                if (entity is Directory) {
+                     // Check if folder with this name already exists in the parent (by name, not sourcePath)
+                     _log.info('DocumentService', '[Sync] Step: CHECK_FOLDER_BY_NAME - $name in parent $folderId');
+                     final existingByName = _items.where((i) => 
+                         i.isFolder && 
+                         i.parentId == folderId && 
+                         i.name == name
+                     ).toList();
+                     
+                     DocumentItem targetFolder;
+                     
+                     if (existingByName.isNotEmpty) {
+                         // Folder exists by name but without matching sourcePath - use it
+                         targetFolder = existingByName.first;
+                         _log.info('DocumentService', '[Sync] Step: FOLDER_EXISTS_BY_NAME - $name (id=${targetFolder.id}), updating sourcePath');
+                     } else {
+                         // Create new folder
+                         _log.info('DocumentService', '[Sync] Step: CREATE_FOLDER_START - $name');
+                         try {
+                             targetFolder = await createFolder(name, parentId: folderId);
+                             _log.info('DocumentService', '[Sync] Step: CREATE_FOLDER_DONE - $name with id=${targetFolder.id}');
+                         } catch (createError, createStack) {
+                             _log.error('DocumentService', '[Sync] Step: CREATE_FOLDER_FAILED - $name: $createError\n$createStack', createError);
+                             rethrow;
+                         }
+                     }
+                     
+                     // Set/Update Source Path & Imported flag
+                     _log.info('DocumentService', '[Sync] Step: SET_SOURCE_PATH_START - ${targetFolder.id} -> ${entity.path}');
+                     try {
+                         await updateFolderSourcePath(targetFolder.id, entity.path);
+                         _log.info('DocumentService', '[Sync] Step: SET_SOURCE_PATH_DONE - ${targetFolder.id}');
+                     } catch (pathError, pathStack) {
+                         _log.error('DocumentService', '[Sync] Step: SET_SOURCE_PATH_FAILED - ${targetFolder.id}: $pathError\n$pathStack', pathError);
+                         rethrow;
+                     }
+                     
+                     // Recurse
+                     _log.info('DocumentService', '[Sync] Step: RECURSE_NEW - Into subfolder $name');
+                     await syncFolder(targetFolder.id);
+                } else if (entity is File) {
+                     // Check extension
+                     final ext = name.split('.').last.toLowerCase();
+                     if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                         _log.info('DocumentService', '[Sync] Step: ADD_FILE_START - $name to folder $folderId');
+                         try {
+                             final result = await addReference(entity.path, name, folderId: folderId, allowDuplicate: true);
+                             _log.info('DocumentService', '[Sync] Step: ADD_FILE_DONE - $name: success=${result.success}, error=${result.errorMessage}');
+                         } catch (fileError, fileStack) {
+                             _log.error('DocumentService', '[Sync] Step: ADD_FILE_FAILED - $name: $fileError\n$fileStack', fileError);
+                             rethrow;
+                         }
+                     } else {
+                         _log.info('DocumentService', '[Sync] Step: SKIP_EXT - $name (unsupported: $ext)');
+                     }
+                }
+            }
+        }
+        
+        // 2. Handle Deleted Files? - Skipped for safety
+        _log.info('DocumentService', '[Sync] Step: COMPLETE - All entities processed for ${folder.name}');
+        
+    } catch (e, stackTrace) {
+        _log.error('DocumentService', '[Sync] FAILED for ${folder.name}: $e\nStack trace:\n$stackTrace', e);
+        return false;
+    }
+    
+    _log.info('DocumentService', '[Sync] SUCCESS - ${folder.name}');
+    return true;
   }
 
   /// @deprecated Use addReference instead for Zero Copy architecture
@@ -272,6 +432,15 @@ class DocumentService {
     try {
       final item = _items.firstWhere((item) => item.sourcePath == path);
       return item.id;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Find folder by source path
+  DocumentItem? getFolderBySourcePath(String sourcePath) {
+    try {
+      return _items.firstWhere((item) => item.isFolder && item.sourcePath == sourcePath);
     } catch (_) {
       return null;
     }
@@ -408,6 +577,7 @@ class DocumentService {
   }
 
   /// Move a folder to another folder (updates parentId)
+  /// Throws exception if name conflict with imported folder at destination
   Future<void> moveFolderToFolder(String folderId, String newParentId) async {
     final folderIndex = _items.indexWhere((item) => item.id == folderId);
     if (folderIndex == -1) {
@@ -417,6 +587,28 @@ class DocumentService {
     final folder = _items[folderIndex];
     if (!folder.isFolder) {
       throw Exception('Item is not a folder');
+    }
+    
+    // Check for name conflict at destination
+    final conflictingFolder = _items.where((item) =>
+        item.isFolder &&
+        item.parentId == newParentId &&
+        item.name == folder.name &&
+        item.id != folderId
+    ).toList();
+    
+    if (conflictingFolder.isNotEmpty) {
+        final existing = conflictingFolder.first;
+        if (existing.isImported) {
+            // Imported folder has priority - cannot move here with same name
+            throw Exception('Cannot move: An imported folder "${folder.name}" already exists at this location. Please rename your folder first.');
+        } else if (folder.isImported) {
+            // Moving imported folder to location with manual folder - manual should be renamed
+            throw Exception('Cannot move: A folder "${folder.name}" already exists at this location. Please rename the existing folder first.');
+        } else {
+            // Both are manual - just prevent duplicate
+            throw Exception('Cannot move: A folder "${folder.name}" already exists at this location.');
+        }
     }
     
     // Update the parentId
@@ -444,6 +636,7 @@ class DocumentService {
   }
 
   /// Move a folder to root (set parentId to null)
+  /// Throws exception if name conflict with imported folder at root
   Future<void> moveFolderToRoot(String folderId) async {
     final folderIndex = _items.indexWhere((item) => item.id == folderId);
     if (folderIndex == -1) {
@@ -451,10 +644,53 @@ class DocumentService {
     }
     
     final folder = _items[folderIndex];
+    
+    // Check for name conflict at root (parentId = null)
+    final conflictingFolder = _items.where((item) =>
+        item.isFolder &&
+        item.parentId == null &&
+        item.name == folder.name &&
+        item.id != folderId
+    ).toList();
+    
+    if (conflictingFolder.isNotEmpty) {
+        final existing = conflictingFolder.first;
+        if (existing.isImported) {
+            throw Exception('Cannot move: An imported folder "${folder.name}" already exists at root. Please rename your folder first.');
+        } else if (folder.isImported) {
+            throw Exception('Cannot move: A folder "${folder.name}" already exists at root. Please rename the existing folder first.');
+        } else {
+            throw Exception('Cannot move: A folder "${folder.name}" already exists at root.');
+        }
+    }
+    
     _items[folderIndex] = folder.copyWith(clearParentId: true);
     
     await _saveDocuments();
     _log.info('DocumentService', 'Moved folder ${folder.name} to root');
+  }
+
+  /// Rename item
+  Future<void> renameItem(String itemId, String newName) async {
+    final index = _items.indexWhere((item) => item.id == itemId);
+    if (index == -1) return;
+    
+    _items[index] = _items[index].copyWith(name: newName);
+    await _saveDocuments();
+    _log.info('DocumentService', 'Renamed item $itemId to $newName');
+  }
+
+  /// Update folder source path (for Sync)
+  Future<void> updateFolderSourcePath(String folderId, String sourcePath) async {
+    final folderIndex = _items.indexWhere((item) => item.id == folderId);
+    if (folderIndex == -1) return;
+    
+    final folder = _items[folderIndex];
+    if (!folder.isFolder) return;
+    
+    _items[folderIndex] = folder.copyWith(sourcePath: sourcePath, isImported: true);
+    await _saveDocuments();
+    _log.info('DocumentService', 'Updated folder source path: $sourcePath (isImported=true)');
   }
 
   /// Delete item (recursively deletes folder contents)
@@ -500,15 +736,7 @@ class DocumentService {
     _log.info('DocumentService', 'Deleted item: ${item.name}');
   }
 
-  /// Rename item
-  Future<void> renameItem(String itemId, String newName) async {
-    final index = _items.indexWhere((i) => i.id == itemId);
-    if (index != -1) {
-      _items[index] = _items[index].copyWith(name: newName);
-      await _saveDocuments();
-      _log.info('DocumentService', 'Renamed item to: $newName');
-    }
-  }
+
 
   /// Load documents from storage
   Future<void> _loadDocuments() async {

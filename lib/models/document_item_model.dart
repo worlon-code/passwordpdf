@@ -9,6 +9,7 @@ class DocumentItem {
   final int size; // File size in bytes (0 for folders or legacy)
   final DateTime createdAt;
   final DateTime modifiedAt;
+  final bool isImported; // True if created via Folder Import (Restricted Move/Sync Managed)
 
   DocumentItem({
     required this.id,
@@ -20,6 +21,7 @@ class DocumentItem {
     this.size = 0,
     DateTime? createdAt,
     DateTime? modifiedAt,
+    this.isImported = false,
   })  : fileIds = fileIds ?? [],
         createdAt = createdAt ?? DateTime.now(),
         modifiedAt = modifiedAt ?? DateTime.now();
@@ -31,10 +33,11 @@ class DocumentItem {
     String? name,
     String? sourcePath,
     String? parentId,
-    bool clearParentId = false, // Set to true to explicitly set parentId to null
+    bool clearParentId = false,
     List<String>? fileIds,
     int? size,
     DateTime? modifiedAt,
+    bool? isImported,
   }) {
     return DocumentItem(
       id: id,
@@ -46,6 +49,7 @@ class DocumentItem {
       size: size ?? this.size,
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
+      isImported: isImported ?? this.isImported,
     );
   }
 
@@ -54,18 +58,18 @@ class DocumentItem {
       'id': id,
       'name': name,
       'type': type.toString(),
-      'sourcePath': sourcePath, // Changed from 'filePath'
-      'filePath': sourcePath, // Keep for backward compat (migration)
+      'sourcePath': sourcePath, 
+      'filePath': sourcePath, 
       'parentId': parentId,
       'fileIds': fileIds,
       'size': size,
       'createdAt': createdAt.toIso8601String(),
       'modifiedAt': modifiedAt.toIso8601String(),
+      'isImported': isImported,
     };
   }
 
   factory DocumentItem.fromJson(Map<String, dynamic> json) {
-    // Support both old 'filePath' and new 'sourcePath' keys
     final path = json['sourcePath'] as String? ?? json['filePath'] as String?;
     
     return DocumentItem(
@@ -80,6 +84,7 @@ class DocumentItem {
       size: json['size'] as int? ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       modifiedAt: DateTime.parse(json['modifiedAt'] as String),
+      isImported: json['isImported'] as bool? ?? false,
     );
   }
 }

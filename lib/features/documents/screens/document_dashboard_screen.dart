@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:passwordpdf_manager/features/documents/screens/document_search_delegate.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
@@ -32,6 +33,7 @@ import '../../documents/widgets/folder_selection_dialog.dart';
 import '../../../main.dart' show PendingFileOpen;
 import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
 import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
+import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 
 
 
@@ -57,6 +59,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   bool _sortAscending = false; // Default: Newest first (Descending)
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
+  Timer? _syncTimer;
 
   @override
   void initState() {
@@ -64,11 +67,30 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _exportQueue.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
+    _startAutoSync();
     _initialize();
+  }
+
+  void _startAutoSync() {
+    // Initial Sync
+    _docService.syncAllFolders().then((_) {
+        if (mounted) setState(() {}); 
+    });
+    
+    // Periodic Sync (10 min = 600 sec)
+    _syncTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
+        if (mounted) {
+            _docService.syncAllFolders().then((_) {
+                 if (mounted) setState(() {});
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-Sync Completed'), duration: Duration(seconds: 1)));
+            });
+        }
+    });
   }
   
   @override
   void dispose() {
+    _syncTimer?.cancel();
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
     super.dispose();
@@ -76,6 +98,158 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   void _updateUI() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _importFiles(List<String> paths) async {
+    setState(() => _isLoading = true);
+    
+    int successCount = 0;
+    
+    for (final path in paths) {
+      if (!mounted) break;
+      final fileName = path.split(Platform.pathSeparator).last;
+      
+      // 1. Try Zero-Copy Import (Check for Global Duplicates)
+      var result = await _docService.addReference(path, fileName, allowDuplicate: false, folderId: _currentFolderId);
+      
+      if (result.isDuplicate) {
+        // Found duplicate(s) in library
+        if (!mounted) break;
+        
+        // Show Duplicate Dialog
+        final shouldImportAnyway = await showDialog<bool>(
+            context: context,
+            builder: (context) => DuplicateFilesDialog(duplicates: result.duplicates ?? []),
+        );
+        
+        if (shouldImportAnyway != true) {
+            continue; // User skipped
+        }
+        
+        // User chose Import Anyway
+        // 2. Check for Name Collision in CURRENT folder (to avoid visual confusion)
+        final existingId = _docService.getFileIdInFolder(fileName, _currentFolderId);
+        
+        if (existingId != null) {
+            // Name conflict! Show Resolution Dialog
+            if (!mounted) break;
+            
+            final conflict = ConflictItem(
+                sourceId: path, // Use path as temp ID
+                name: fileName,
+                originalPath: path,
+                isFolder: false,
+            );
+            
+            final resolutions = await showDialog<Map<String, ConflictAction>>(
+                context: context,
+                builder: (context) => ConflictResolutionDialog(conflicts: [conflict]),
+            );
+            
+            if (resolutions == null || !resolutions.containsKey(path)) {
+                continue; // Cancelled or skipped
+            }
+            
+            final action = resolutions[path]!;
+            
+            // Handle Action
+            switch (action.type) {
+                case ConflictActionType.skip:
+                    continue;
+                    
+                case ConflictActionType.rename:
+                     // Auto-rename: Append number
+                     String newName = fileName;
+                     int i = 1;
+                     while (_docService.getFileIdInFolder(newName, _currentFolderId) != null) {
+                         final ext = newName.split('.').last;
+                         final nameNoExt = newName.substring(0, newName.length - ext.length - 1);
+                         newName = '${nameNoExt}_$i.$ext';
+                         i++;
+                     }
+                     // Import with new name
+                     await _docService.addReference(path, newName, allowDuplicate: true, folderId: _currentFolderId);
+                     successCount++;
+                     break;
+                     
+                case ConflictActionType.overwrite:
+                     // Overwrite: Delete existing item from DB, then add new ref
+                     await _docService.deleteItem(existingId); 
+                     await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId);
+                     successCount++;
+                     break;
+            }
+            
+        } else {
+             // No name collision, just add (allowDuplicate=true because we already passed the global check)
+             await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId);
+             successCount++;
+        }
+        
+      } else if (result.success) {
+        successCount++;
+      } else {
+        // Error
+        _log.error('Dashboard', 'Import failed: ${result.errorMessage}');
+      }
+    }
+
+    // Refresh UI
+    setState(() => _isLoading = false); // This triggers rebuild, _buildContent will fetch new service state
+    
+    if (mounted) {
+       if (successCount > 0) {
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Imported $successCount files')));
+       }
+    }
+  }
+
+  void _openFileBrowser() async {
+    final selectedPaths = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const FileSystemBrowser(
+          allowMultiple: true,
+          allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx'],
+        ),
+      ),
+    );
+
+    if (selectedPaths != null && selectedPaths.isNotEmpty) {
+      _importFiles(selectedPaths);
+    }
+  }
+  
+  Future<String?> _showRenameExistingDialog(String currentName) async {
+    final controller = TextEditingController(text: '${currentName}_1');
+    return showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+            title: const Text('Rename Existing Folder'),
+            content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                    Text('The folder "$currentName" already exists in your library.'),
+                    const SizedBox(height: 8),
+                    const Text('To import the new folder with the same name, please rename the EXISTING folder first.'),
+                    const SizedBox(height: 16),
+                    TextField(
+                        controller: controller,
+                        decoration: const InputDecoration(
+                            labelText: 'New Name for Existing Folder',
+                            border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
+                    )
+                ]
+            ),
+            actions: [
+                TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+                ElevatedButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('Rename')),
+            ]
+        )
+    );
   }
 
   Future<void> _initialize({bool showLoading = true}) async {
@@ -130,6 +304,187 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         _checkDownloadLocation();
       }
     }
+  }
+
+
+  Future<void> _exportSelectedItems() async {
+    String? password;
+    bool encrypt = false;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Export Selected Items'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Export ${_selectedFileIds.length} items as a ZIP file?'),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: encrypt,
+                        onChanged: (val) => setState(() => encrypt = val ?? false),
+                      ),
+                      const Text('Protect with Password'),
+                    ],
+                  ),
+                  if (encrypt)
+                    TextField(
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        labelText: 'ZIP Password',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      obscureText: true,
+                      onChanged: (val) => password = val,
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.archive),
+                  onPressed: () => Navigator.pop(context, true),
+                  label: const Text('Export'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    // Use password only if encrypt checked
+    final zipPassword = encrypt ? password : null;
+
+    // Check configuration
+    final settings = context.read<SettingsService>();
+    final exportPath = settings.exportPath;
+    
+    if (exportPath == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Export path not configured. Please check settings.')),
+        );
+      }
+      return;
+    }
+
+    // Copy selected IDs before clearing selection
+    final idsToExport = Set<String>.from(_selectedFileIds);
+
+    setState(() {
+      _selectedFileIds.clear(); // Clear selection immediately so user can continue working
+    });
+    
+    try {
+      final List<ExportItem> exportItems = [];
+      final allItems = _docService.getAllItems();
+      
+      for (final id in idsToExport) {
+        try {
+          final item = allItems.firstWhere((e) => e.id == id);
+          
+          if (item.isFolder) {
+            exportItems.add(ExportItem(
+              itemId: item.id,
+              name: item.name,
+              isFolder: true,
+              children: _buildExportItemsFromFolder(item.id),
+            ));
+          } else if (item.sourcePath != null) {
+            exportItems.add(ExportItem(
+              itemId: item.id,
+              name: item.name,
+              filePath: item.sourcePath,
+              isFolder: false,
+            ));
+          }
+        } catch (e) {
+          // Item might not exist, skip
+        }
+      }
+
+      if (exportItems.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No valid items to export')),
+          );
+        }
+        return;
+      }
+
+      // Add to queue
+      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath, zipPassword: zipPassword);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Export started in background'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ExportProgressScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _log.error('DocumentDashboard', 'Queue error', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start export: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteSelectedItems() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Selected Items?'),
+        content: Text('Are you sure you want to delete ${_selectedFileIds.length} items? This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    for (final id in _selectedFileIds) {
+      await _docService.deleteItem(id);
+    }
+    
+    setState(() {
+      _selectedFileIds.clear();
+    });
   }
 
   Future<void> _checkDownloadLocation() async {
@@ -500,79 +855,197 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
 
-  /// Import entire folder with recursive structure
+  /// Import entire folder with smart logic (custom picker)
   Future<void> _importFolder() async {
-    // Pick directory
-    final dirPath = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Select Folder to Import',
+    // 1. Use Custom Folder Picker
+    final result = await Navigator.push<List<String>>(
+        context,
+        MaterialPageRoute(
+            builder: (context) => const FileSystemBrowser(
+                 allowFolderSelection: true,
+                 allowMultiple: false,
+                 initialPath: '/storage/emulated/0',
+            ),
+        ),
     );
     
-    if (dirPath == null) return;
+    if (result == null || result.isEmpty) return;
     
+    final dirPath = result.first;
     final sourceDir = Directory(dirPath);
+    
     if (!sourceDir.existsSync()) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Selected folder does not exist'), backgroundColor: Colors.red),
-        );
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Selected folder does not exist')));
       }
       return;
     }
 
     final folderName = sourceDir.path.split(Platform.pathSeparator).last;
     
-    // Check if folder name already exists in current location
+    // 2. Check if ALREADY IMPORTED (Sync Check)
+    final existingImportedFolder = _docService.getFolderBySourcePath(dirPath);
+    if (existingImportedFolder != null) {
+        if (mounted) {
+            showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                    title: const Text('Folder Already Synced'),
+                    content: Text(
+                        'The folder "$folderName" is already imported in your library.\n\n'
+                        'Please use the Sync feature inside the existing folder to update files.'
+                    ),
+                    actions: [
+                        TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK')),
+                    ],
+                )
+            );
+        }
+        return;
+    }
+
+    // 3. Check for "Downloads" special case
+    // We only restrict if the folder is strictly named "Download" (system folder).
+    // Subfolders inside Download (like QuickShare) will pass as false here, enabling recursive import.
+    final isDownloadFolder = folderName.toLowerCase() == 'download';
+    
+    if (isDownloadFolder) {
+        // Show Warning for Downloads (Flat Import)
+        final proceed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+                title: const Text('Import Download Folder?'),
+                content: const Text(
+                    'The Downloads folder is usually very large.\n\n'
+                    'To keep your library clean, we will ONLY import files from the root of "Downloads". '
+                    'Subfolders inside Downloads will be skipped.\n\n'
+                    'Do you want to proceed?'
+                ),
+                actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                    ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Import Files')),
+                ],
+            )
+        );
+        
+        if (proceed != true) return;
+        
+        // Flat Import for Downloads
+        await _performImport(sourceDir, folderName, recursive: false);
+        
+    } else {
+        // Normal Folder (Recursive)
+        // Check for Name Conflict Logic is handled in _performImport
+        
+        final proceed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+                title: Text('Import "$folderName"?'),
+                content: const Text(
+                    'This will import all files and subfolders from this location.\n\n'
+                    'A new folder will be created in your library mirroring this structure.'
+                ),
+                actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                    ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Import Folder')),
+                ],
+            )
+        );
+        
+        if (proceed != true) return;
+        
+        // Recursive Import
+        await _performImport(sourceDir, folderName, recursive: true);
+    }
+  }
+
+  Future<void> _performImport(Directory sourceDir, String folderName, {required bool recursive}) async {
+    // Check for Name Conflicts (Smart Resolution)
     final existingFolders = _currentFolderId != null 
         ? _docService.getSubfolders(_currentFolderId!)
         : _docService.getRootFolders();
-    String finalFolderName = folderName;
     
-    if (existingFolders.any((f) => f.name.toLowerCase() == folderName.toLowerCase())) {
-      // Prompt for rename
-      final newName = await _showFolderConflictDialog(folderName);
-      if (newName == null) return; // Cancelled
-      finalFolderName = newName;
-    }
-
-    // Show progress dialog
-    int totalFiles = 0;
-    int processedFiles = 0;
+    final conflicts = existingFolders.where((f) => f.name.toLowerCase() == folderName.toLowerCase()).toList();
     
-    // Count files first
-    await for (final entity in sourceDir.list(recursive: true)) {
-      if (entity is File) {
-        final ext = entity.path.split('.').last.toLowerCase();
-        if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
-          totalFiles++;
+    if (conflicts.isNotEmpty) {
+        // Conflict Detected!
+        // Requirement: Rename the EXISTING folder(s) to free up the name for the new import.
+        
+        if (conflicts.length == 1) {
+             // Single Conflict: Prompt user to rename manual folder
+             final existing = conflicts.first;
+             final newName = await _showRenameExistingDialog(existing.name);
+             if (newName == null) return; // Abort import
+             
+             // Rename the existing folder
+             await _docService.renameItem(existing.id, newName);
+             
+        } else {
+             // Multiple Conflicts: Auto-rename prompt
+             final proceed = await showDialog<bool>(
+                 context: context,
+                 builder: (context) => AlertDialog(
+                     title: const Text('Multiple Conflicts Found'),
+                     content: Text('Multiple folders named "${folderName}" already exist.\n\nAutomtically rename existing folders to "${folderName}_1", "${folderName}_2", etc. to proceed?'),
+                     actions: [
+                        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                        ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Auto Rename')),
+                     ]
+                 )
+             );
+             
+             if (proceed != true) return;
+             
+             // Auto-rename all conflicts
+             int i = 1;
+             for (final f in conflicts) {
+                 String targetName = '${folderName}_$i';
+                 // Ensure targetName is unique
+                 while (existingFolders.any((e) => e.name.toLowerCase() == targetName.toLowerCase())) {
+                     i++;
+                     targetName = '${folderName}_$i';
+                 }
+                 await _docService.renameItem(f.id, targetName);
+                 i++;
+             }
         }
-      }
     }
+    
+    String finalFolderName = folderName;
 
+    // Show Progress
+    final progressNotifier = ValueNotifier<Map<String, int>>({'processed': 0, 'total': 0});
+    
+    // Count files (estimate)
+    int totalFiles = 0;
+    try {
+        await for (final entity in sourceDir.list(recursive: recursive, followLinks: false)) {
+             if (entity is File) {
+                 final ext = entity.path.split('.').last.toLowerCase();
+                 if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) totalFiles++;
+             }
+        }
+    } catch (e) {
+        _log.error('Dashboard', 'Error counting files', e);
+    }
+    
     if (totalFiles == 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No supported files found in folder')),
-        );
-      }
-      return;
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No supported files found')));
+        return;
     }
 
-    // Use ValueNotifier for progress updates
-    final progressNotifier = ValueNotifier<Map<String, int>>({'processed': 0, 'total': totalFiles});
-
-    // Show progress dialog
     if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        title: const Text('Importing Folder'),
+        title: Text('Importing "$finalFolderName"'),
         content: ValueListenableBuilder<Map<String, int>>(
           valueListenable: progressNotifier,
           builder: (context, value, child) {
             final processed = value['processed']!;
-            final total = value['total']!;
-            final progress = total > 0 ? processed / total : 0.0;
+            final total = value['total'] == 0 ? totalFiles : value['total']!; // Use pre-count if available
+            final progress = total > 0 ? processed / total : null;
             
             return Column(
               mainAxisSize: MainAxisSize.min,
@@ -587,80 +1060,78 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       ),
     );
 
+    int processedFiles = 0;
+    
     try {
-      // Create root folder in current location
-      final rootFolder = await _docService.createFolder(
-        finalFolderName,
-        parentId: _currentFolderId,
-      );
-      
-      // Map of source path -> app folder ID
-      final folderMap = <String, String>{sourceDir.path: rootFolder.id};
-      
-      // Process recursively
-      await for (final entity in sourceDir.list(recursive: true)) {
-        if (entity is Directory) {
-          // Create corresponding folder
-          final parentPath = entity.parent.path;
-          final parentId = folderMap[parentPath];
-          
-          if (parentId != null) {
-            final subName = entity.path.split(Platform.pathSeparator).last;
-            final newFolder = await _docService.createFolder(subName, parentId: parentId);
-            folderMap[entity.path] = newFolder.id;
-          }
-        } else if (entity is File) {
-          final ext = entity.path.split('.').last.toLowerCase();
-          if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
-            final parentPath = entity.parent.path;
-            final parentId = folderMap[parentPath];
-            
-            // Get file stats for original dates
-            DateTime? createdAt;
-            DateTime? modifiedAt;
-            try {
-              final stat = await entity.stat();
-              createdAt = stat.accessed; // Use accessed as proxy for creation if needed, or check os nuances
-              modifiedAt = stat.modified;
-            } catch (e) {
-              // Ignore stat errors
+        // Create Root Folder (with sourcePath for Sync!)
+        // Note: createFolder doesn't support sourcePath param yet, we might need to update it or update item after creation.
+        // DocumentService.createFolder returns DocumentItem.
+        
+        var rootFolder = await _docService.createFolder(
+           finalFolderName,
+           parentId: _currentFolderId,
+        );
+        
+        // Update root folder with sourcePath (Manual update via service private access workaround or update API)
+        // Since we can't easily change service signature right now, we can update the item in memory and save.
+        // Actually, let's check DocumentService.createFolder.
+        // It likely doesn't have sourcePath. We should add it or use updateItem? 
+        // Let's assume we can update it later. Wait, we need it.
+        // Quick Hack: Modify local item and call _saveDocuments() logic? No, too risky.
+        // Better: We will rely on "Zero Copy" where files have sourcePath. 
+        // But for "Sync" feature, we need *Folder* to have sourcePath.
+        // I will add a method `_docService.updateFolderSourcePath(id, path)` or just handle it if possible.
+        // For now, let's just proceed with import logic. If I can't save sourcePath, Phase 3 (Sync) will fail.
+        // Actually, I can use `_docService.updateItem` if exposed? No.
+        
+        // Let's instantiate a modified item and inject it? No.
+        // Let's modify DocumentService.createFolder later?
+        // Okay, I will try to call `_docService.updateItem(rootFolder.copyWith(sourcePath: sourceDir.path))` if it exists.
+        // If not, I'll add `updateItem` to DocumentService in next step.
+        
+        // Map: Source Dir Path -> App Folder ID
+        final folderMap = <String, String>{sourceDir.path: rootFolder.id};
+        
+        await for (final entity in sourceDir.list(recursive: recursive, followLinks: false)) {
+            if (entity is Directory && recursive) {
+                // Create subfolder
+                final parentPath = entity.parent.path;
+                final parentId = folderMap[parentPath];
+                
+                if (parentId != null) {
+                    final subName = entity.path.split(Platform.pathSeparator).last;
+                    final newFolder = await _docService.createFolder(subName, parentId: parentId);
+                    folderMap[entity.path] = newFolder.id;
+                    // Ideally set sourcePath for subfolders too? Maybe overkill, valid for Root is enough usually.
+                }
+            } else if (entity is File) {
+               final ext = entity.path.split('.').last.toLowerCase();
+               if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                   final parentPath = entity.parent.path;
+                   final parentId = folderMap[parentPath] ?? rootFolder.id; // Fallback to root for Flat Import
+                   
+                   await _docService.addFile(entity.path, folderId: parentId);
+                   processedFiles++;
+                   progressNotifier.value = {'processed': processedFiles, 'total': totalFiles};
+               }
             }
-
-            await _docService.addFile(
-              entity.path, 
-              folderId: parentId,
-              createdAt: createdAt,
-              modifiedAt: modifiedAt,
-            );
-            processedFiles++;
-            
-            // Update progress
-            progressNotifier.value = {'processed': processedFiles, 'total': totalFiles};
-          }
         }
-      }
-
-      // Close progress dialog
-      if (mounted) {
-        Navigator.pop(context);
-        setState(() {}); // Refresh list
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Imported $processedFiles files into "$finalFolderName"'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+        
+        // [CRITICAL] Update Source Path for Root Folder (for Sync)
+        await _docService.updateFolderSourcePath(rootFolder.id, sourceDir.path);
+        
+        if (mounted) {
+            Navigator.pop(context);
+            setState(() {});
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Imported $processedFiles files')));
+        }
+        
     } catch (e) {
-      _log.error('DocumentDashboard', 'Folder import error', e);
-      if (mounted) {
-        Navigator.pop(context); // Close dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e'), backgroundColor: Colors.red),
-        );
-      }
-    } finally {
-      progressNotifier.dispose();
+        _log.error('Dashboard', 'Import Error', e);
+        if (mounted) {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
     }
   }
 
@@ -1049,19 +1520,83 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
         // Perform Move
         if (file.isFolder) {
-           if (destinationId == '__ROOT__') {
-             await _docService.moveFolderToRoot(currentFileId);
-           } else {
-             await _docService.moveFolderToFolder(currentFileId, destinationId);
+           bool moved = false;
+           String folderIdToMove = currentFileId;
+           
+           while (!moved) {
+             try {
+               if (destinationId == '__ROOT__') {
+                 await _docService.moveFolderToRoot(folderIdToMove);
+               } else {
+                 await _docService.moveFolderToFolder(folderIdToMove, destinationId);
+               }
+               moved = true;
+             } catch (e) {
+               if (e.toString().contains('Cannot move:')) {
+                 // Show rename dialog
+                 final currentFolder = _docService.getAllItems().firstWhere((i) => i.id == folderIdToMove);
+                 final newName = await showDialog<String>(
+                   context: context,
+                   builder: (context) {
+                     final controller = TextEditingController(text: currentFolder.name);
+                     return AlertDialog(
+                       title: const Text('Rename to Move'),
+                       content: Column(
+                         mainAxisSize: MainAxisSize.min,
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           Text(
+                             'A folder named "${currentFolder.name}" already exists at the destination.',
+                             style: TextStyle(color: Colors.grey[600]),
+                           ),
+                           const SizedBox(height: 16),
+                           TextField(
+                             controller: controller,
+                             autofocus: true,
+                             decoration: const InputDecoration(
+                               labelText: 'New folder name',
+                               border: OutlineInputBorder(),
+                             ),
+                             onSubmitted: (val) => Navigator.pop(context, val),
+                           ),
+                         ],
+                       ),
+                       actions: [
+                         TextButton(
+                           onPressed: () => Navigator.pop(context, null),
+                           child: const Text('Cancel'),
+                         ),
+                         ElevatedButton(
+                           onPressed: () => Navigator.pop(context, controller.text),
+                           child: const Text('Rename & Move'),
+                         ),
+                       ],
+                     );
+                   },
+                 );
+                 
+                 if (newName == null || newName.trim().isEmpty) {
+                   // User cancelled - skip this folder
+                   skippedCount++;
+                   break;
+                 }
+                 
+                 // Rename the folder and retry move
+                 await _docService.renameItem(folderIdToMove, newName.trim());
+               } else {
+                 rethrow; // Some other error
+               }
+             }
            }
+           if (moved) movedCount++;
         } else {
            if (destinationId == '__ROOT__') {
              await _docService.moveFilesToRoot([currentFileId]);
            } else {
              await _docService.moveFilesToFolder([currentFileId], destinationId);
            }
+           movedCount++;
         }
-        movedCount++;
       }
       
       setState(() {
@@ -1711,9 +2246,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               : const Center(child: Text('Initializing...')),
         ),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _pickFiles(folderId: _currentFolderId),
+          onPressed: _openFileBrowser,
           icon: const Icon(Icons.add),
-          label: Text(_currentFolderId == null ? 'Add Files' : 'Add Files Here'),
+          label: const Text('Add Files'),
         ),
       ),
     );
@@ -2093,30 +2628,88 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 ),
             ],
           ),
-        title: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Row(
+            children: [
+                Flexible(child: Text(folder.name, style: const TextStyle(fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+                if (folder.isImported) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.sync, size: 16, color: Theme.of(context).colorScheme.primary),
+                ]
+            ],
+        ),
         subtitle: Text(_buildFolderSubtitle(folder.id)),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
             if (value == 'rename') {
+              if (folder.isImported) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot rename imported/synced folders')));
+                  return;
+              }
               await _renameItem(folder);
             } else if (value == 'export') {
               await _exportFolderAsZip(folder);
             } else if (value == 'delete') {
+              if (folder.isImported) {
+                  final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                          title: const Text('Delete Synced Folder?'),
+                          content: const Text(
+                              'This folder is imported from your device.\n'
+                              'Deleting it will remove it from the app and stop future syncs.\n\n'
+                              'Original files on your device will NOT be deleted.'
+                          ),
+                          actions: [
+                              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                              ElevatedButton(
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                  onPressed: () => Navigator.pop(context, true), 
+                                  child: const Text('Delete')
+                              ),
+                          ]
+                      )
+                  );
+                  if (confirm != true) return;
+              }
               await _docService.deleteItem(folder.id);
               setState(() {});
+            } else if (value == 'sync') {
+                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Syncing...')));
+                 final success = await _docService.syncFolder(folder.id);
+                 setState(() {});
+                 if (mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(
+                     SnackBar(
+                       content: Text(success ? 'Sync Completed' : 'Sync Failed - check logs'),
+                       backgroundColor: success ? null : Colors.red,
+                     ),
+                   );
+                 }
             }
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'rename',
-              child: Row(
-                children: [
-                  Icon(Icons.edit),
-                  SizedBox(width: 8),
-                  Text('Rename'),
-                ],
-              ),
-            ),
+            if (folder.isImported)
+                const PopupMenuItem(
+                  value: 'sync',
+                  child: Row(
+                    children: [
+                      Icon(Icons.sync, color: Colors.blue),
+                      SizedBox(width: 8),
+                      Text('Sync Now'),
+                    ],
+                  ),
+                ),
+            if (!folder.isImported)
+                const PopupMenuItem(
+                  value: 'rename',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit),
+                      SizedBox(width: 8),
+                      Text('Rename'),
+                    ],
+                  ),
+                ),
             const PopupMenuItem(
               value: 'export',
               child: Row(
@@ -2139,22 +2732,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             ),
           ],
         ),
-        onTap: () {
-            if (_selectedFileIds.isNotEmpty) {
-              setState(() {
-                if (isSelected) {
-                  _selectedFileIds.remove(folder.id);
-                } else {
-                  _selectedFileIds.add(folder.id);
-                }
-              });
-            } else {
-              setState(() => _currentFolderId = folder.id);
-            }
-          },
-        ),
       ),
-    );
+    ),
+  );
   }
 
   Widget _buildFileCard(DocumentItem file) {
@@ -2354,188 +2934,4 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
 
-  Future<void> _deleteSelectedItems() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Selected Items?'),
-        content: Text('Are you sure you want to delete ${_selectedFileIds.length} items? This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    for (final id in _selectedFileIds) {
-      await _docService.deleteItem(id);
-    }
-    
-    setState(() {
-      _selectedFileIds.clear();
-    });
-  }
-
-  Future<void> _exportSelectedItems() async {
-    String? password;
-    bool encrypt = false;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('Export Selected Items'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Export ${_selectedFileIds.length} items as a ZIP file?'),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Checkbox(
-                        value: encrypt,
-                        onChanged: (val) => setState(() => encrypt = val ?? false),
-                      ),
-                      const Text('Protect with Password'),
-                    ],
-                  ),
-                  if (encrypt)
-                    TextField(
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'ZIP Password',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      obscureText: true,
-                      onChanged: (val) => password = val,
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.archive),
-                  onPressed: () => Navigator.pop(context, true),
-                  label: const Text('Export'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    if (confirm != true) return;
-
-    // Use password only if encrypt checked
-    final zipPassword = encrypt ? password : null;
-
-    // Check configuration
-    final settings = context.read<SettingsService>();
-    final exportPath = settings.exportPath;
-    
-    if (exportPath == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Export path not configured. Please check settings.')),
-        );
-      }
-      return;
-    }
-
-    // Copy selected IDs before clearing selection
-    final idsToExport = Set<String>.from(_selectedFileIds);
-
-    setState(() {
-      _selectedFileIds.clear(); // Clear selection immediately so user can continue working
-    });
-    
-    try {
-      final List<ExportItem> exportItems = [];
-      final allItems = _docService.getAllItems();
-      
-      for (final id in idsToExport) {
-        try {
-          final item = allItems.firstWhere((e) => e.id == id);
-          
-          if (item.isFolder) {
-            exportItems.add(ExportItem(
-              itemId: item.id,
-              name: item.name,
-              isFolder: true,
-              children: _buildExportItemsFromFolder(item.id),
-            ));
-          } else if (item.sourcePath != null) {
-            exportItems.add(ExportItem(
-              itemId: item.id,
-              name: item.name,
-              filePath: item.sourcePath,
-              isFolder: false,
-            ));
-          }
-        } catch (e) {
-          // Item might not exist, skip
-        }
-      }
-
-      if (exportItems.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No valid items to export')),
-          );
-        }
-        return;
-      }
-
-      // Add to queue
-      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath, zipPassword: zipPassword);
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Export started in background'),
-            action: SnackBarAction(
-              label: 'View',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const ExportProgressScreen(),
-                  ),
-                );
-              },
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      _log.error('DocumentDashboard', 'Queue error', e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start export: $e')),
-        );
-      }
-    }
-  }
-
-
 }
-
-// Stateful tree widget for move dialog
-

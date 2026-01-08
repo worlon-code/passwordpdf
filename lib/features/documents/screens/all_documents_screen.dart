@@ -16,6 +16,7 @@ import 'package:passwordpdf_manager/models/conflict_resolution_model.dart';
 import 'package:passwordpdf_manager/models/document_item_model.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/folder_selection_dialog.dart';
+import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_info_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -517,11 +518,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     }
   }
 
-  void _importSelected() {
-    _log.info('AllDocumentsScreen', 'Import selected pressed. Counts: ${_selectedPaths.length}');
-    if (_selectedPaths.isEmpty) return;
+  void _importSelected([List<String>? explicitPaths]) {
+    final pathsToImport = explicitPaths ?? _selectedPaths.toList();
+    _log.info('AllDocumentsScreen', 'Import selected pressed. Counts: ${pathsToImport.length}');
+    
+    if (pathsToImport.isEmpty) return;
 
-    final files = _selectedPaths.map((path) => File(path)).toList();
+    final files = pathsToImport.map((path) => File(path)).toList();
     _showImportFolderSelection(files);
   }
 
@@ -1090,7 +1093,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
           ),
         ],
       ),
-      ), // Close Scaffold
+      ),
     ); // Close PopScope
   }
 

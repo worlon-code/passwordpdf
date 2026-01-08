@@ -20,6 +20,7 @@ import 'services/document_service.dart';
 import 'features/documents/screens/pdf_viewer_screen.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/documents/screens/all_documents_screen.dart';
+import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 
 /// Static class to hold pending file to open (for Open With flow)
 class PendingFileOpen {
