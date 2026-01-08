@@ -118,25 +118,26 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   // ... inside _AllDocumentsScreenState
 
   Future<void> _loadDocuments({bool forceRescan = false}) async {
+    final stopwatch = Stopwatch()..start();
+    
     setState(() {
       _isLoading = true;
       _errorMessage = '';
-      _displayedFiles = [];
+      _displayedFiles = []; // User prefers clear list for responsiveness
       _currentOffset = 0;
       _hasMore = true;
       _selectedPaths.clear(); 
     });
 
     try {
-      // Only rescan on explicit refresh (pull-to-refresh or refresh button)
       if (forceRescan) { 
          await _deviceService.scanDevice();
+         _log.info('AllDocumentsScreen', 'Scan took: ${stopwatch.elapsedMilliseconds}ms');
       }
       
-      // Apply Sort
+      final dbStart = stopwatch.elapsedMilliseconds;
       await _deviceService.sortDocuments(_sortOption, ascending: _sortAscending);
       
-      // 2. Get first page from cached DB
       final files = await _deviceService.getDocuments(
         offset: 0,
         limit: _pageSize,
@@ -145,9 +146,17 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
         parentPath: _isFolderView ? _currentFolderPath : null,
         flatList: !_isFolderView,
       );
+      
+      final dbDuration = stopwatch.elapsedMilliseconds - dbStart;
+      _log.info('AllDocumentsScreen', 'DB Query took: ${dbDuration}ms for ${files.length} items');
 
-      // ... rest of method
-
+      // Auto-scan on fresh install / empty state
+      if (files.isEmpty && !forceRescan && _currentOffset == 0 && _searchQuery == null && !_isFolderView) {
+          _log.info('AllDocumentsScreen', 'Empty DB detected. Triggering auto-scan...');
+          // Don't await here to avoid blocking UI frame, update state to show loading
+          _loadDocuments(forceRescan: true); 
+          return;
+      }
 
       if (mounted) {
         setState(() {
@@ -156,6 +165,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
           _hasMore = files.length >= _pageSize;
           _currentOffset = files.length;
         });
+        _log.info('AllDocumentsScreen', 'Total Load Time: ${stopwatch.elapsedMilliseconds}ms');
       }
     } catch (e) {
       if (mounted) {
@@ -801,9 +811,10 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   }
   
   Widget _buildShimmerLoading() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Shimmer.fromColors(
-      baseColor: Colors.grey[300]!,
-      highlightColor: Colors.grey[100]!,
+      baseColor: isDark ? Colors.grey[850]! : Colors.grey[300]!,
+      highlightColor: isDark ? Colors.grey[800]! : Colors.grey[100]!,
       child: ListView.builder(
         itemCount: 10,
         itemBuilder: (_, __) => Padding(
@@ -920,9 +931,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 decoration: const InputDecoration(
                   hintText: 'Search documents...',
                   border: InputBorder.none,
-                  hintStyle: TextStyle(color: Colors.white70),
                 ),
-                style: const TextStyle(color: Colors.white),
                 onChanged: _onSearchChanged,
               )
             : (_isSelectionMode 
@@ -1054,9 +1063,10 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 : _isLoading
                     ? _buildShimmerLoading()
                     : RefreshIndicator(
-                        onRefresh: _loadDocuments,
+                        onRefresh: () => _loadDocuments(forceRescan: true),
                         child: _displayedFiles.isEmpty
                             ? ListView(
+                                physics: const AlwaysScrollableScrollPhysics(),
                                 children: const [
                                   SizedBox(height: 100),
                                   Center(child: Text('No documents found')),

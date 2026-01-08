@@ -112,12 +112,28 @@ class DeviceDocumentService {
         }
       }
       
+      // Track folders we've already ensured in this batch to avoid duplicates in the batch command list
+      final Set<String> processedParents = {};
+
+      // Pre-fetch existing file stats to optimize updates
+      final Map<String, int> existingFiles = {}; // path -> modified_at
+      try {
+         final existingRows = await db.query(
+            AppConstants.filesIndexTable, 
+            columns: ['path', 'modified_at']
+         );
+         for (final row in existingRows) {
+            existingFiles[row['path'] as String] = row['modified_at'] as int;
+         }
+      } catch (_) {}
+
       await db.transaction((txn) async {
          final batch = txn.batch();
          
          for (final file in files) {
             try {
-              final stat = file.statSync(); // Accessible since file exists
+              final stat = file.statSync(); 
+              // ... (rest of vars)
               final name = file.path.split('/').last;
               
               String ext = '';
@@ -135,6 +151,11 @@ class DeviceDocumentService {
               int hasDoc = docFolders.contains(file.path) ? 1 : 0;
               int hasExcel = excelFolders.contains(file.path) ? 1 : 0;
 
+              // Check if file is modified or new
+              final lastMod = existingFiles[file.path];
+              final currentMod = stat.modified.millisecondsSinceEpoch;
+              // final isModified = lastMod == null || lastMod != currentMod; // Unused without Trigrams
+
               batch.insert(
                 AppConstants.filesIndexTable,
                 {
@@ -144,7 +165,7 @@ class DeviceDocumentService {
                   'parent_path': parent,
                   'size': stat.size,
                   'created_at': stat.changed.millisecondsSinceEpoch,
-                  'modified_at': stat.modified.millisecondsSinceEpoch,
+                  'modified_at': currentMod,
                   'last_scanned': syncTime,
                   'is_folder': isFolder,
                   'has_pdf': hasPdf,
@@ -154,13 +175,20 @@ class DeviceDocumentService {
                 conflictAlgorithm: ConflictAlgorithm.replace
               );
 
+              // Phase 1.10: Trigrams REMOVED (In-Memory Search used instead)
+              // No extra table inserts needed here.
+              
               // RECURSIVE FOLDER ASSURANCE
               String currentParentPath = file.parent.path;
               while (currentParentPath.length > '/storage/emulated/0'.length && currentParentPath.startsWith('/storage/emulated/0')) {
+                  if (processedParents.contains(currentParentPath)) {
+                       currentParentPath = Directory(currentParentPath).parent.path;
+                       continue;
+                  }
+                  
                   final parentName = currentParentPath.split('/').last;
                   final grandParentPath = Directory(currentParentPath).parent.path;
                   
-                  // For these implicitly created parent folders, we also need correct flags
                   int pHasPdf = pdfFolders.contains(currentParentPath) ? 1 : 0;
                   int pHasDoc = docFolders.contains(currentParentPath) ? 1 : 0;
                   int pHasExcel = excelFolders.contains(currentParentPath) ? 1 : 0;
@@ -172,7 +200,7 @@ class DeviceDocumentService {
                       'name': parentName,
                       'extension': '',
                       'parent_path': grandParentPath,
-                      'size': 0, // Folder size 0 for now
+                      'size': 0,
                       'created_at': syncTime, 
                       'modified_at': syncTime,
                       'last_scanned': syncTime,
@@ -181,20 +209,9 @@ class DeviceDocumentService {
                       'has_doc': pHasDoc,
                       'has_excel': pHasExcel
                     },
-                    conflictAlgorithm: ConflictAlgorithm.ignore // Don't overwrite if scanned
+                    conflictAlgorithm: ConflictAlgorithm.ignore 
                   );
-                  
-                  // If we are ignoring, we might MISS updating the flags on an existing record if it was inserted before we knew it had content!
-                  // Ideally we should use REPLACE or update flags. 
-                  // But 'scannedFiles' loop above (ConflictAlgorithm.replace) handles the "real" folder record if it was found.
-                  // This loop handles "missing intermediate parents". 
-                  // If the parent WAS found in scan, the loop above handled it with flags.
-                  // If it WAS NOT found (e.g. skipped or hidden), this loop adds it.
-                  // However, if it exists from previous scan but wasn't found in THIS scan (unlikely if recursive), we might have issues.
-                  // Given we are doing a full replacement scan, standard logic holds.
-                  // BUT: ConflictAlgorithm.ignore means we won't update flags if it exists. 
-                  // Let's rely on the fact that if it exists, it might be from a previous scan or the main loop.
-                  // If the main loop covered it, we are fine.
+                  processedParents.add(currentParentPath);
                   
                   currentParentPath = grandParentPath;
               }
@@ -214,17 +231,33 @@ class DeviceDocumentService {
          );
          _log.info('DeviceDocumentService', 'Sync complete. Removed $deleted stale records.');
       });
+      
+      // Update Cache for In-Memory Search
+      await _refreshSearchCache();
   }
 
-  /// Get documents from DB
+  // --- In-Memory Search Logic ---
+  List<String> _cachedPaths = [];
+  
+  Future<void> _refreshSearchCache() async {
+    final db = await _storage.database;
+    final results = await db.query(
+      AppConstants.filesIndexTable,
+      columns: ['path'],
+      where: 'is_folder = 0' // Only search files
+    );
+    _cachedPaths = results.map((e) => e['path'] as String).toList();
+    _log.info('DeviceDocumentService', 'Search cache refreshed: ${_cachedPaths.length} items');
+  }
+
+  /// Get documents from DB (with In-Memory Search Support)
   Future<List<FileSystemEntity>> getDocuments({
     int offset = 0,
     int limit = 50,
     String filterType = 'All',
-
     String? searchQuery,
-    String? parentPath, // For Folder View
-    bool flatList = false, // LIST MODE: No folders, flat list
+    String? parentPath, 
+    bool flatList = false,
   }) async {
       final db = await _storage.database;
       
@@ -236,15 +269,33 @@ class DeviceDocumentService {
          whereClause += ' AND parent_path = ?';
          args.add(parentPath);
       } else if (flatList) {
-         // In Flat List mode, we hide folders generally
          whereClause += ' AND is_folder = 0';
       }
       
-      // Search
+      // Search Logic (In-Memory Filter)
       if (searchQuery != null && searchQuery.isNotEmpty) {
-         whereClause += ' AND name LIKE ?';
-         args.add('%$searchQuery%');
+          if (_cachedPaths.isEmpty) {
+             await _refreshSearchCache();
+          }
+          
+          final queryLower = searchQuery.toLowerCase();
+          
+          // Filter in Memory (Fast!)
+          final matchingPaths = _cachedPaths.where((path) {
+             final name = path.split('/').last.toLowerCase();
+             return name.contains(queryLower);
+          }).take(100).toList(); // Limit to 100 matches to keep SQL fast
+          
+          if (matchingPaths.isEmpty) {
+             return []; // No matches
+          }
+          
+          // Construct IN clause
+          final placeholders = List.filled(matchingPaths.length, '?').join(',');
+          whereClause += ' AND path IN ($placeholders)';
+          args.addAll(matchingPaths);
       }
+
       
       // Filter Type Logic
       if (filterType != 'All') {
@@ -421,4 +472,6 @@ class DeviceDocumentService {
 
     return documents;
   }
+
+
 }

@@ -6,6 +6,7 @@ import '../models/recent_document_model.dart';
 
 /// Service for local SQLite database operations
 class StorageService {
+  static const int _databaseVersion = 12;
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
   StorageService._internal();
@@ -26,7 +27,7 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: 8, // Increased version
+      version: _databaseVersion, // was hardcoded to 8
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -99,13 +100,43 @@ class StorageService {
         created_at INTEGER,
         modified_at INTEGER,
         last_scanned INTEGER,
-        is_folder INTEGER DEFAULT 0
+        is_folder INTEGER DEFAULT 0,
+        has_pdf INTEGER DEFAULT 0,
+        has_doc INTEGER DEFAULT 0,
+        has_excel INTEGER DEFAULT 0
       )
     ''');
     
-    // Indexes
-    await db.execute('CREATE INDEX idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
-    await db.execute('CREATE INDEX idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
+    // Indexes (Robust & Optimized)
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
+      
+      // Smart Filter Indexes
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_pdf ON ${AppConstants.filesIndexTable} (has_pdf)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_doc ON ${AppConstants.filesIndexTable} (has_doc)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_excel ON ${AppConstants.filesIndexTable} (has_excel)');
+
+      // Sort & Performance Indexes (New)
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_modified ON ${AppConstants.filesIndexTable} (modified_at)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_size ON ${AppConstants.filesIndexTable} (size)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_name ON ${AppConstants.filesIndexTable} (name)');
+      
+      // Composite Index for "Ultra Fast" Folder View (Parent + Sort)
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_composite ON ${AppConstants.filesIndexTable} (parent_path, is_folder, modified_at)');
+
+      // Phase 1.10: Trigram Search (Ultra Fast Substring)
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS files_search_trigrams (
+          token TEXT NOT NULL,
+          path TEXT NOT NULL
+        )
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_trigram_token ON files_search_trigrams (token)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_trigram_path ON files_search_trigrams (path)');
+    } catch (e) {
+      // Ignore
+    }
   }
 
   // Handle database upgrades
@@ -202,6 +233,49 @@ class StorageService {
       } catch (e) {
         // Ignore if exists
       }
+    }
+
+    if (oldVersion < 9) {
+      // Add indexes for smart filter flags to speed up flat list queries
+      try {
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_pdf ON ${AppConstants.filesIndexTable} (has_pdf)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_doc ON ${AppConstants.filesIndexTable} (has_doc)');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_files_has_excel ON ${AppConstants.filesIndexTable} (has_excel)');
+      } catch (_) {}
+    }
+
+    if (oldVersion < 10) {
+      // Phase 1.10: Trigram Search (Deprecated/Removed)
+      // We skip creating this table as we moved to In-Memory Search.
+    }
+    
+    if (oldVersion < 11) {
+       // Phase 1.11: Performance Tuning (Sort & Folder View)
+       try {
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_modified ON ${AppConstants.filesIndexTable} (modified_at)');
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_size ON ${AppConstants.filesIndexTable} (size)');
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_name ON ${AppConstants.filesIndexTable} (name)');
+         // Composite: Instant Folder Opening
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_composite ON ${AppConstants.filesIndexTable} (parent_path, is_folder, modified_at)');
+       } catch (_) {}
+    }
+
+    if (oldVersion < 12) {
+      // Phase 1.12: Remove Trigram Table (Cleanup)
+      try {
+        await db.execute('DROP TABLE IF EXISTS files_search_trigrams');
+      } catch (_) {}
+    }
+    
+    if (oldVersion < 11) {
+       // Phase 1.11: Performance Tuning (Sort & Folder View)
+       try {
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_modified ON ${AppConstants.filesIndexTable} (modified_at)');
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_size ON ${AppConstants.filesIndexTable} (size)');
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_name ON ${AppConstants.filesIndexTable} (name)');
+         // Composite: Instant Folder Opening
+         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_folder_composite ON ${AppConstants.filesIndexTable} (parent_path, is_folder, modified_at)');
+       } catch (_) {}
     }
   }
 
