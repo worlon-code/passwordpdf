@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -773,8 +775,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
-      ),
-    );
+      ),  // Close ListView
+    );  // Close Scaffold
   }
 
   Widget _buildSectionHeader(String title) {

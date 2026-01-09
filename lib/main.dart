@@ -767,36 +767,94 @@ class _MainScreenState extends State<MainScreen> {
        // PendingFileOpen.duplicateOptions = null; 
     });
   }
+  
+
+  /// Back handler for All Documents screen
+  Future<bool> _handleAllDocsBack() async {
+    final state = AllDocumentsScreen.currentState;
+    if (state == null) return false;
+    
+    if (state.isSelectionMode) {
+      state.clearSelection();
+      return true;
+    }
+    
+    if (state.isFolderView && state.currentFolderPath != '/storage/emulated/0') {
+      state.navigateUp();
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /// Back handler for Document Dashboard screen  
+  Future<bool> _handleDashboardBack() async {
+    final state = DocumentDashboardScreen.currentState;
+    if (state == null) return false;
+    
+    if (state.selectedFileIds.isNotEmpty) {
+      state.clearSelection();
+      return true;
+    }
+    
+    if (state.currentFolderId != null) {
+      state.navigateUp();
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /// Back handler for Settings screen
+  Future<bool> _handleSettingsBack() async {
+    return false;
+  }
+  
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         
-        final shouldExit = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Exit App'),
-            content: const Text('Do you want to close the application?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Leave'),
-              ),
-            ],
-          ),
-        );
+        // Delegate to active screen's back handler
+        bool handled = false;
+        switch (_currentIndex) {
+          case 0:
+            handled = await _handleAllDocsBack();
+            break;
+          case 1:
+            handled = await _handleDashboardBack();
+            break;
+          case 2:
+            handled = await _handleSettingsBack();
+            break;
+        }
         
-        if (shouldExit == true) {
-          // Force immediate lock on next resume by setting a very old background time
-          AppEntry.backgroundTime = DateTime(2000); 
-          // CRITICAL: Prevent the subsequent 'paused' lifecycle event from overwriting this with DateTime.now()
-          AppEntry.ignoreNextPause = true;
-          SystemNavigator.pop();
+        // If not handled by screen, show Exit dialog
+        if (!handled) {
+          final shouldExit = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Exit App'),
+              content: const Text('Do you want to close the application?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Leave'),
+                ),
+              ],
+            ),
+          );
+          
+          if (shouldExit == true) {
+            AppEntry.backgroundTime = DateTime(2000);
+            AppEntry.ignoreNextPause = true;
+            SystemNavigator.pop();
+          }
         }
       },
       child: Scaffold(
@@ -833,7 +891,7 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ],
         ),
-      ),
-    );
+      ),  // Close Scaffold
+    );  // Close PopScope
   }
 }

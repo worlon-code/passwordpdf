@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // For SystemNavigator
+import '../../../main.dart'; // For AppEntry
 import 'dart:async';
 import 'package:passwordpdf_manager/features/documents/screens/document_search_delegate.dart';
 import 'package:flutter/foundation.dart';
@@ -35,6 +37,8 @@ import '../../../main.dart' show PendingFileOpen;
 import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
 import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
+// Import the new dialog
+import 'package:passwordpdf_manager/features/documents/widgets/delete_confirmation_dialog.dart';
 
 
 
@@ -42,6 +46,9 @@ import 'package:passwordpdf_manager/features/documents/screens/file_system_brows
 /// Document Dashboard screen with folder management
 class DocumentDashboardScreen extends StatefulWidget {
   const DocumentDashboardScreen({super.key});
+  
+  /// Static reference to allow MainScreen to access state for back navigation
+  static _DocumentDashboardScreenState? currentState;
 
   @override
   State<DocumentDashboardScreen> createState() => _DocumentDashboardScreenState();
@@ -66,10 +73,23 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
+  
+  // Public accessors for MainScreen back navigation
+  String? get currentFolderId => _currentFolderId;
+  Set<String> get selectedFileIds => _selectedFileIds;
+  
+  void clearSelection() {
+    setState(() => _selectedFileIds.clear());
+  }
+  
+  void navigateUp() {
+    _navigateUp();
+  }
 
   @override
   void initState() {
     super.initState();
+    DocumentDashboardScreen.currentState = this; // Register for back handling
     _exportQueue.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
@@ -133,6 +153,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   @override
   void dispose() {
+    DocumentDashboardScreen.currentState = null; // Deregister
     _syncTimer?.cancel();
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
@@ -520,37 +541,6 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       }
     }
-  }
-
-  Future<void> _deleteSelectedItems() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Selected Items?'),
-        content: Text('Are you sure you want to delete ${_selectedFileIds.length} items? This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true) return;
-
-    for (final id in _selectedFileIds) {
-      await _docService.deleteItem(id);
-    }
-    
-    setState(() {
-      _selectedFileIds.clear();
-    });
   }
 
   Future<void> _checkDownloadLocation() async {
@@ -2069,13 +2059,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: _currentFolderId == null,
-      onPopInvoked: (didPop) {
-        if (didPop) return;
-        _navigateUp();
-      },
-      child: Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: Text(_selectedFileIds.isNotEmpty 
               ? '${_selectedFileIds.length} Selected'
@@ -2389,7 +2373,6 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           icon: const Icon(Icons.add),
           label: const Text('Add Files'),
         ),
-      ),
     );
   }
 
@@ -3017,7 +3000,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       } else if (value == 'rename') {
                         await _renameItem(file);
                       } else if (value == 'delete') {
-                        await _docService.deleteItem(file.id);
+                        // Old logic: await _docService.deleteItem(file.id);
+                        // New logic with confirmation
+                        await _confirmDelete(file);
                         setState(() {});
                       }
                     },
@@ -3048,5 +3033,209 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     return Colors.grey;
   }
 
+
+
+  Future<void> _confirmDelete(DocumentItem item) async {
+    bool deleteFromDevice = false;
+
+    // Stage 1: Initial Choice Dialog
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Delete File?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Remove "${item.name}" from your library?'),
+                const SizedBox(height: 16),
+                if (item.isFile) // Only show option for files, folders are complex
+                Row(
+                  children: [
+                    Checkbox(
+                      value: deleteFromDevice, 
+                      onChanged: (val) {
+                         setDialogState(() => deleteFromDevice = val ?? false);
+                      }
+                    ),
+                    const Expanded(
+                      child: Text('Also delete from device storage'),
+                    ),
+                  ],
+                ),
+                if (deleteFromDevice)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8, left: 12),
+                    child: Text(
+                      'WARNING: This cannot be undone.',
+                      style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Delete'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+
+    if (shouldDelete != true) return;
+
+    // If "delete from device" was checked, show the Strict 2-Stage Confirmation
+    if (deleteFromDevice) {
+       final confirmedForever = await showDialog<bool>(
+         context: context,
+         barrierDismissible: false,
+         builder: (context) => DeleteConfirmationDialog(
+           count: 1, 
+           isPermanent: true, 
+           onConfirm: () async {
+              // Action happens after dialog closes, but we pass logic here if needed
+              // actually we perform the delete after this await returns true
+           },
+         ),
+       );
+
+       if (confirmedForever != true) return;
+    }
+
+    // Perform Deletion (Soft or Hard)
+    await _docService.deleteItem(item.id, deleteFromDevice: deleteFromDevice);
+    
+    if (mounted) {
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+           content: Text(deleteFromDevice 
+             ? 'Permanently deleted "${item.name}"' 
+             : 'Removed "${item.name}" from library'),
+         ),
+       );
+    }
+
+
+  }
+
+  Future<void> _deleteSelectedItems() async {
+    if (_selectedFileIds.isEmpty) return;
+    
+    // Check if any folders selected
+    final allItems = _docService.getAllItems();
+    final hasFolders = _selectedFileIds.any((id) {
+       final item = allItems.firstWhere((e) => e.id == id, orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file));
+       return item.isFolder;
+    });
+
+    bool deleteFromDevice = false;
+    final count = _selectedFileIds.length;
+
+    // Stage 1: Initial Choice with Checkbox
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text('Delete $count Item(s)?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Remove selected items from your library?'),
+                const SizedBox(height: 16),
+                if (!hasFolders) // Only show device delete option if no folders selected
+                Row(
+                  children: [
+                    Checkbox(
+                      value: deleteFromDevice, 
+                      onChanged: (val) {
+                         setDialogState(() => deleteFromDevice = val ?? false);
+                      }
+                    ),
+                    const Expanded(
+                      child: Text('Also delete from device storage'),
+                    ),
+                  ],
+                ),
+                if (hasFolders)
+                    const Text(
+                      'Note: Deleting folders removes them from the app. Local folder content remains.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                if (deleteFromDevice)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8, left: 12),
+                    child: Text(
+                      'WARNING: This cannot be undone.',
+                      style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Delete'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+
+    if (shouldDelete != true) return;
+
+    // Stage 2: Strict Confirmation (if device delete)
+    if (deleteFromDevice) {
+       final confirmedForever = await showDialog<bool>(
+         context: context,
+         barrierDismissible: false,
+         builder: (context) => DeleteConfirmationDialog(
+           count: count, 
+           isPermanent: true, 
+           onConfirm: () {},
+         ),
+       );
+
+       if (confirmedForever != true) return;
+    }
+
+    // Perform Delete
+    setState(() => _isLoading = true);
+
+    int deletedCount = 0;
+    final ids = List<String>.from(_selectedFileIds);
+    
+    for (final id in ids) {
+       await _docService.deleteItem(id, deleteFromDevice: deleteFromDevice);
+       deletedCount++;
+    }
+    
+    setState(() {
+      _selectedFileIds.clear();
+      _isLoading = false;
+    });
+    
+    if (mounted) {
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(content: Text('Deleted $deletedCount items')),
+       );
+    }
+  }
 
 }

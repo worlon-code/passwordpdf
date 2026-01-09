@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -22,9 +23,13 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
 import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
+import 'package:passwordpdf_manager/features/documents/widgets/delete_confirmation_dialog.dart';
 
 class AllDocumentsScreen extends StatefulWidget {
   const AllDocumentsScreen({super.key});
+
+  /// Static reference to allow MainScreen to access state for back navigation
+  static _AllDocumentsScreenState? currentState;
 
   @override
   State<AllDocumentsScreen> createState() => _AllDocumentsScreenState();
@@ -67,16 +72,36 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
   @override
   void initState() {
     super.initState();
+    AllDocumentsScreen.currentState = this; // Register for back handling
     _loadDocuments();
     _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    AllDocumentsScreen.currentState = null; // Deregister
     _searchDebounce?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+  
+  // Public accessors for MainScreen back navigation
+  bool get isSelectionMode => _isSelectionMode;
+  bool get isFolderView => _isFolderView;
+  String get currentFolderPath => _currentFolderPath;
+  
+  void clearSelection() {
+    setState(() => _selectedPaths.clear());
+  }
+  
+  void navigateUp() {
+    final parent = Directory(_currentFolderPath).parent.path;
+    setState(() {
+      _currentFolderPath = parent;
+      _isLoading = true;
+    });
+    _loadDocuments();
   }
 
   void _startSearch() {
@@ -916,24 +941,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_isSelectionMode && (!_isFolderView || _currentFolderPath == '/storage/emulated/0'),
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-           if (_isSelectionMode) {
-              setState(() => _selectedPaths.clear());
-           } else if (_isFolderView && _currentFolderPath != '/storage/emulated/0') {
-              // Go up one level
-              final parent = Directory(_currentFolderPath).parent.path;
-              setState(() {
-                _currentFolderPath = parent;
-                _isLoading = true;
-              });
-              _loadDocuments();
-           }
-        }
-      },
-      child: Scaffold(
+    return Scaffold(
       appBar: AppBar(
         title: _isSearching
             ? TextField(
@@ -967,12 +975,18 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
               }
             ),
 
-          if (!_isSearching && _isSelectionMode)
+          if (!_isSearching && _isSelectionMode) ...[
              IconButton(
                icon: const Icon(Icons.download),
                onPressed: _importSelected,
                tooltip: 'Import Selected',
              ),
+             IconButton(
+               icon: const Icon(Icons.delete, color: Colors.red),
+               onPressed: _deleteSelectedFiles,
+               tooltip: 'Delete Permanently',
+             ),
+          ],
              
             IconButton(
                icon: Icon(_isFolderView ? Icons.list_alt : Icons.folder),
@@ -1100,9 +1114,8 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                       ),
           ),
         ],
-      ),
-      ),
-    ); // Close PopScope
+      ),  // Close Stack body
+    );  // Close Scaffold
   }
 
 
@@ -1113,6 +1126,51 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
           _displayedFiles.clear();
       });
       _loadDocuments();
+  }
+
+  Future<void> _deleteSelectedFiles() async {
+      if (_selectedPaths.isEmpty) return;
+
+      // 1. Show the "Strict" 2-Stage Confirmation directly
+      // Because this is a file browser, these are always device deletions
+      final confirmed = await showDialog<bool>(
+         context: context,
+         barrierDismissible: false,
+         builder: (context) => DeleteConfirmationDialog(
+           count: _selectedPaths.length, 
+           isPermanent: true, 
+           onConfirm: () async {
+             // Logic executed after dialog closes with true
+           },
+         ),
+      );
+
+      if (confirmed != true) return;
+
+      // 2. Perform Deletion
+      setState(() => _isLoading = true);
+      
+      final docService = Provider.of<DocumentService>(context, listen: false);
+      final paths = _selectedPaths.toList();
+      int successCount = 0;
+
+      for (final path in paths) {
+         try {
+             await docService.deleteFileFromDevice(path);
+             successCount++;
+         } catch (e) {
+             _log.error('AllDocumentsScreen', 'Failed to delete: $path', e);
+         }
+      }
+
+      // 3. UI Feedback & Refresh
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('Permanently deleted $successCount files')),
+         );
+         _selectedPaths.clear();
+         _loadDocuments(forceRescan: true);
+      }
   }
 
   Widget _buildDocumentItem(FileSystemEntity file) {

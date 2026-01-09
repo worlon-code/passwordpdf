@@ -766,7 +766,7 @@ class DocumentService {
   }
 
   /// Delete item (recursively deletes folder contents)
-  Future<void> deleteItem(String itemId) async {
+  Future<void> deleteItem(String itemId, {bool deleteFromDevice = false}) async {
     final item = _items.firstWhere(
       (i) => i.id == itemId,
       orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
@@ -779,19 +779,26 @@ class DocumentService {
       // Delete all files in this folder
       final filesInFolder = getFilesInFolder(itemId);
       for (final file in filesInFolder) {
+        if (deleteFromDevice) {
+           await _deleteFileFromDevice(file.sourcePath);
+        }
         _items.removeWhere((i) => i.id == file.id);
       }
       
       // Recursively delete subfolders
       final subfolders = getSubfolders(itemId);
       for (final sub in subfolders) {
-        await deleteItem(sub.id);
+        await deleteItem(sub.id, deleteFromDevice: deleteFromDevice);
       }
       
       _log.info('DocumentService', 'Cascade deleted folder contents: ${item.name}');
     }
     
     // Remove the item itself
+    if (deleteFromDevice && item.isFile) {
+       await _deleteFileFromDevice(item.sourcePath);
+    }
+
     _items.removeWhere((i) => i.id == itemId);
     
     // If it was a file, remove its ID from any folder containing it
@@ -805,7 +812,27 @@ class DocumentService {
     }
     
     await _saveDocuments();
-    _log.info('DocumentService', 'Deleted item: ${item.name}');
+    await _saveDocuments();
+    _log.info('DocumentService', 'Deleted item: ${item.name} (Device delete: $deleteFromDevice)');
+  }
+
+  /// Helper to delete file from device
+  Future<void> _deleteFileFromDevice(String? path) async {
+    if (path == null) return;
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+        _log.info('DocumentService', 'Permanently deleted: $path');
+      }
+    } catch (e) {
+      _log.error('DocumentService', 'Failed to delete file from device: $path', e);
+    }
+  }
+
+  /// Public wrapper for raw device deletion (used by AllDocumentsScreen)
+  Future<void> deleteFileFromDevice(String path) async {
+    await _deleteFileFromDevice(path);
   }
 
 
