@@ -18,6 +18,15 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 - **Missing File Detection**: Visual indicators and removal prompts for files moved/deleted externally.
 - **Automatic Cache Cleanup**: Temporary files from "Add Files" and "Open With" are cleaned on app start.
 
+#### Sync & Badges (v0.0.28)
+- **Time-Based Pull-to-Refresh**:
+  - **Short Pull**: Quick refresh of UI from database.
+  - **Hold > 1.5s**: Triggers full file system sync for all folders.
+- **Sync Indicators**: Custom overlay shows when sync is ready to trigger.
+- **New Badges**: "NEW" badges for freshly discovered files and folders.
+- **Missing File Tracking**: Visual indicators for files removed from device.
+- **Global Removed Files**: Dedicated screen to manage missing files.
+
 #### Stability Improvements (v0.0.28)
 - **Global Error Handler**: Uncaught exceptions are now logged via `LoggingService`.
 - **"Open With" Cold Start Fix**: Files shared via "Open With" now open reliably on cold start.

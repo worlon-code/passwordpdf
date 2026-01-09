@@ -59,6 +59,10 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   String _filterType = 'All'; // All, PDF, DOC, Excel
   SortOption _sortOption = SortOption.dateModified;
   bool _sortAscending = false; // Default: Newest first (Descending)
+  DateTime? _pullStartTime; // For time-based sync detection
+  bool _showPullIndicator = false; // Show pull overlay
+  bool _isHoldingForSync = false; // Track if holding long enough for sync
+  Timer? _holdTimer; // Timer for hold detection
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
@@ -75,7 +79,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   void _startAutoSync() {
     // Initial Sync
-    _docService.syncAllFolders().then((_) {
+    _docService.syncAllFolders().then((_) async {
+        await _docService.initialize(); // Reload from DB
         _updateFolderBadges();
         if (mounted) setState(() {}); 
     });
@@ -83,13 +88,31 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     // Periodic Sync (10 min = 600 sec)
     _syncTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
         if (mounted) {
-            _docService.syncAllFolders().then((_) {
+            _docService.syncAllFolders().then((_) async {
+                 await _docService.initialize(); // Reload from DB
                  _updateFolderBadges();
                  if (mounted) setState(() {});
                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-Sync Completed'), duration: Duration(seconds: 1)));
             });
         }
     });
+  }
+  
+  /// Manual sync triggered by long pull or menu button
+  Future<void> _syncWithReload() async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Sync Started...'), duration: Duration(seconds: 1)),
+    );
+    setState(() => _isLoading = true);
+    await _docService.syncAllFolders();
+    await _docService.initialize(); // Reload from DB
+    _updateFolderBadges();
+    if (mounted) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync Completed'), duration: Duration(seconds: 1)),
+      );
+    }
   }
   
   @override
@@ -2058,6 +2081,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     if (_currentFolderId != null) {
       // Clear badges when leaving folder
       await _docService.clearFolderBadges(_currentFolderId!);
+      _updateFolderBadges(); // Refresh the badge cache
       
       setState(() {
         _selectedFileIds.clear(); // Clear selection when navigating
@@ -2219,6 +2243,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                         ),
                       ),
                     ).then((_) => setState(() {}));
+                  } else if (value == 'sync_now') {
+                    _syncWithReload();
                   }
                 },
                 itemBuilder: (context) => [
@@ -2252,6 +2278,16 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       ],
                     ),
                   ),
+                  const PopupMenuItem(
+                    value: 'sync_now',
+                    child: Row(
+                      children: [
+                        Icon(Icons.sync),
+                        SizedBox(width: 8),
+                        Text('Sync All Folders'),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -2263,25 +2299,118 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 ) 
               : null,
         ),
-        body: RefreshIndicator(
-          onRefresh: () async {
-            await _initialize();
-            setState(() {});
-          },
-          child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _isInitialized
-              ? AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (Widget child, Animation<double> animation) {
-                    return FadeTransition(opacity: animation, child: child);
-                  },
-                  child: KeyedSubtree(
-                    key: ValueKey(_currentFolderId ?? 'root'),
-                    child: _buildContent(),
+        body: Stack(
+          children: [
+            NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is OverscrollNotification && notification.overscroll < 0) {
+                  // Pull started - start timer if not already tracking
+                  if (_pullStartTime == null) {
+                    _pullStartTime = DateTime.now();
+                    _holdTimer?.cancel();
+                    // Start timer to show sync indicator after 1.5s of holding
+                    _holdTimer = Timer(const Duration(milliseconds: 1500), () {
+                      if (mounted && _pullStartTime != null) {
+                        setState(() {
+                          _isHoldingForSync = true;
+                          _showPullIndicator = true;
+                        });
+                      }
+                    });
+                  }
+                } else if (notification is ScrollEndNotification) {
+                  // Pull ended - hide visual indicator, then reset state after delay
+                  // (delay allows onRefresh to capture values before reset)
+                  _holdTimer?.cancel();
+                  Future.delayed(const Duration(milliseconds: 200), () {
+                    if (mounted) {
+                      _pullStartTime = null;
+                      _isHoldingForSync = false;
+                      setState(() => _showPullIndicator = false);
+                    }
+                  });
+                } else if (notification is ScrollUpdateNotification && notification.scrollDelta != null && notification.scrollDelta! > 0) {
+                  // Scrolling down - reset all state
+                  _pullStartTime = null;
+                  _holdTimer?.cancel();
+                  _isHoldingForSync = false; // Always reset
+                  if (_showPullIndicator) {
+                    setState(() => _showPullIndicator = false);
+                  }
+                }
+                return false;
+              },
+              child: RefreshIndicator(
+                onRefresh: () async {
+                  // Check if held for > 1.5 seconds using actual time
+                  bool shouldSync = _isHoldingForSync;
+                  if (!shouldSync && _pullStartTime != null) {
+                    // Fallback: Check elapsed time directly in case timer hasn't fired
+                    final elapsed = DateTime.now().difference(_pullStartTime!);
+                    shouldSync = elapsed.inMilliseconds >= 1500;
+                  }
+                  
+                  _pullStartTime = null;
+                  _holdTimer?.cancel();
+                  setState(() {
+                    _showPullIndicator = false;
+                    _isHoldingForSync = false;
+                  });
+                  
+                  if (shouldSync) {
+                    await _syncWithReload();
+                  } else {
+                    await _initialize();
+                  }
+                },
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _isInitialized
+                    ? AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        transitionBuilder: (Widget child, Animation<double> animation) {
+                          return FadeTransition(opacity: animation, child: child);
+                        },
+                        child: KeyedSubtree(
+                          key: ValueKey(_currentFolderId ?? 'root'),
+                          child: _buildContent(),
+                        ),
+                      )
+                    : const Center(child: Text('Initializing...')),
+              ),
+            ),
+            // Hold Indicator Overlay (shows after 1.5s hold)
+            if (_showPullIndicator && _isHoldingForSync)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer,
                   ),
-                )
-              : const Center(child: Text('Initializing...')),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.sync,
+                        size: 28,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Release to sync all folders',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
         ),
         floatingActionButton: FloatingActionButton.extended(
           onPressed: _openFileBrowser,
@@ -2733,6 +2862,8 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             } else if (value == 'sync') {
                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Syncing...')));
                  final success = await _docService.syncFolder(folder.id);
+                 await _docService.initialize(); // Reload from DB
+                 _updateFolderBadges(); // Refresh badge cache
                  setState(() {});
                  if (mounted) {
                    ScaffoldMessenger.of(context).showSnackBar(
