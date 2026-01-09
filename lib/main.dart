@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'services/cleanup_service.dart';
 import 'package:provider/provider.dart';
@@ -22,6 +23,7 @@ import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/documents/screens/all_documents_screen.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 import 'models/document_item_model.dart';
+import 'features/authentication/widgets/animated_splash_logo.dart';
 
 /// Static class to hold pending file to open (for Open With flow)
 class PendingFileOpen {
@@ -68,7 +70,13 @@ void main() async {
     
     // Global Flutter Error Handler (Layout errors, etc)
     FlutterError.onError = (FlutterErrorDetails details) {
-      log.error('Flutter', 'Uncaught Flutter Error', details.exception, details.stack);
+      final errorMessage = '''
+Uncaught Flutter Error
+Exception: ${details.exception}
+Library: ${details.library}
+Context: ${details.context?.toDescription() ?? 'none'}
+''';
+      log.error('globalexception', errorMessage, details.exception, details.stack);
       // Optional: Dump to console for dev
       FlutterError.dumpErrorToConsole(details);
     };
@@ -193,7 +201,12 @@ void main() async {
   }, (error, stack) {
     // Global Async Error Handler
     final log = LoggingService();
-    log.error('App', 'Uncaught Async Error', error, stack);
+    final errorMessage = '''
+Uncaught Async Error
+Error Type: ${error.runtimeType}
+Error: $error
+''';
+    log.error('globalexception', errorMessage, error, stack);
   });
 }
 
@@ -550,15 +563,27 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     _log.debug('AppEntry', 'build() called - isLoading=$_isLoading, isAuthenticated=$_isAuthenticated');
     
     if (_isLoading) {
+      final colorScheme = Theme.of(context).colorScheme;
       return Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: const [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Loading v$appVersion...'),
-            ],
+        body: Container(
+           decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primary,
+                colorScheme.secondary,
+                colorScheme.tertiary,
+              ],
+            ),
+          ),
+          child: Center(
+            child: AnimatedSplashLogo(
+              animateText: true, // Text centered below logo
+              onAnimationComplete: () {
+                // Optional delay
+              },
+            ),
           ),
         ),
       );
@@ -591,7 +616,15 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex;
+    
+    // Use widget.initialIndex if explicitly set, otherwise use settings default
+    if (widget.initialIndex != 0) {
+      _currentIndex = widget.initialIndex;
+    } else {
+      // Get default screen from settings
+      final settings = SettingsService();
+      _currentIndex = settings.defaultScreenIndex;
+    }
     
     // Check if we have a pending folder navigation
     // This ensures we switch to the correct tab even if MainScreen is rebuilt
@@ -668,45 +701,67 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: const [
-          AllDocumentsScreen(),
-          DocumentDashboardScreen(),
-          PasswordManagerScreen(),
-          SettingsScreen(),
-        ],
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        destinations: const [
-           NavigationDestination(
-            icon: Icon(Icons.storage),
-            selectedIcon: Icon(Icons.storage_outlined),
-            label: 'All Docs',
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        
+        final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Exit App'),
+            content: const Text('Do you want to close the application?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Leave'),
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.folder_outlined),
-            selectedIcon: Icon(Icons.folder),
-            label: 'Documents',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.vpn_key_outlined),
-            selectedIcon: Icon(Icons.vpn_key),
-            label: 'Passwords',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
-        ],
+        );
+        
+        if (shouldExit == true) {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: const [
+            AllDocumentsScreen(),
+            DocumentDashboardScreen(),
+            SettingsScreen(),
+          ],
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (index) {
+            setState(() {
+              _currentIndex = index;
+            });
+          },
+          destinations: const [
+             NavigationDestination(
+              icon: Icon(Icons.storage),
+              selectedIcon: Icon(Icons.storage_outlined),
+              label: 'All Docs',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.folder_outlined),
+              selectedIcon: Icon(Icons.folder),
+              label: 'Documents',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings),
+              label: 'Settings',
+            ),
+          ],
+        ),
       ),
     );
   }

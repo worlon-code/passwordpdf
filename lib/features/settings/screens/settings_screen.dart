@@ -11,6 +11,7 @@ import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
 import '../../developer/screens/developer_screen.dart';
+import '../../password_manager/screens/password_manager_screen.dart';
 import '../../../main.dart';
 
 /// Settings screen
@@ -26,6 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final LoggingService _log = LoggingService();
   final EncryptionService _encryptionService = EncryptionService();
   bool _biometricSupported = false;
+  int _versionTapCount = 0;
 
 
   @override
@@ -111,6 +113,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
           builder: (context) => const DeveloperScreen(),
         ),
       );
+    }
+  }
+  
+  Future<void> _showDeveloperPasswordDialog(SettingsService settings) async {
+    final controller = TextEditingController();
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enable Developer Mode'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Enter developer password to unlock developer tools.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Developer Password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == true) {
+      if (controller.text == 'Portal123!') {
+        await settings.enableDeveloperMode();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Developer mode enabled!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Incorrect password'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
 
@@ -368,6 +429,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ],
                       ),
                     ),
+                    const Divider(height: 1),
+                    // Default Screen
+                    ListTile(
+                      leading: const Icon(Icons.home),
+                      title: const Text('Default Screen'),
+                      trailing: DropdownButton<int>(
+                        value: settings.defaultScreenIndex,
+                        underline: const SizedBox(),
+                        onChanged: (index) {
+                          if (index != null) settings.setDefaultScreenIndex(index);
+                        },
+                        items: const [
+                          DropdownMenuItem(value: 0, child: Text('All Docs')),
+                          DropdownMenuItem(value: 1, child: Text('Documents')),
+                        ],
+                      ),
+                    ),
                   ],
                 );
               },
@@ -381,7 +459,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: Consumer<SettingsService>(
               builder: (context, settings, child) {
-                final path = settings.exportPath ?? 'Default (Source Folder)';
+                final path = settings.exportPath;
                 return ListTile(
                   leading: const Icon(Icons.download),
                   title: const Text('Download Location'),
@@ -397,6 +475,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 );
               },
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Passwords Section
+          _buildSectionHeader('Passwords'),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.password),
+              title: const Text('Password Manager'),
+              subtitle: const Text('Manage saved PDF passwords'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PasswordManagerScreen()),
+              ),
             ),
           ),
           
@@ -496,36 +591,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 24),
           
-          // Developer Section
-          _buildSectionHeader('Developer'),
-          Card(
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.build_circle),
-                  title: const Text('Developer Tools'),
-                  subtitle: const Text('Logs, Database & Export (password protected)'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: _openDebugLogs, // Keep valid name, functional logic only
-                ),
-              ],
-            ),
+          // Developer Section (Hidden until unlocked)
+          Consumer<SettingsService>(
+            builder: (context, settings, child) {
+              if (!settings.developerModeEnabled) return const SizedBox.shrink();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSectionHeader('Developer'),
+                  Card(
+                    child: Column(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.build_circle),
+                          title: const Text('Developer Tools'),
+                          subtitle: const Text('Logs, Database & Export'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const DeveloperScreen()),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              );
+            },
           ),
-          
-          const SizedBox(height: 24),
           
           // About Section
           _buildSectionHeader('About'),
           Card(
             child: Column(
-              children: const [
-                ListTile(
-                  leading: Icon(Icons.info),
-                  title: Text('App Version'),
-                  subtitle: Text(appVersion),
+              children: [
+                Consumer<SettingsService>(
+                  builder: (context, settings, child) {
+                    return ListTile(
+                      leading: const Icon(Icons.info),
+                      title: const Text('App Version'),
+                      subtitle: Text(settings.developerModeEnabled 
+                          ? '$appVersion (Dev)' 
+                          : appVersion),
+                      onTap: () {
+                        if (settings.developerModeEnabled) return;
+                        
+                        setState(() => _versionTapCount++);
+                        
+                        if (_versionTapCount >= 5) {
+                          _versionTapCount = 0;
+                          _showDeveloperPasswordDialog(settings);
+                        } else if (_versionTapCount >= 3) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('${5 - _versionTapCount} taps to unlock developer mode'),
+                              duration: const Duration(milliseconds: 800),
+                            ),
+                          );
+                        }
+                      },
+                    );
+                  },
                 ),
-                Divider(height: 1),
-                ListTile(
+                const Divider(height: 1),
+                const ListTile(
                   leading: Icon(Icons.description),
                   title: Text('PDF Password Manager'),
                   subtitle: Text('Secure PDF & Password Management'),

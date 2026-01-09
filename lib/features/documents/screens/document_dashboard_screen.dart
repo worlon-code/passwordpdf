@@ -554,67 +554,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _checkDownloadLocation() async {
-    final settings = context.read<SettingsService>();
-    if (settings.exportPath == null) {
-      await Future.delayed(Duration.zero); // Ensure build complete
-      if (!mounted) return;
-      
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Setup Required'),
-          content: const Text(
-            'Please select a location where exported PDF files (unlocked, merged, etc.) will be saved.',
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Select Folder'),
-            ),
-          ],
-        ),
-      );
-
-      if (!mounted) return;
-      
-      String? dir;
-      while (dir == null) {
-        dir = await FilePicker.platform.getDirectoryPath(
-          dialogTitle: 'Select Download Location',
-        );
-        
-        if (dir == null) {
-          if (!mounted) return;
-          // Show retry dialog
-          final retry = await showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              title: const Text('Location Required'),
-              content: const Text('You must select a download location to continue.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false), // Exit/Cancel? No, mandatory.
-                  child: const Text('Retry'), // Actually just closes logic loop
-                ),
-              ],
-            ),
-          );
-          // Loop continues...
-        }
+    // Auto-create PDF Manager folder in Downloads if it doesn't exist
+    final defaultPath = '/storage/emulated/0/Download/PDF Manager';
+    final dir = Directory(defaultPath);
+    
+    if (!await dir.exists()) {
+      try {
+        await dir.create(recursive: true);
+        _log.info('Dashboard', 'Created PDF Manager folder at: $defaultPath');
+      } catch (e) {
+        _log.error('Dashboard', 'Failed to create PDF Manager folder', e);
       }
-      
-      await settings.setExportPath(dir);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Download location set to: $dir')),
-        );
-      }
-      
-      // Now check encryption key setup
-      await _checkEncryptionKey();
     }
+    
+    // Now check encryption key setup
+    await _checkEncryptionKey();
   }
 
   /// Check and prompt for encryption key setup (first-time only)

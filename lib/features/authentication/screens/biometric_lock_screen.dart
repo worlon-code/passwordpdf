@@ -4,6 +4,7 @@ import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../settings/services/settings_service.dart';
+import '../../../features/authentication/widgets/animated_splash_logo.dart';
 
 /// Lock screen that handles both fingerprint and PIN authentication
 class BiometricLockScreen extends StatefulWidget {
@@ -157,6 +158,9 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Detailed dynamic gradient based on accent color
+    final colorScheme = Theme.of(context).colorScheme;
+    
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -164,9 +168,9 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              AppTheme.primaryLight,
-              AppTheme.secondaryLight,
-              AppTheme.accentLight,
+              colorScheme.primary,
+              colorScheme.secondary,
+              colorScheme.tertiary,
             ],
           ),
         ),
@@ -184,21 +188,9 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // App Logo
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.lock_outline, size: 80, color: Colors.white),
-          ),
-          
-          const SizedBox(height: 40),
-          
-          const Text(
-            'PDF Password Manager',
-            style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+          // Animated Logo & Text
+          const AnimatedSplashLogo(
+             animateText: true,
           ),
           
           const SizedBox(height: 60),

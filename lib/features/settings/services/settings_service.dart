@@ -25,12 +25,14 @@ class SettingsService extends ChangeNotifier {
   );
   final LoggingService _log = LoggingService();
   
-  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode _themeMode = ThemeMode.light;
   AuthMethod _authMethod = AuthMethod.none;
   bool _hasPinSet = false;
   Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
-  int _fontSizeAdjustment = -3; // -7 to 0, default -3
+  int _fontSizeAdjustment = -4; // -7 to 0, default -4
   int _maxLogCount = 8000;
+  bool _developerModeEnabled = false;
+  int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -42,6 +44,8 @@ class SettingsService extends ChangeNotifier {
   Color get accentColor => _accentColor;
   int get fontSizeAdjustment => _fontSizeAdjustment;
   int get maxLogCount => _maxLogCount;
+  bool get developerModeEnabled => _developerModeEnabled;
+  int get defaultScreenIndex => _defaultScreenIndex;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -95,8 +99,14 @@ class SettingsService extends ChangeNotifier {
     // Check if PIN is set
     final pin = await _secureStorage.read(key: 'app_pin');
     _hasPinSet = pin != null && pin.isNotEmpty;
+    
+    // Load developer mode
+    _developerModeEnabled = _prefs!.getBool('developer_mode_enabled') ?? false;
+    
+    // Load default screen index (0 = All Docs, 1 = Documents)
+    _defaultScreenIndex = _prefs!.getInt('default_screen_index') ?? 0;
 
-    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet');
+    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet, developerMode=$_developerModeEnabled, defaultScreen=$_defaultScreenIndex');
     notifyListeners();
   }
 
@@ -230,8 +240,8 @@ class SettingsService extends ChangeNotifier {
     return await setPin(newPin);
   }
 
-  /// Get export path (defaults to Downloads)
-  String? get exportPath => _prefs?.getString('export_path');
+  /// Get export path (defaults to Downloads/PDF Manager)
+  String get exportPath => _prefs?.getString('export_path') ?? '/storage/emulated/0/Download/PDF Manager';
 
   /// Set export path
   Future<void> setExportPath(String path) async {
@@ -240,5 +250,20 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Enable Developer Mode (one-time unlock)
+  Future<void> enableDeveloperMode() async {
+    _developerModeEnabled = true;
+    await _prefs?.setBool('developer_mode_enabled', true);
+    _log.info('SettingsService', 'Developer mode enabled');
+    notifyListeners();
+  }
+
+  /// Set default screen index (0 = All Docs, 1 = Documents)
+  Future<void> setDefaultScreenIndex(int index) async {
+    _defaultScreenIndex = index.clamp(0, 1);
+    await _prefs?.setInt('default_screen_index', _defaultScreenIndex);
+    _log.info('SettingsService', 'Default screen set to: ${_defaultScreenIndex == 0 ? 'All Docs' : 'Documents'}');
+    notifyListeners();
+  }
 
 }

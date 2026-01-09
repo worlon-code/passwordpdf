@@ -371,11 +371,9 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
           ),
         ),
         Padding(
-          padding: const EdgeInsets.all(8.0),
+          padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
           child: Row(
             children: [
-              Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(width: 8),
               // Tag filter dropdown
               DropdownButton<String>(
                 value: _tagFilter,
@@ -396,6 +394,15 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
                 },
               ),
               const Spacer(),
+              Text('${_logs.length} entries', style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
               // Sort toggle
               IconButton(
                 icon: Icon(_sortDescending ? Icons.arrow_downward : Icons.arrow_upward, size: 18),
