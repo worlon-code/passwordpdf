@@ -466,6 +466,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text(path),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
+                    AppEntry.ignoreNextPause = true; // Prevent auto-lock
                     final dir = await FilePicker.platform.getDirectoryPath(
                       dialogTitle: 'Select Download Location',
                     );
@@ -587,14 +588,80 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 24),
           
-
+          // Auto-Lock Timer (Only visible if auth is enabled)
+          Consumer<SettingsService>(
+            builder: (context, settings, child) {
+               if (!settings.biometricEnabled && !settings.hasPinSet) return const SizedBox.shrink();
+               
+               return Column(
+                 crossAxisAlignment: CrossAxisAlignment.start,
+                 children: [
+                   _buildSectionHeader('Auto-Lock'),
+                   Card(
+                     child: ListTile(
+                       leading: const Icon(Icons.timer),
+                       title: const Text('Auto-Lock Timer'),
+                       subtitle: Text('${settings.autoLockTimeout} minutes'),
+                       trailing: const Icon(Icons.chevron_right),
+                       onTap: () {
+                         showDialog(
+                           context: context,
+                           builder: (context) => AlertDialog(
+                             title: const Text('Auto-Lock Timeout'),
+                             content: StatefulBuilder(
+                               builder: (context, setDialogState) {
+                                 return Column(
+                                   mainAxisSize: MainAxisSize.min,
+                                   children: [
+                                     Text('${settings.autoLockTimeout} minutes', 
+                                       style: Theme.of(context).textTheme.headlineMedium),
+                                     const SizedBox(height: 16),
+                                     Slider(
+                                       value: settings.autoLockTimeout.toDouble(),
+                                       min: 3,
+                                       max: 30,
+                                       divisions: 27, // 1 minute steps
+                                       label: '${settings.autoLockTimeout} min',
+                                       onChanged: (val) {
+                                         setDialogState(() {
+                                            settings.setAutoLockTimeout(val.toInt());
+                                         });
+                                       },
+                                     ),
+                                     Row(
+                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                       children: [
+                                         Text('3 min', style: Theme.of(context).textTheme.bodySmall),
+                                         Text('30 min', style: Theme.of(context).textTheme.bodySmall),
+                                       ],
+                                     ),
+                                   ],
+                                 );
+                               },
+                             ),
+                             actions: [
+                               TextButton(
+                                 onPressed: () => Navigator.pop(context),
+                                 child: const Text('Done'),
+                               ),
+                             ],
+                           ),
+                         );
+                       },
+                     ),
+                   ),
+                   const SizedBox(height: 24),
+                 ],
+               );
+            },
+          ),
           
           const SizedBox(height: 24),
           
           // Developer Section (Hidden until unlocked)
           Consumer<SettingsService>(
             builder: (context, settings, child) {
-              if (!settings.developerModeEnabled) return const SizedBox.shrink();
+               if (!settings.developerModeEnabled) return const SizedBox.shrink();
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

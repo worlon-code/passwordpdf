@@ -9,10 +9,12 @@ import '../../../features/authentication/widgets/animated_splash_logo.dart';
 /// Lock screen that handles both fingerprint and PIN authentication
 class BiometricLockScreen extends StatefulWidget {
   final VoidCallback onAuthenticated;
+  final bool isOverlay;
 
   const BiometricLockScreen({
     super.key,
     required this.onAuthenticated,
+    this.isOverlay = false,
   });
 
   @override
@@ -32,7 +34,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
   @override
   void initState() {
     super.initState();
-    _log.info('LockScreen', 'Lock screen initialized');
+    _log.info('LockScreen', 'Lock screen initialized (Overlay: ${widget.isOverlay})');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startAuthentication();
     });
@@ -158,22 +160,27 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Detailed dynamic gradient based on accent color
+    // If overlay, use semi-transparent black background. Otherwise use branded gradient.
     final colorScheme = Theme.of(context).colorScheme;
     
+    final decoration = widget.isOverlay 
+        ? BoxDecoration(color: Colors.black.withOpacity(0.85)) // Dark overlay
+        : BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primary,
+                colorScheme.secondary,
+                colorScheme.tertiary,
+              ],
+            ),
+          );
+
     return Scaffold(
+      backgroundColor: widget.isOverlay ? Colors.transparent : null,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              colorScheme.primary,
-              colorScheme.secondary,
-              colorScheme.tertiary,
-            ],
-          ),
-        ),
+        decoration: decoration,
         child: SafeArea(
           child: _showPinEntry ? _buildPinEntry() : _buildFingerprintAuth(),
         ),

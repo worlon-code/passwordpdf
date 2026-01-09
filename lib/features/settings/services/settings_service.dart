@@ -33,6 +33,7 @@ class SettingsService extends ChangeNotifier {
   int _maxLogCount = 8000;
   bool _developerModeEnabled = false;
   int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
+  int _autoLockTimeout = 10; // Default 10 minutes
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -46,6 +47,7 @@ class SettingsService extends ChangeNotifier {
   int get maxLogCount => _maxLogCount;
   bool get developerModeEnabled => _developerModeEnabled;
   int get defaultScreenIndex => _defaultScreenIndex;
+  int get autoLockTimeout => _autoLockTimeout;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -106,7 +108,13 @@ class SettingsService extends ChangeNotifier {
     // Load default screen index (0 = All Docs, 1 = Documents)
     _defaultScreenIndex = _prefs!.getInt('default_screen_index') ?? 0;
 
-    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet, developerMode=$_developerModeEnabled, defaultScreen=$_defaultScreenIndex');
+    // Load auto-lock timeout
+    final timeout = _prefs!.getInt('auto_lock_timeout');
+    if (timeout != null) {
+      _autoLockTimeout = timeout.clamp(3, 30);
+    }
+
+    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet, developerMode=$_developerModeEnabled, defaultScreen=$_defaultScreenIndex, autoLockTimeout=$_autoLockTimeout');
     notifyListeners();
   }
 
@@ -263,6 +271,14 @@ class SettingsService extends ChangeNotifier {
     _defaultScreenIndex = index.clamp(0, 1);
     await _prefs?.setInt('default_screen_index', _defaultScreenIndex);
     _log.info('SettingsService', 'Default screen set to: ${_defaultScreenIndex == 0 ? 'All Docs' : 'Documents'}');
+    notifyListeners();
+  }
+
+  /// Set auto-lock timeout (3 to 30 minutes)
+  Future<void> setAutoLockTimeout(int minutes) async {
+    _autoLockTimeout = minutes.clamp(3, 30);
+    await _prefs?.setInt('auto_lock_timeout', _autoLockTimeout);
+    _log.info('SettingsService', 'Auto-lock timeout set to: $_autoLockTimeout minutes');
     notifyListeners();
   }
 

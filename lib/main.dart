@@ -265,6 +265,12 @@ class MyApp extends StatelessWidget {
 class AppEntry extends StatefulWidget {
   const AppEntry({super.key});
 
+  // Flag to ignore valid user interactions that pause the app (e.g. File Picker)
+  static bool ignoreNextPause = false;
+
+  // Track when the app went into background (Static to allow forcing timeout from other screens)
+  static DateTime? backgroundTime;
+
   @override
   State<AppEntry> createState() => _AppEntryState();
 }
@@ -272,6 +278,10 @@ class AppEntry extends StatefulWidget {
 class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   final LoggingService _log = LoggingService();
   final PermissionService _permissionService = PermissionService();
+  
+  // GlobalKey to preserve MainScreen state across lock/unlock
+  final GlobalKey _mainScreenKey = GlobalKey();
+
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
@@ -531,9 +541,63 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_isProcessingIntent) {
-      _log.info('AppEntry', 'App resumed - checking for pending intents');
-      _checkForPendingIntent();
+    if (state == AppLifecycleState.paused) {
+      if (AppEntry.ignoreNextPause) {
+         _log.info('AppEntry', 'App paused but ignoreNextPause is true - Skipping timeout tracking');
+         AppEntry.ignoreNextPause = false; // Reset flag
+         return;
+      }
+      
+      AppEntry.backgroundTime = DateTime.now();
+      _log.info('AppEntry', 'App paused - tracking background time: ${AppEntry.backgroundTime}');
+    }
+
+    if (state == AppLifecycleState.resumed) {
+       _log.info('AppEntry', 'App resumed');
+       
+       if (AppEntry.backgroundTime != null) {
+         final diff = DateTime.now().difference(AppEntry.backgroundTime!);
+         _log.info('AppEntry', 'Background duration: ${diff.inMinutes} minutes');
+         
+         // Auto-lock only after user-configured timeout (default 10m)
+         final settings = Provider.of<SettingsService>(context, listen: false);
+         final timeoutMinutes = settings.autoLockTimeout;
+         
+         if (diff.inMinutes >= timeoutMinutes) {
+            // Only lock if security is enabled AND we are currently authenticated
+            if ((settings.biometricEnabled || settings.pinEnabled) && _isAuthenticated) {
+               _log.info('AppEntry', 'Timeout (>$timeoutMinutes m) - Pushing Lock Screen Route');
+               
+               Navigator.of(context).push(
+                 PageRouteBuilder(
+                   opaque: false, 
+                   pageBuilder: (_, __, ___) => PopScope(
+                     canPop: false, 
+                     child: BiometricLockScreen(
+                       isOverlay: true, 
+                       onAuthenticated: () {
+                         _log.info('AppEntry', 'Re-authentication successful - Popping lock screen');
+                         Navigator.of(context).pop(); 
+                       },
+                     ),
+                   ),
+                   transitionsBuilder: (_, animation, __, child) {
+                     return FadeTransition(opacity: animation, child: child);
+                   },
+                 ),
+               );
+            }
+         } else {
+            _log.info('AppEntry', 'Timeout not reached (<10m) - access granted');
+         }
+         
+         AppEntry.backgroundTime = null; // Reset
+       }
+
+       if (!_isProcessingIntent) {
+         _log.info('AppEntry', 'Checking for pending intents');
+         _checkForPendingIntent();
+       }
     }
   }
   
@@ -552,7 +616,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
 
   void _onAuthenticated() {
-    _log.info('AppEntry', 'User authenticated successfully');
+    _log.info('AppEntry', 'User authenticated successfully (Initial)');
     setState(() {
       _isAuthenticated = true;
     });
@@ -579,7 +643,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
           ),
           child: Center(
             child: AnimatedSplashLogo(
-              animateText: true, // Text centered below logo
+              animateText: true, 
               onAnimationComplete: () {
                 // Optional delay
               },
@@ -589,14 +653,17 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       );
     }
 
+    // Initial Authentication Block
     if (!_isAuthenticated) {
-      _log.info('AppEntry', 'Showing BiometricLockScreen');
+      _log.info('AppEntry', 'Showing Initial BiometricLockScreen');
       return BiometricLockScreen(
         onAuthenticated: _onAuthenticated,
       );
     }
 
-    _log.info('AppEntry', 'Showing MainScreen with Dashboard');
+    // Main App Content
+    // Once we are authenticated, this widget stays in the tree.
+    // Subsequent locks are handled by Pushing routes on top of this.
     return const MainScreen();
   }
 }
@@ -725,6 +792,10 @@ class _MainScreenState extends State<MainScreen> {
         );
         
         if (shouldExit == true) {
+          // Force immediate lock on next resume by setting a very old background time
+          AppEntry.backgroundTime = DateTime(2000); 
+          // CRITICAL: Prevent the subsequent 'paused' lifecycle event from overwriting this with DateTime.now()
+          AppEntry.ignoreNextPause = true;
           SystemNavigator.pop();
         }
       },
