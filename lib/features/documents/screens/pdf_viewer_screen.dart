@@ -29,7 +29,10 @@ class PdfViewerScreen extends StatefulWidget {
     this.password,
     this.onPasswordRequired,
     this.onSuccess,
+    this.deleteOnClose = false,
   });
+
+  final bool deleteOnClose;
 
   @override
   State<PdfViewerScreen> createState() => _PdfViewerScreenState();
@@ -209,6 +212,14 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   @override
   void dispose() {
+    if (widget.deleteOnClose) {
+      // Fire and forget deletion of temporary file
+      try {
+        File(widget.filePath).delete().catchError((e) {
+          debugPrint('Failed to delete temp file: $e');
+        });
+      } catch (_) {}
+    }
     super.dispose();
   }
 

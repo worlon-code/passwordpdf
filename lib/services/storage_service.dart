@@ -6,7 +6,7 @@ import '../models/recent_document_model.dart';
 
 /// Service for local SQLite database operations
 class StorageService {
-  static const int _databaseVersion = 13;
+  static const int _databaseVersion = 14;
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
   StorageService._internal();
@@ -107,7 +107,9 @@ class StorageService {
         is_new INTEGER DEFAULT 0,
         missing_on_device INTEGER DEFAULT 0,
         added_at INTEGER,
-        last_synced INTEGER
+        last_synced INTEGER,
+        is_imported INTEGER DEFAULT 0,
+        is_imported_file INTEGER DEFAULT 0
       )
     ''');
     
@@ -285,6 +287,14 @@ class StorageService {
         
         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_is_new ON ${AppConstants.filesIndexTable} (is_new)');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_files_missing ON ${AppConstants.filesIndexTable} (missing_on_device)');
+      } catch (_) {}
+    }
+    
+    if (oldVersion < 14) {
+      // Phase 4: Persistence for Manually Imported Files
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_imported INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_imported_file INTEGER DEFAULT 0');
       } catch (_) {}
     }
   }

@@ -73,8 +73,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _exportQueue.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
-    _startAutoSync();
-    _initialize();
+    _initialize().then((_) => _startAutoSync());
   }
 
   void _startAutoSync() {
@@ -99,19 +98,36 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
   
   /// Manual sync triggered by long pull or menu button
-  Future<void> _syncWithReload() async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sync Started...'), duration: Duration(seconds: 1)),
-    );
-    setState(() => _isLoading = true);
-    await _docService.syncAllFolders();
-    await _docService.initialize(); // Reload from DB
-    _updateFolderBadges();
-    if (mounted) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sync Completed'), duration: Duration(seconds: 1)),
-      );
+  Future<void> _syncWithReload({bool isPullToRefresh = false}) async {
+    if (!isPullToRefresh) {
+        ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sync Started...'), duration: Duration(seconds: 1)),
+        );
+        setState(() => _isLoading = true);
+    }
+    
+    try {
+        await _docService.syncAllFolders();
+        await _docService.initialize(); // Reload from DB
+        _updateFolderBadges();
+        
+        if (mounted) {
+            setState(() {
+              if (!isPullToRefresh) _isLoading = false;
+              // Trigger rebuild to update badges
+            });
+            
+            if (!isPullToRefresh) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Sync Completed'), duration: Duration(seconds: 1)),
+                );
+            }
+        }
+    } catch (e) {
+        if (mounted && !isPullToRefresh) {
+             setState(() => _isLoading = false);
+        }
+        rethrow;
     }
   }
   
@@ -156,7 +172,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       final fileName = path.split(Platform.pathSeparator).last;
       
       // 1. Try Zero-Copy Import (Check for Global Duplicates)
-      var result = await _docService.addReference(path, fileName, allowDuplicate: false, folderId: _currentFolderId, isNew: true);
+      var result = await _docService.addReference(path, fileName, allowDuplicate: false, folderId: _currentFolderId, isNew: false);
       
       if (result.isDuplicate) {
         // Found duplicate(s) in library
@@ -214,21 +230,21 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                          i++;
                      }
                      // Import with new name
-                     await _docService.addReference(path, newName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
+                     await _docService.addReference(path, newName, allowDuplicate: true, folderId: _currentFolderId, isNew: false);
                      successCount++;
                      break;
                      
                 case ConflictActionType.overwrite:
                      // Overwrite: Delete existing item from DB, then add new ref
                      await _docService.deleteItem(existingId); 
-                     await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
+                     await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: false);
                      successCount++;
                      break;
             }
             
         } else {
              // No name collision, just add (allowDuplicate=true because we already passed the global check)
-             await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: true);
+             await _docService.addReference(path, fileName, allowDuplicate: true, folderId: _currentFolderId, isNew: false);
              successCount++;
         }
         
@@ -327,6 +343,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         if (PendingFileOpen.hasPending) {
           final filePath = PendingFileOpen.filePath!;
           final fileName = PendingFileOpen.fileName ?? filePath.split(RegExp(r'[/\\]')).last;
+          final isTemp = PendingFileOpen.isTemporary;
           PendingFileOpen.clearOpen();
           
           // Find or create the DocumentItem for this file
@@ -342,6 +359,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 builder: (_) => PdfViewerScreen(
                   filePath: filePath,
                   fileName: fileName,
+                  deleteOnClose: isTemp,
                 ),
               ),
             );
@@ -2358,7 +2376,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   });
                   
                   if (shouldSync) {
-                    await _syncWithReload();
+                    await _syncWithReload(isPullToRefresh: true);
                   } else {
                     await _initialize();
                   }

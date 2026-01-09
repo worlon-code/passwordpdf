@@ -357,11 +357,12 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       if (duplicates.isNotEmpty) {
         if (mounted && Navigator.canPop(context)) Navigator.pop(context);
         
+        // Updated Requirement: Auto-open first + Notify about others for ALL duplicates (single or multi)
+        // This matches main.dart behavior requested by user
+        
+        final exportService = Provider.of<ExportQueueService>(context, listen: false);
+        
         if (duplicates.length > 1) {
-            // Updated Requirement: Auto-open first + Notify about others
-            
-            // 1. Notify
-            final exportService = Provider.of<ExportQueueService>(context, listen: false);
             PendingFileOpen.duplicateOptions = duplicates;
             
             exportService.showImportNotification(
@@ -369,22 +370,30 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 'Found ${duplicates.length} copies of "$fileName". Tap to view all.',
                 payload: 'open_duplicates',
             );
-            
-            // 2. Auto-Open First
-            if (mounted && Navigator.canPop(context)) {
-               // Close loader if still open (handled above but good to be safe)
-            }
+        } else {
+            // Single duplicate
+             final dup = duplicates.first;
+             final location = dup.existingFolderName ?? 'Unorganized Files';
+             final folderId = dup.existingFolderId ?? 'root';
              
-             // Open existing file directly
-            await _openFile(File(duplicates.first.existingFilePath), true);
-            return;
+             exportService.showImportNotification(
+                'File Already Exists',
+                'Found in: $location. Tap to view folder.',
+                payload: 'open_folder:$folderId',
+             );
+             
+             if (mounted) {
+               ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Opening existing copy from $location')),
+               );
+             }
         }
-
-        _log.info('AllDocumentsScreen', 'Duplicate found, opening existing file...');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Opening existing copy from ${duplicates.first.locationDisplay}')),
-        );
         
+        // Auto-Open First found duplicate
+        if (mounted && Navigator.canPop(context)) {
+           // Close loader if still open
+        }
+         
         // Open existing file directly
         await _openFile(File(duplicates.first.existingFilePath), true);
         return;

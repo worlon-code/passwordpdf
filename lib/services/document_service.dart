@@ -142,6 +142,7 @@ class DocumentService {
         createdAt: stat.changed,
         modifiedAt: stat.modified,
         isNew: isNew, // Pass isNew flag
+        isImportedFile: true, // Manually added/referenced file
       );
       
       return ImportResult.success(originalPath, newItem);
@@ -316,8 +317,17 @@ class DocumentService {
              // entities contains disk entities
              final stillExists = entities.any((e) => e.path == dbFile.sourcePath);
              
-             if (!stillExists) {
-                 if (!dbFile.missingOnDevice) {
+              if (!stillExists) {
+                  // Fix: Check if it's an imported file (linked reference)
+                  if (dbFile.isImportedFile && dbFile.sourcePath != null) {
+                      final linkedFile = File(dbFile.sourcePath!);
+                      if (await linkedFile.exists()) {
+                          _log.info('DocumentService', '[Sync] Step: RETAIN - ${dbFile.name} (Imported File linked at ${dbFile.sourcePath})');
+                          continue; // File exists at source, so it's not missing
+                      }
+                  }
+
+                  if (!dbFile.missingOnDevice) {
                      _log.info('DocumentService', '[Sync] Step: MISSING - Marking ${dbFile.name} as missing on device');
                      
                      // Update item to be missing
@@ -542,7 +552,7 @@ class DocumentService {
   }
 
   /// Add file
-  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName, DateTime? createdAt, DateTime? modifiedAt, bool isNew = false}) async {
+  Future<DocumentItem> addFile(String filePath, {String? folderId, String? customName, DateTime? createdAt, DateTime? modifiedAt, bool isNew = false, bool isImportedFile = false}) async {
     final file = File(filePath);
     final stat = await file.stat();
     final size = await file.length();
@@ -558,6 +568,7 @@ class DocumentService {
       createdAt: createdAt ?? stat.changed,
       modifiedAt: modifiedAt ?? stat.modified,
       isNew: isNew,
+      isImportedFile: isImportedFile, // Set flag
       addedAt: isNew ? DateTime.now() : null,
     );
 

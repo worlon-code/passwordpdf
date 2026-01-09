@@ -21,23 +21,27 @@ import 'features/documents/screens/pdf_viewer_screen.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/documents/screens/all_documents_screen.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
+import 'models/document_item_model.dart';
 
 /// Static class to hold pending file to open (for Open With flow)
 class PendingFileOpen {
   static String? filePath;
   static String? fileName;
   static List<DuplicateInfo>? duplicateOptions;
+  static bool isTemporary = false;
   
   static void clear() {
     filePath = null;
     fileName = null;
     duplicateOptions = null;
     showDuplicatesSheet = false;
+    isTemporary = false;
   }
   
   static void clearOpen() {
     filePath = null;
     fileName = null;
+    isTemporary = false;
   }
   
   static void clearDuplicates() {
@@ -91,8 +95,13 @@ void main() async {
       if (payload.startsWith('open_folder:')) {
         // Navigate to specific folder in Dashboard
         final folderId = payload.replaceFirst('open_folder:', '');
+        
+        // Set pending folder ID for Dashboard to pick up
+        DashboardFolderNavigation.pendingFolderId = folderId == 'root' ? null : folderId;
+        
+        // Navigate to MainScreen with Documents tab
         navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => FolderNavigationScreen(folderId: folderId == 'root' ? null : folderId)),
+          MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 1)), // Switch to Docs Tab
           (route) => false,
         );
       } else if (payload == 'open_duplicates') {
@@ -142,7 +151,7 @@ void main() async {
                                // Navigate to MainScreen with Documents tab (index 1)
                                navigatorKey.currentState?.pushAndRemoveUntil(
                                  MaterialPageRoute(
-                                   builder: (_) => const MainScreen(initialIndex: 1),
+                                   builder: (_) => const MainScreen(initialIndex: 1), // Check documents tab
                                  ),
                                  (route) => false,
                                );
@@ -343,29 +352,46 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
          }
          
          final filename = path.split('/').last;
-         _log.info('AppEntry', 'Importing filename: $filename');
          
-         final result = await docService.importFile(path, filename);
-         _log.info('AppEntry', 'Import result: success=${result.success}, isDuplicate=${result.isDuplicate}');
+         // Check for duplicates (Path or Size match)
+         // preventing "Open With" from permanently adding files
+         final duplicates = await docService.checkForDuplicates([path]);
          
-         if (result.success) {
-            importedCount++;
-            fileToOpenPath = result.importedPath;
-            fileToOpenName = filename;
-         } else if (result.isDuplicate) {
-            skippedCount++;
-            duplicateFolderName = result.existingFolderName;
-            duplicateFolderId = result.existingFolderId;
-            fileToOpenPath = result.importedPath;
-            fileToOpenName = filename;
-            
-            // Store all duplicates if available
-            if (result.duplicates != null && result.duplicates!.isNotEmpty) {
-               PendingFileOpen.duplicateOptions = result.duplicates;
-            }
+         if (duplicates.isNotEmpty) {
+             final existingItem = duplicates.first;
+             _log.info('AppEntry', 'File already exists in library (ID: ${existingItem.existingFilePath})'); // duplicate info stores path not ID directly
+             
+             // Trigger Duplicate Notification Flow
+             skippedCount++; 
+             
+             // Find parent folder details
+             duplicateFolderName = existingItem.existingFolderName;
+             duplicateFolderId = existingItem.existingFolderId;
+
+             // Populate duplicates for sheet
+             PendingFileOpen.duplicateOptions = duplicates;
+
+             // Treat as "Imported" but use existing item info
+             importedCount++;
+             fileToOpenPath = existingItem.existingFilePath;
+             // duplicate info stores existing name
+             fileToOpenName = existingItem.existingName;
+             continue; 
          }
+         
+         // Not in library? Open temporary (DO NOT IMPORT)
+         // Only import if explicitly requested via "Add Files"
+         // For "Open With", we just want to view it.
+         _log.info('AppEntry', 'File not in library - Opening as TEMPORARY (No Import): $filename');
+         fileToOpenPath = path;
+         fileToOpenName = filename;
+         PendingFileOpen.isTemporary = true; // Mark for deletion on close
+         importedCount++; 
+         // Skip import logic entirely for new "Open With" files
+         continue;
+
        } catch (e) {
-         _log.error('AppEntry', 'Failed to import shared file', e);
+         _log.error('AppEntry', 'Failed to process shared file', e);
        }
     }
     
@@ -567,6 +593,12 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     
+    // Check if we have a pending folder navigation
+    // This ensures we switch to the correct tab even if MainScreen is rebuilt
+    if (DashboardFolderNavigation.pendingFolderId != null) {
+      _currentIndex = 1; // Documents Tab
+    }
+    
     // Check for pending duplicate resolution
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (PendingFileOpen.showDuplicatesSheet && PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
@@ -612,17 +644,15 @@ class _MainScreenState extends State<MainScreen> {
                         Navigator.pop(context);
                         PendingFileOpen.duplicateOptions = null; // Clear
                         
-                        // Navigate directly to folder using global navigatorKey
-                        // First switch to Documents tab
-                        setState(() => _currentIndex = 1);
+                        // Set pending folder ID
+                        DashboardFolderNavigation.pendingFolderId = dup.existingFolderId == 'root' ? null : dup.existingFolderId;
                         
-                        // Then push folder navigation
-                        navigatorKey.currentState?.push(
+                        // Reset to MainScreen with Documents tab
+                        navigatorKey.currentState?.pushAndRemoveUntil(
                           MaterialPageRoute(
-                            builder: (_) => FolderNavigationScreen(
-                              folderId: dup.existingFolderId == 'root' ? null : dup.existingFolderId,
-                            ),
+                            builder: (_) => const MainScreen(initialIndex: 1),
                           ),
+                          (route) => false,
                         );
                      },
                    );

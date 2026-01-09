@@ -10,6 +10,7 @@ class DocumentItem {
   final DateTime createdAt;
   final DateTime modifiedAt;
   final bool isImported; // True if created via Folder Import (Restricted Move/Sync Managed)
+  final bool isImportedFile; // True if file manually added to synced folder
   final bool isNew; // For "NEW" badge
   final bool missingOnDevice; // For "Removed" files
   final DateTime? addedAt;
@@ -26,6 +27,7 @@ class DocumentItem {
     DateTime? createdAt,
     DateTime? modifiedAt,
     this.isImported = false,
+    this.isImportedFile = false,
     this.isNew = false,
     this.missingOnDevice = false,
     this.addedAt,
@@ -46,6 +48,7 @@ class DocumentItem {
     int? size,
     DateTime? modifiedAt,
     bool? isImported,
+    bool? isImportedFile,
     bool? isNew,
     bool? missingOnDevice,
     DateTime? addedAt,
@@ -62,6 +65,7 @@ class DocumentItem {
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
       isImported: isImported ?? this.isImported,
+      isImportedFile: isImportedFile ?? this.isImportedFile,
       isNew: isNew ?? this.isNew,
       missingOnDevice: missingOnDevice ?? this.missingOnDevice,
       addedAt: addedAt ?? this.addedAt,
@@ -82,6 +86,7 @@ class DocumentItem {
       'createdAt': createdAt.toIso8601String(),
       'modifiedAt': modifiedAt.toIso8601String(),
       'isImported': isImported,
+      'isImportedFile': isImportedFile,
       'isNew': isNew,
       'missingOnDevice': missingOnDevice,
       'addedAt': addedAt?.toIso8601String(),
@@ -105,6 +110,7 @@ class DocumentItem {
       createdAt: DateTime.parse(json['createdAt'] as String),
       modifiedAt: DateTime.parse(json['modifiedAt'] as String),
       isImported: json['isImported'] as bool? ?? false,
+      isImportedFile: json['isImportedFile'] as bool? ?? false,
       isNew: json['isNew'] as bool? ?? false,
       missingOnDevice: json['missingOnDevice'] as bool? ?? false,
       addedAt: json['addedAt'] != null ? DateTime.parse(json['addedAt']) : null,
