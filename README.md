@@ -2,7 +2,25 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
-## Version 1.0.0-beta.2 - Performance & Folder Optimization!
+## Version 1.0.0-beta.3 - Enhanced PDF Experience!
+
+### 🚀 New Features
+
+#### PDF Viewer Enhancements
+- **Page Number Indicator**: Stylish "X/Y" indicator at the bottom-right of pages (Samsung Notes style).
+- **Screenshot Branding**: Screenshots taken within the app are automatically named with `_PDF Manager` suffix (Android only).
+- **Standard Scrollbar**: Restored native-feeling scrollbar for better navigation.
+- **Search Experience**: Improved search bar with dedicated search button and smarter keyboard handling.
+
+#### Bug Fixes & Improvements
+- **Page Orientation Fix**: Fixed issue where pages shifted or resized after split/merge/reorder operations.
+- **Merge Tool**: Updated to use custom file browser for reliable single-file selection.
+- **Large PDF Handling**: Added `largeHeap` support to prevent crashes with large, high-resolution documents.
+- **Search Navigation**: Back button in search mode now correctly closes search instead of the document.
+
+### Previous Versions
+
+#### Version 1.0.0-beta.2 - Performance & Folder Optimization!
 
 ### 🚀 New Features
 
