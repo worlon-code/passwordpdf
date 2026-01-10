@@ -9,7 +9,7 @@ import '../../../services/encryption_service.dart';
 import '../widgets/reorder_pages_dialog.dart';
 import '../widgets/split_pdf_dialog.dart';
 import '../widgets/password_selection_dialog.dart';
-import 'package:file_picker/file_picker.dart';
+import 'file_system_browser.dart';
 import '../../settings/services/settings_service.dart';
 import '../../common/utils/file_conflict_resolver.dart';
 import 'package:path/path.dart' as path;
@@ -40,15 +40,38 @@ class PdfViewerScreen extends StatefulWidget {
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
+  late PdfViewerController _pdfViewerController;
   bool _hasCalledSuccess = false;
   bool _hasCalledPasswordRequired = false;
   int _pageCount = 0;
+  int _currentPage = 1;  // Track current page for indicator
   String _currentPassword = '';
+  
+  // Search state
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
+  PdfTextSearchResult? _searchResult;
 
   @override
   void initState() {
     super.initState();
+    _pdfViewerController = PdfViewerController();
     _currentPassword = widget.password ?? '';
+  }
+  
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _pdfViewerController.dispose();
+    _searchResult?.clear();
+    if (widget.deleteOnClose) {
+      try {
+        File(widget.filePath).delete().catchError((e) {
+          debugPrint('Failed to delete temp file: $e');
+        });
+      } catch (_) {}
+    }
+    super.dispose();
   }
 
 
@@ -79,86 +102,188 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       );
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_isSearching,  // Block pop when searching
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        // If searching, close search instead of popping
+        if (_isSearching) {
+          _stopSearch();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
-        title: Text(widget.fileName, overflow: TextOverflow.ellipsis),
+        title: _isSearching 
+          ? TextField(
+              controller: _searchController,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Search in PDF...',
+                border: InputBorder.none,
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Search/clear button
+                    IconButton(
+                      icon: Icon(_searchResult != null ? Icons.clear : Icons.search),
+                      onPressed: () {
+                        if (_searchResult != null) {
+                          _searchController.clear();
+                          _searchResult?.clear();
+                          setState(() => _searchResult = null);
+                        } else {
+                          _performSearch(_searchController.text);
+                        }
+                      },
+                    ),
+                    // Navigation buttons when results exist
+                    if (_searchResult != null && _searchResult!.totalInstanceCount > 0) ...[
+                      Text(
+                        '${_searchResult!.currentInstanceIndex + 1}/${_searchResult!.totalInstanceCount}',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+                        onPressed: () => _searchResult?.previousInstance(),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.keyboard_arrow_down, size: 20),
+                        onPressed: () => _searchResult?.nextInstance(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              onSubmitted: _performSearch,
+            )
+          : Text(widget.fileName, overflow: TextOverflow.ellipsis),
+        leading: _isSearching
+          ? IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: _stopSearch,
+            )
+          : null,
         actions: [
-          PopupMenuButton<String>(
-            onSelected: (value) async {
-              if (value == 'remove_password') await _handleRemovePassword(context);
-              else if (value == 'add_password') await _handleAddPassword(context);
-              else if (value == 'reorder') await _handleReorder(context);
-              else if (value == 'split') await _handleSplit(context);
-              else if (value == 'merge') await _handleMerge(context);
-            },
-            itemBuilder: (context) {
-              final isProtected = _currentPassword.isNotEmpty;
-              return [
-                const PopupMenuItem(value: 'split', child: Row(children: [Icon(Icons.call_split), SizedBox(width: 8), Text('Split PDF')])),
-                const PopupMenuItem(value: 'merge', child: Row(children: [Icon(Icons.merge), SizedBox(width: 8), Text('Merge PDF')])),
-                const PopupMenuItem(value: 'reorder', child: Row(children: [Icon(Icons.sort), SizedBox(width: 8), Text('Reorder Pages')])),
-                if (isProtected)
-                  const PopupMenuItem(value: 'remove_password', child: Row(children: [Icon(Icons.lock_open), SizedBox(width: 8), Text('Remove Password')]))
-                else
-                  const PopupMenuItem(value: 'add_password', child: Row(children: [Icon(Icons.lock), SizedBox(width: 8), Text('Add Password')])),
-              ];
-            },
-          ),
+          if (!_isSearching) ...[
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: 'Search',
+              onPressed: () => setState(() => _isSearching = true),
+            ),
+            PopupMenuButton<String>(
+              onSelected: (value) async {
+                if (value == 'remove_password') await _handleRemovePassword(context);
+                else if (value == 'add_password') await _handleAddPassword(context);
+                else if (value == 'reorder') await _handleReorder(context);
+                else if (value == 'split') await _handleSplit(context);
+                else if (value == 'merge') await _handleMerge(context);
+              },
+              itemBuilder: (context) {
+                final isProtected = _currentPassword.isNotEmpty;
+                return [
+                  const PopupMenuItem(value: 'split', child: Row(children: [Icon(Icons.call_split), SizedBox(width: 8), Text('Split PDF')])),
+                  const PopupMenuItem(value: 'merge', child: Row(children: [Icon(Icons.merge), SizedBox(width: 8), Text('Merge PDF')])),
+                  const PopupMenuItem(value: 'reorder', child: Row(children: [Icon(Icons.sort), SizedBox(width: 8), Text('Reorder Pages')])),
+                  if (isProtected)
+                    const PopupMenuItem(value: 'remove_password', child: Row(children: [Icon(Icons.lock_open), SizedBox(width: 8), Text('Remove Password')]))
+                  else
+                    const PopupMenuItem(value: 'add_password', child: Row(children: [Icon(Icons.lock), SizedBox(width: 8), Text('Add Password')])),
+                ];
+              },
+            ),
+          ],
         ],
       ),
-      body: SfPdfViewer.file(
-        file,
-        key: _pdfViewerKey,
-        password: _currentPassword,
-        canShowScrollHead: true,
-        canShowScrollStatus: true,
-        canShowPaginationDialog: true,
-        enableDoubleTapZooming: true,
-        canShowPasswordDialog: false,
-        onDocumentLoaded: (details) async {
-          setState(() => _pageCount = details.document.pages.count);
-          if (!_hasCalledSuccess && widget.onSuccess != null) {
-            _hasCalledSuccess = true;
-            widget.onSuccess!();
-          }
-          // Save association on success
-          if (_currentPassword.isNotEmpty) {
-            try {
-              await PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
-            } catch (_) {};
-          }
-        },
-        onDocumentLoadFailed: (details) async {
-          final desc = details.description.toLowerCase();
-          final err = details.error.toLowerCase();
-          if (desc.contains('password') || err.contains('password') || desc.contains('encrypted') || err.contains('encrypted')) {
-             if (widget.onPasswordRequired != null && !_hasCalledPasswordRequired) {
-               _hasCalledPasswordRequired = true;
-               widget.onPasswordRequired!();
-               return;
-             }
-             if (!_hasCalledPasswordRequired) {
-                _hasCalledPasswordRequired = true;
-                final success = await _tryAutoUnlock();
-                if (success) return;
-                
-                if (mounted) {
-                   final newPwd = await showDialog<String>(
-                     context: context,
-                     barrierDismissible: false,
-                     builder: (c) => const PasswordSelectionDialog(),
-                   );
-                   if (newPwd != null) {
-                     _reloadWithPassword(newPwd);
-                   } else {
-                     Navigator.pop(context);
-                   }
-                }
-             }
-          }
-        },
+      body: Stack(
+        children: [
+          SfPdfViewer.file(
+            file,
+            key: _pdfViewerKey,
+            controller: _pdfViewerController,
+            password: _currentPassword,
+            canShowScrollHead: true,  
+            canShowScrollStatus: true,
+            canShowPaginationDialog: true,
+            enableDoubleTapZooming: true,
+            canShowPasswordDialog: false,
+            pageSpacing: 4,
+            maxZoomLevel: 5,
+            enableDocumentLinkAnnotation: true,
+            onPageChanged: (details) {
+              setState(() => _currentPage = details.newPageNumber);
+            },
+            onDocumentLoaded: (details) async {
+              setState(() {
+                _pageCount = details.document.pages.count;
+                _currentPage = 1;
+              });
+              if (!_hasCalledSuccess && widget.onSuccess != null) {
+                _hasCalledSuccess = true;
+                widget.onSuccess!();
+              }
+              // Save association on success
+              if (_currentPassword.isNotEmpty) {
+                try {
+                  await PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
+                } catch (_) {};
+              }
+            },
+            onDocumentLoadFailed: (details) async {
+              final desc = details.description.toLowerCase();
+              final err = details.error.toLowerCase();
+              if (desc.contains('password') || err.contains('password') || desc.contains('encrypted') || err.contains('encrypted')) {
+                 if (widget.onPasswordRequired != null && !_hasCalledPasswordRequired) {
+                   _hasCalledPasswordRequired = true;
+                   widget.onPasswordRequired!();
+                   return;
+                 }
+                 if (!_hasCalledPasswordRequired) {
+                    _hasCalledPasswordRequired = true;
+                    final success = await _tryAutoUnlock();
+                    if (success) return;
+                    
+                    if (mounted) {
+                       final newPwd = await showDialog<String>(
+                         context: context,
+                         barrierDismissible: false,
+                         builder: (c) => const PasswordSelectionDialog(),
+                       );
+                       if (newPwd != null) {
+                         _reloadWithPassword(newPwd);
+                       } else {
+                         Navigator.pop(context);
+                       }
+                    }
+                 }
+              }
+            },
+          ),
+          // Page indicator at bottom right (like Samsung Notes style)
+          if (_pageCount > 0)
+            Positioned(
+              bottom: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$_currentPage/$_pageCount',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
-    );
+      ),  // Close Scaffold
+    );  // Close PopScope
   }
 
   Future<bool> _tryAutoUnlock() async {
@@ -210,17 +335,22 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
      // _pdfViewerKey = GlobalKey(); // Would need to be non-final
   }
 
-  @override
-  void dispose() {
-    if (widget.deleteOnClose) {
-      // Fire and forget deletion of temporary file
-      try {
-        File(widget.filePath).delete().catchError((e) {
-          debugPrint('Failed to delete temp file: $e');
-        });
-      } catch (_) {}
-    }
-    super.dispose();
+  // Search methods
+  void _performSearch(String query) {
+    if (query.isEmpty) return;
+    _searchResult = _pdfViewerController.searchText(query);
+    _searchResult!.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _stopSearch() {
+    setState(() {
+      _isSearching = false;
+      _searchController.clear();
+      _searchResult?.clear();
+      _searchResult = null;
+    });
   }
 
 
@@ -486,14 +616,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   Future<void> _handleMerge(BuildContext context) async {
-    // Pick file
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
+    // Use custom file browser (same as Add Files)
+    final result = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const FileSystemBrowser(
+          allowedExtensions: ['pdf'],
+          allowMultiple: false,
+        ),
+      ),
     );
 
-    if (result == null || result.files.single.path == null) return;
-    final otherPath = result.files.single.path!;
+    if (result == null || result.isEmpty) return;
+    final otherPath = result.first;
 
     if (mounted) await _performMerge(context, otherPath, '');
   }

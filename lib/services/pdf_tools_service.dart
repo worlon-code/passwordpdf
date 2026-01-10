@@ -22,8 +22,13 @@ class PdfToolsService {
     final newDocument = PdfDocument();
     
     for (int i = 0; i < document.pages.count; i++) {
-      final template = document.pages[i].createTemplate();
-      final page = newDocument.pages.add();
+      final srcPage = document.pages[i];
+      final template = srcPage.createTemplate();
+      // Create section with matching page size
+      final section = newDocument.sections!.add();
+      section.pageSettings.size = srcPage.size;
+      section.pageSettings.margins.all = 0;
+      final page = section.pages.add();
       page.graphics.drawPdfTemplate(template, const Offset(0, 0));
     }
     
@@ -99,8 +104,13 @@ class PdfToolsService {
 
     for (final index in pageOrder) {
       if (index >= 0 && index < document.pages.count) {
-        final template = document.pages[index].createTemplate();
-        final page = newDocument.pages.add();
+        final srcPage = document.pages[index];
+        final template = srcPage.createTemplate();
+        // Create section with matching page size
+        final section = newDocument.sections!.add();
+        section.pageSettings.size = srcPage.size;
+        section.pageSettings.margins.all = 0;
+        final page = section.pages.add();
         page.graphics.drawPdfTemplate(template, const Offset(0, 0));
       }
     }
@@ -139,8 +149,13 @@ class PdfToolsService {
     
     for (final index in pageIndices) {
       if (index >= 0 && index < document.pages.count) {
-        final template = document.pages[index].createTemplate();
-        final page = newDocument.pages.add();
+        final srcPage = document.pages[index];
+        final template = srcPage.createTemplate();
+        // Create section with matching page size
+        final section = newDocument.sections!.add();
+        section.pageSettings.size = srcPage.size;
+        section.pageSettings.margins.all = 0;
+        final page = section.pages.add();
         page.graphics.drawPdfTemplate(template, const Offset(0, 0));
       }
     }
@@ -176,11 +191,16 @@ class PdfToolsService {
     // We create a new document to hold the result
     final newDocument = PdfDocument();
     
-    // Helper to copy pages from a doc
+    // Helper to copy pages from a doc preserving size
     void copyPages(PdfDocument src) {
       for (int i = 0; i < src.pages.count; i++) {
-        final template = src.pages[i].createTemplate();
-        final page = newDocument.pages.add();
+        final srcPage = src.pages[i];
+        final template = srcPage.createTemplate();
+        // Create section with matching page size
+        final section = newDocument.sections!.add();
+        section.pageSettings.size = srcPage.size;
+        section.pageSettings.margins.all = 0;
+        final page = section.pages.add();
         page.graphics.drawPdfTemplate(template, const Offset(0, 0));
       }
     }
