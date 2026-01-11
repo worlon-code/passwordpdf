@@ -17,6 +17,7 @@ import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'services/document_service.dart';
 import 'features/documents/screens/pdf_viewer_screen.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
@@ -360,21 +361,29 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     int skippedCount = 0;
     String? fileToOpenPath;
     String? fileToOpenName;
+    String? fileToOpenMimeType;
     String? duplicateFolderName;
     String? duplicateFolderId;
     
     for (final media in files) {
        try {
          final path = media.path;
+         final mimeType = media.mimeType; // Get MIME type from shared intent
          final file = File(path);
-         _log.info('AppEntry', 'Processing file: $path');
+         _log.info('AppEntry', 'Processing file: $path (mimeType: $mimeType)');
          
          if (!await file.exists()) {
            _log.info('AppEntry', 'File does not exist: $path');
            continue;
          }
          
-         final filename = path.split('/').last;
+         // Get filename and ensure it has .pdf extension for PDF MIME types
+         var filename = path.split('/').last;
+         final isPdfByMime = mimeType?.toLowerCase().contains('pdf') ?? false;
+         if (isPdfByMime && !filename.toLowerCase().endsWith('.pdf')) {
+            filename = '$filename.pdf';
+            _log.info('AppEntry', 'Added .pdf extension: $filename');
+         }
          
          // Check for duplicates (Path or Size match)
          // preventing "Open With" from permanently adding files
@@ -403,14 +412,41 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
          }
          
          // Not in library? Open temporary (DO NOT IMPORT)
-         // Only import if explicitly requested via "Add Files"
-         // For "Open With", we just want to view it.
          _log.info('AppEntry', 'File not in library - Opening as TEMPORARY (No Import): $filename');
-         fileToOpenPath = path;
+         
+         // Fix for Gmail/Content URIs: Verify file accessibility
+         // Sometimes shared files are in restricted cache dirs. Copy to our temp dir to be safe.
+         String finalPath = path;
+         if (path.startsWith('content://') || !await file.exists()) {
+             _log.info('AppEntry', 'File is content URI or inaccessible, attempting resolution: $path');
+             try {
+                // For content:// URIs, receive_sharing_intent should have cached the file
+                // But if it didn't, we'll try to copy it ourselves
+                final tempDir = await getTemporaryDirectory();
+                final safePath = '${tempDir.path}/$filename';
+                final safeFile = File(safePath);
+                
+                // If original file exists despite content:// prefix (cached by intent handler), copy it
+                if (await file.exists()) {
+                   await file.copy(safePath);
+                   finalPath = safePath;
+                   _log.info('AppEntry', 'Copied to local temp: $safePath');
+                } else {
+                   _log.error('AppEntry', 'File does not exist and cannot be copied: $path');
+                   // Skip this file - can't open what doesn't exist
+                   continue;
+                }
+             } catch(e) {
+                _log.error('AppEntry', 'Temp copy failed', e);
+                continue;
+             }
+         }
+         
+         fileToOpenPath = finalPath;
          fileToOpenName = filename;
-         PendingFileOpen.isTemporary = true; // Mark for deletion on close
+         fileToOpenMimeType = mimeType;
+         PendingFileOpen.isTemporary = true; 
          importedCount++; 
-         // Skip import logic entirely for new "Open With" files
          continue;
 
        } catch (e) {
@@ -426,7 +462,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     // Always set pending file for later opening (even if not authenticated yet)
     // Dashboard will check PendingFileOpen after authentication completes
     if (fileToOpenPath != null) {
-      final isPdf = fileToOpenPath.toLowerCase().endsWith('.pdf');
+      // Check both extension AND MIME type for PDF detection (Gmail may lack extension)
+      final isPdf = fileToOpenPath.toLowerCase().endsWith('.pdf') || 
+                    (fileToOpenMimeType?.toLowerCase().contains('pdf') ?? false);
       
       if (isPdf) {
          // Set pending file for MainScreen/Dashboard to open with password handling

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:passwordpdf_manager/services/pdf_password_service.dart';
 import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -434,14 +435,16 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       if (result.success && result.importItem != null) {
         _log.info('AllDocumentsScreen', 'Imported: $fileName');
         
-        // 3. Open the imported file using PendingFileOpen flow
-        
+        // 3. Open the imported file with password
+        final passwordService = PdfPasswordService();
+        final storedPassword = await passwordService.getPasswordForDocument(result.importItem!.sourcePath!);
         
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => PdfViewerScreen(
               filePath: result.importItem!.sourcePath!,
               fileName: result.importItem!.name,
+              password: storedPassword,
             ),
           ),
         );
@@ -537,12 +540,16 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
   Future<void> _openFile(FileSystemEntity file, bool isPdf) async {
     if (isPdf) {
-      // Don't restart app, just push viewer
+      // Retrieve stored password before opening
+      final passwordService = PdfPasswordService();
+      final storedPassword = await passwordService.getPasswordForDocument(file.path);
+      
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => PdfViewerScreen(
             filePath: file.path,
             fileName: file.path.split(Platform.pathSeparator).last,
+            password: storedPassword,
           ),
         ),
       );
