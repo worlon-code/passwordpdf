@@ -1,14 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
-import 'package:provider/provider.dart';
 import 'dart:io';
-import 'dart:ui' as ui;
-import 'package:flutter/rendering.dart';
-import 'package:path_provider/path_provider.dart';
 import '../../../services/pdf_tools_service.dart';
 import '../../../services/pdf_password_service.dart';
-import '../../../services/storage_service.dart';
-import '../../../services/encryption_service.dart';
 import '../widgets/reorder_pages_dialog.dart';
 import '../widgets/split_pdf_dialog.dart';
 import '../widgets/password_selection_dialog.dart';
@@ -133,7 +127,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           controller: _pdfViewerController,
           passwordProvider: () => _getPassword(),
           params: PdfViewerParams(
-            enableTextSelection: true,
+            // enableTextSelection: true,
             maxScale: 4.0,
             onViewerReady: (document, controller) {
               if (!_hasCalledSuccess && widget.onSuccess != null) {
@@ -143,67 +137,6 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               if (_currentPassword.isNotEmpty) {
                  PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
               }
-            },
-            // Per-page overlay for X/Y indicator
-            pageOverlaysBuilder: (context, pageRect, page) {
-              return [
-                Align(
-                  alignment: Alignment.bottomRight,
-                  child: Container(
-                    margin: const EdgeInsets.only(right: 12, bottom: 12),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${page.pageNumber}/${page.document.pages.length}',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ];
-            },
-            errorBannerBuilder: (context, error, stackTrace, documentRef) {
-               // Check if the error is related to password/encryption
-               if (error.toString().toLowerCase().contains('password') || 
-                   error.toString().toLowerCase().contains('encrypted') ||
-                   error.toString().toLowerCase().contains('locked')) {
-                 
-                 // If we have a password but it failed, it means it's wrong
-                 final isWrongPassword = _currentPassword.isNotEmpty;
-                 
-                 return Center(
-                   child: Container(
-                     padding: const EdgeInsets.all(24),
-                     decoration: BoxDecoration(
-                        color: Theme.of(context).cardColor,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)]
-                     ),
-                     child: Column(
-                       mainAxisSize: MainAxisSize.min,
-                       children: [
-                         const Icon(Icons.lock, size: 48, color: Colors.orange),
-                         const SizedBox(height: 16),
-                         Text(
-                           isWrongPassword ? 'Incorrect Password' : 'Password Required',
-                           style: Theme.of(context).textTheme.titleLarge,
-                         ),
-                         const SizedBox(height: 8),
-                         const Text('This document is encrypted.'),
-                         const SizedBox(height: 24),
-                         ElevatedButton.icon(
-                           icon: const Icon(Icons.key),
-                           label: const Text('Enter Password'),
-                           onPressed: () => _promptForPassword(context),
-                         ),
-                       ],
-                     ),
-                   ),
-                 );
-               }
-               return Center(child: Text('Error loading PDF: $error'));
             },
           ),
         ),

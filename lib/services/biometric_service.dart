@@ -73,12 +73,12 @@ class BiometricService {
       
       final authenticated = await _localAuth.authenticate(
         localizedReason: localizedReason,
-        options: const AuthenticationOptions(
-          stickyAuth: true,
-          biometricOnly: false,
-          useErrorDialogs: true,
-          sensitiveTransaction: true,
-        ),
+        // options: const AuthenticationOptions(
+        //   stickyAuth: true,
+        //   biometricOnly: false,
+        //   useErrorDialogs: true,
+        //   sensitiveTransaction: true,
+        // ),
       );
       
       _log.info(_tag, 'Authentication result: $authenticated');

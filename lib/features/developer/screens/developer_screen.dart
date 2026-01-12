@@ -8,7 +8,7 @@ import '../../documents/screens/export_progress_screen.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:excel/excel.dart';
+// import 'package:excel/excel.dart'; // BLOCKED: Conflicts with pdfrx v2
 import '../../settings/services/settings_service.dart';
 import '../../../services/encryption_service.dart';
 import 'dart:convert';

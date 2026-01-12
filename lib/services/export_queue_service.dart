@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:excel/excel.dart';
+// import 'package:excel/excel.dart'; // BLOCKED: Conflicts with pdfrx v2
 import 'logging_service.dart';
 import 'storage_service.dart';
 
@@ -519,155 +519,13 @@ class ExportQueueService extends ChangeNotifier {
   }
 
   Future<void> _processExcelJob(ExportJob job, int notificationId) async {
-    // Excel generation happens here. 
-    // Since items contains simple "table names" as name for this use case, we re-fetch data here.
-    // Or, we expect the caller to pass data? No, queue should be data-agnostic or fetch it.
-    // For simplicity, we'll fetch ALL tables here as that's the only Excel export we do.
-    
-    // BUT: The service shouldn't know about StorageService detail logic ideally.
-    // However, since this is a specific "Database Export" feature, we can usage StorageService.
-    
-    final excel = Excel.createExcel();
-    final tables = await _storage.getTables();
-    int processedTables = 0;
-
-    // Check for limit in items
-    int? limit = 50000; // Default
-    try {
-      final configItem = job.items.firstWhere((i) => i.itemId == 'config_limit', orElse: () => ExportItem(itemId: '', name: ''));
-      if (configItem.itemId == 'config_limit') {
-        final val = int.tryParse(configItem.name);
-        if (val != null && val < 0) {
-           limit = null; // Unlimited
-        } else {
-           limit = val ?? 50000;
-        }
-      }
-    } catch (_) {}
-
-    for (final table in tables) {
-      // Fetch data with limit
-      final data = await _storage.getTableData(table, limit: limit);
-      if (data.isNotEmpty) {
-        final sheetName = table.length > 30 ? table.substring(0, 30) : table;
-        final sheet = excel[sheetName];
-        
-        // Add headers
-        final headers = data.first.keys.map((k) => TextCellValue(k)).toList();
-        sheet.appendRow(headers);
-        
-        // Add rows
-        for (final row in data) {
-          final values = row.values.map((v) => TextCellValue(v?.toString() ?? '')).toList();
-          sheet.appendRow(values);
-        }
-      }
-      
-      processedTables++;
-      job.progress = ((processedTables / tables.length) * 100).round();
-      notifyListeners();
-      
-      await _showNotification(
-         notificationId, 
-         'Exporting Database', 
-         'Processing $table...', 
-         progress: job.progress, 
-         maxProgress: 100
-      );
-    }
-    
-    // Remove default Sheet1 if exists and we have other sheets
-    if (excel.sheets.length > 1) {
-      excel.delete('Sheet1');
-    }
-
-    // Save file
-    String savePath;
-    if (job.exportDir != null) {
-      final dir = Directory(job.exportDir!);
-      if (!dir.existsSync()) {
-         dir.createSync(recursive: true);
-      }
-      final fileName = '${job.name}_${job.id}.xlsx';
-      savePath = '${dir.path}/$fileName';
-    } else {
-      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.xlsx';
-    }
-    
-    final fileData = excel.encode();
-    if (fileData == null) throw Exception('Failed to encode Excel');
-    
-    final file = File(savePath);
-    await file.writeAsBytes(fileData);
-    
-    job.outputPath = file.path;
-    job.status = ExportStatus.completed;
-    job.completedAt = DateTime.now();
-    job.progress = 100;
-    
-    await _showNotification(notificationId, 'Export Complete', 'Database saved successfully.');
+    // TODO: Excel export disabled due to pdfrx v2 dependency conflict
+    throw Exception('Excel export temporarily unavailable due to package conflict. This feature will be restored in a future update.');
   }
 
   Future<void> _processLogsJob(ExportJob job, int notificationId) async {
-    // Fetch logs from storage (we can ignore job.items for now as we export ALL logs)
-    // Or if we want to support file-based logs later, we could check items.
-    // But for now, user wants "Export Logs" which implies the persistent DB logs.
-    
-    final logs = await _storage.getLogs(limit: 10000); // Fetch all (capped)
-    
-    if (logs.isEmpty) {
-       // Should we error? Or just export empty?
-       // Let's create an empty excel
-    }
-
-    final excel = Excel.createExcel();
-    final sheet = excel['Logs'];
-    
-    // Header
-    sheet.appendRow([
-      TextCellValue('Timestamp'), 
-      TextCellValue('Level'), 
-      TextCellValue('Tag'), 
-      TextCellValue('Message'), 
-      TextCellValue('Stack Trace')
-    ]);
-    
-    // Rows
-    for (final log in logs) {
-      sheet.appendRow([
-        TextCellValue(log['timestamp']?.toString() ?? ''),
-        TextCellValue(log['level']?.toString() ?? ''),
-        TextCellValue(log['tag']?.toString() ?? ''),
-        TextCellValue(log['message']?.toString() ?? ''),
-        TextCellValue(log['stack_trace']?.toString() ?? ''),
-      ]);
-    }
-    
-    // Remove default Sheet1
-    excel.delete('Sheet1');
-
-    String savePath;
-    if (job.exportDir != null) {
-      final dir = Directory(job.exportDir!);
-      if (!dir.existsSync()) dir.createSync(recursive: true);
-      final fileName = '${job.name}_${job.id}.xlsx';
-      savePath = '${dir.path}/$fileName';
-    } else {
-      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.xlsx';
-    }
-    
-    final fileData = excel.encode();
-    if (fileData == null) throw Exception('Failed to encode Excel');
-    
-    final file = File(savePath);
-    await file.writeAsBytes(fileData);
-    
-    job.outputPath = savePath;
-    job.status = ExportStatus.completed;
-    job.completedAt = DateTime.now();
-    job.progress = 100;
-    
-    await _showNotification(notificationId, 'Export Complete', 'Logs exported to Excel.');
+    // TODO: Logs export to Excel disabled due to pdfrx v2 dependency conflict
+    throw Exception('Logs export temporarily unavailable due to package conflict. This feature will be restored in a future update.');
   }
 
   /// Isolate function to encode archive
