@@ -6,6 +6,12 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 ### 🚀 New Features
 
+#### SDK Upgrade & Navigation Fixes (Build 103)
+- **Flutter SDK Upgrade**: Upgraded from Flutter 3.24.x to **Flutter 3.38.6** (Dart 3.10.7) via FVM.
+- **PDF Viewer Back Button**: Back button in search mode now closes search instead of exiting the viewer.
+- **Folder Navigation Back Button**: Back button when inside folders now navigates up to parent folder instead of prompting to exit app.
+- **Dependency Updates**: Updated 43+ packages including `pdfrx 2.2.24`, `local_auth 3.0.0`, `syncfusion_flutter_pdf 32.1.23`.
+
 #### PDF Viewer Enhancements
 - **Page Number Indicator**: Stylish "X/Y" indicator at the bottom-right of pages (Samsung Notes style).
 - **Screenshot Branding**: Screenshots taken within the app are automatically named with `_PDF Manager` suffix (Android only).
@@ -304,13 +310,14 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 
 ### 🛠️ Development
 
-**Framework**: Flutter 3.5.3  
-**Language**: Dart 3.5.3  
+**Framework**: Flutter 3.38.6 (via FVM)  
+**Language**: Dart 3.10.7  
 **Platform**: Android (SDK 35)
 
 **Key Dependencies**:
 - `file_picker`: File selection
-- `archive`: ZIP creation
+- `pdfrx`: PDF viewing and search
+- `syncfusion_flutter_pdf`: PDF manipulation
 - `local_auth`: Biometric authentication
 - `shared_preferences`: Local data storage
 - `provider`: State management
@@ -334,5 +341,5 @@ Proprietary - All rights reserved
 ---
 
 **Repository**: https://github.com/worlon-code/passwordpdf  
-**Current Version**: 1.0.0-beta.2 (Build 28)  
-**Last Updated**: January 8, 2026
+**Current Version**: 1.0.0-beta.3 (Build 103)  
+**Last Updated**: January 14, 2026

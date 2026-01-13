@@ -717,6 +717,8 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   late int _currentIndex;
+  final GlobalKey<AllDocumentsScreenState> _allDocsKey = GlobalKey();
+  final GlobalKey<DocumentDashboardScreenState> _dashboardKey = GlobalKey();
 
   @override
   void initState() {
@@ -809,7 +811,7 @@ class _MainScreenState extends State<MainScreen> {
 
   /// Back handler for All Documents screen
   Future<bool> _handleAllDocsBack() async {
-    final state = AllDocumentsScreen.currentState;
+    final state = _allDocsKey.currentState;
     if (state == null) return false;
     
     if (state.isSelectionMode) {
@@ -827,7 +829,7 @@ class _MainScreenState extends State<MainScreen> {
   
   /// Back handler for Document Dashboard screen  
   Future<bool> _handleDashboardBack() async {
-    final state = DocumentDashboardScreen.currentState;
+    final state = _dashboardKey.currentState;
     if (state == null) return false;
     
     if (state.selectedFileIds.isNotEmpty) {
@@ -899,10 +901,10 @@ class _MainScreenState extends State<MainScreen> {
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
-          children: const [
-            AllDocumentsScreen(),
-            DocumentDashboardScreen(),
-            SettingsScreen(),
+          children: [
+            AllDocumentsScreen(key: _allDocsKey),
+            DocumentDashboardScreen(key: _dashboardKey),
+            const SettingsScreen(),
           ],
         ),
         bottomNavigationBar: NavigationBar(

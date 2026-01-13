@@ -50,3 +50,6 @@ app.*.map.json
 # Local Gradle Cache
 .local_gradle/
 logs/
+
+# FVM Version Cache
+.fvm/

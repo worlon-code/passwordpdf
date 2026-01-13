@@ -48,13 +48,13 @@ class DocumentDashboardScreen extends StatefulWidget {
   const DocumentDashboardScreen({super.key});
   
   /// Static reference to allow MainScreen to access state for back navigation
-  static _DocumentDashboardScreenState? currentState;
+  static DocumentDashboardScreenState? currentState;
 
   @override
-  State<DocumentDashboardScreen> createState() => _DocumentDashboardScreenState();
+  State<DocumentDashboardScreen> createState() => DocumentDashboardScreenState();
 }
 
-class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
+class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   final LoggingService _log = LoggingService();
   final DocumentService _docService = DocumentService();
   final ExportQueueService _exportQueue = ExportQueueService();

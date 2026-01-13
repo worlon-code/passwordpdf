@@ -30,13 +30,13 @@ class AllDocumentsScreen extends StatefulWidget {
   const AllDocumentsScreen({super.key});
 
   /// Static reference to allow MainScreen to access state for back navigation
-  static _AllDocumentsScreenState? currentState;
+  static AllDocumentsScreenState? currentState;
 
   @override
-  State<AllDocumentsScreen> createState() => _AllDocumentsScreenState();
+  State<AllDocumentsScreen> createState() => AllDocumentsScreenState();
 }
 
-class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
+class AllDocumentsScreenState extends State<AllDocumentsScreen> {
   final DeviceDocumentService _deviceService = DeviceDocumentService();
   final ScrollController _scrollController = ScrollController();
   final LoggingService _log = LoggingService();

@@ -126,7 +126,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     final searchTextColor = isLight ? Colors.black : Colors.white;
     final searchHintColor = isLight ? Colors.black54 : Colors.white70;
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_isSearching,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_isSearching) {
+          _stopSearch();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: _isSearching 
           ? TextField(
@@ -324,10 +332,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               ),
             ),
             
-           // Page indicator now handled by PdfPageNumber in viewerOverlayBuilder
+         // Page indicator now handled by PdfPageNumber in viewerOverlayBuilder
         ],
       ),
-    );
+    ),  // Close PopScope
+  );
   }
 
   // --- PDF Tools Implementation ---
