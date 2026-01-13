@@ -18,6 +18,11 @@ A secure Flutter application for managing PDF files and passwords with advanced 
 - **Large PDF Handling**: Added `largeHeap` support to prevent crashes with large, high-resolution documents.
 - **Search Navigation**: Back button in search mode now correctly closes search instead of the document.
 
+#### Optimization Update (Build 102)
+- **Kinetic Scrolling**: PDF Viewer now supports smooth "fling" scrolling (Clamping Physics) without bounce.
+- **Native Performance**: Rendering optimized to use device native resolution for instant page loads.
+- **Build Stability**: Fixed Android build compatibility (Java 17/Gradle) and resolved linting issues.
+
 ### Previous Versions
 
 #### Version 1.0.0-beta.2 - Performance & Folder Optimization!
