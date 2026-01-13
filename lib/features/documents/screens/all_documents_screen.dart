@@ -1106,6 +1106,9 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
                               )
                             : ListView.builder(
                                 controller: _scrollController,
+                                cacheExtent: 500, // Pre-render items outside viewport
+                                addAutomaticKeepAlives: false, // Reduce memory
+                                addRepaintBoundaries: true, // Optimize repaints
                                 itemCount: _displayedFiles.length + (_hasMore ? 1 : 0),
                                 itemBuilder: (context, index) {
                                   if (index == _displayedFiles.length) {
@@ -1125,6 +1128,13 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
     );  // Close Scaffold
   }
 
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
 
   void _openFolder(String path) {
       setState(() {
@@ -1217,7 +1227,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
       }
       
       final date = DateFormat('MMM d, y • H:mm').format(stat.modified);
-      final size = (stat.size / 1024 / 1024).toStringAsFixed(2);
+      final size = _formatFileSize(stat.size);
       final isSelected = _selectedPaths.contains(file.path);
       
       return ListTile(
@@ -1241,7 +1251,7 @@ class _AllDocumentsScreenState extends State<AllDocumentsScreen> {
           ],
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text('$date • $size MB'),
+        subtitle: Text('$date • $size'),
         tileColor: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
         onTap: () => _handleFileTap(file),
         onLongPress: () => _toggleSelection(file.path),

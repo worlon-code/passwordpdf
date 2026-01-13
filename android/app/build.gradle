@@ -46,6 +46,11 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
+    // Exclude PDFium WASM module from Android build (resolves log warning)
+    packagingOptions {
+        exclude '**/pdfium.wasm'
+    }
 }
 
 flutter {

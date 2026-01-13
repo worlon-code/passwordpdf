@@ -35,12 +35,25 @@ class PdfViewerScreen extends StatefulWidget {
 
 class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final PdfViewerController _pdfViewerController = PdfViewerController();
+  PdfTextSearcher? _textSearcher;
   Key _viewerKey = UniqueKey();
   
   bool _hasCalledSuccess = false;
   String _currentPassword = '';
-  bool _passwordAttempted = false; // Track if we've tried stored password
+  bool _passwordAttempted = false;
   
+  // State Variables
+  bool _isLoading = true;
+  int _currentPage = 1;
+  int _totalPages = 0;
+  bool _isSearching = false;
+  final TextEditingController _searchFieldController = TextEditingController();
+  final FocusNode _searchFocusNode = FocusNode();
+  
+  // Preload progress
+  bool _isPreloading = false;
+  int _preloadedPages = 0;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +62,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
   @override
   void dispose() {
+    _textSearcher?.removeListener(_updateSearchUI);
+    _textSearcher?.dispose();
+    _searchFieldController.dispose();
+    _searchFocusNode.dispose();
     if (widget.deleteOnClose) {
       try {
         File(widget.filePath).delete().catchError((_) {});
@@ -57,32 +74,43 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     super.dispose();
   }
 
-  /// Called by pdfrx when password is needed. Shows dialog if stored password fails.
+  void _updateSearchUI() {
+    if (mounted) setState(() {});
+  }
+
   Future<String?> _getPassword() async {
-    // First attempt: use stored/passed password
     if (!_passwordAttempted && _currentPassword.isNotEmpty) {
       _passwordAttempted = true;
       return _currentPassword;
     }
-    
-    // Subsequent attempts or no stored password: show dialog
     _passwordAttempted = true;
-    
     if (!mounted) return null;
-    
     final password = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => const PasswordSelectionDialog(),
     );
-    
     if (password != null && password.isNotEmpty) {
       _currentPassword = password;
       return password;
     }
-    
-    // User cancelled - return null to stop password attempts
     return null;
+  }
+
+  void _startSearch() {
+    if (_textSearcher == null) return;
+    setState(() {
+      _isSearching = true;
+      _searchFocusNode.requestFocus();
+    });
+  }
+
+  void _stopSearch() {
+    setState(() {
+      _isSearching = false;
+      _textSearcher?.resetTextSearch();
+      _searchFieldController.clear();
+    });
   }
 
   @override
@@ -94,10 +122,59 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       );
     }
 
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final searchTextColor = isLight ? Colors.black : Colors.white;
+    final searchHintColor = isLight ? Colors.black54 : Colors.white70;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.fileName, overflow: TextOverflow.ellipsis),
+        title: _isSearching 
+          ? TextField(
+              controller: _searchFieldController,
+              focusNode: _searchFocusNode,
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                border: InputBorder.none,
+                hintStyle: TextStyle(color: searchHintColor),
+              ),
+              style: TextStyle(color: searchTextColor),
+              onChanged: (text) => _textSearcher?.startTextSearch(text),
+              onSubmitted: (_) => _textSearcher?.goToNextMatch(),
+            )
+          : Text(widget.fileName, overflow: TextOverflow.ellipsis),
+        leading: _isSearching 
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: _stopSearch,
+            )
+          : null,
         actions: [
+          if (_isSearching && _textSearcher != null) ...[
+             IconButton(
+               icon: const Icon(Icons.keyboard_arrow_up),
+               onPressed: _textSearcher!.matches.isNotEmpty ? () => _textSearcher!.goToPrevMatch() : null,
+             ),
+             IconButton(
+               icon: const Icon(Icons.keyboard_arrow_down),
+               onPressed: _textSearcher!.matches.isNotEmpty ? () => _textSearcher!.goToNextMatch() : null,
+             ),
+             if (_textSearcher!.currentIndex != null && _textSearcher!.matches.isNotEmpty)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                    child: Text(
+                      '${_textSearcher!.currentIndex! + 1}/${_textSearcher!.matches.length}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
+          ] else if (!_isLoading)
+            IconButton(
+              icon: const Icon(Icons.search),
+              onPressed: _startSearch,
+            ),
+          
+          if (!_isSearching)
           PopupMenuButton<String>(
             onSelected: (value) async {
               if (value == 'remove_password') await _handleRemovePassword(context);
@@ -121,51 +198,141 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           ),
         ],
       ),
-      body: PdfViewer.file(
-          widget.filePath,
-          key: _viewerKey,
-          controller: _pdfViewerController,
-          passwordProvider: () => _getPassword(),
-          params: PdfViewerParams(
-            // enableTextSelection: true,
-            maxScale: 4.0,
-            onViewerReady: (document, controller) {
-              if (!_hasCalledSuccess && widget.onSuccess != null) {
-                _hasCalledSuccess = true;
-                widget.onSuccess!();
-              }
-              if (_currentPassword.isNotEmpty) {
-                 PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
-              }
-            },
+      body: Stack(
+        children: [
+          PdfViewer.file(
+            widget.filePath,
+            key: _viewerKey,
+            controller: _pdfViewerController,
+            passwordProvider: () => _getPassword(),
+            params: PdfViewerParams(
+              maxScale: 8.0,
+
+
+              // Enable kinetic scrolling (standard Android clamping)
+              scrollPhysics: const ClampingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+              viewerOverlayBuilder: (context, size, handleLinkTap) => [
+                // Capsule scrollbar on right side
+                PdfViewerScrollThumb(
+                  controller: _pdfViewerController,
+                  orientation: ScrollbarOrientation.right,
+                  thumbSize: const Size(32, 48),
+                  thumbBuilder: (context, thumbSize, pageNumber, controller) => Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade400, width: 0.5),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.keyboard_arrow_up, size: 16, color: Colors.grey.shade600),
+                        Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey.shade600),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              // Per-page indicator using pageOverlaysBuilder
+              pageOverlaysBuilder: (context, pageRect, page) {
+                final totalPages = _pdfViewerController.document?.pages.length ?? 0;
+                return [
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black45,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${page.pageNumber} / $totalPages',
+                        style: const TextStyle(color: Colors.white, fontSize: 11),
+                      ),
+                    ),
+                  ),
+                ];
+              },
+              // Search Highlighting
+              pagePaintCallbacks: _textSearcher != null ? [
+                _textSearcher!.pageTextMatchPaintCallback
+              ] : [],
+              // Error Handling
+              errorBannerBuilder: (context, error, stackTrace, documentRef) {
+                if (error.toString().contains('No password supplied')) {
+                   return Center(
+                     child: Column(
+                       mainAxisAlignment: MainAxisAlignment.center,
+                       children: [
+                         const Text('Password Required', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                         const SizedBox(height: 16),
+                         ElevatedButton(
+                           onPressed: () {
+                             setState(() {
+                               _passwordAttempted = false;
+                               _viewerKey = UniqueKey();
+                             });
+                           },
+                           child: const Text('Enter Password'),
+                         ),
+                       ],
+                     ),
+                   );
+                }
+                return Center(child: Text('Error: $error'));
+              },
+              onViewerReady: (document, controller) {
+                if (mounted) {
+                  _textSearcher = PdfTextSearcher(controller)..addListener(_updateSearchUI);
+                  setState(() {
+                    _isLoading = false;
+                    _totalPages = document.pages.length;
+                  });
+                }
+                if (!_hasCalledSuccess && widget.onSuccess != null) {
+                  _hasCalledSuccess = true;
+                  widget.onSuccess!();
+                }
+                if (_currentPassword.isNotEmpty) {
+                   PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
+                }
+              },
+              onPageChanged: (pageNumber) {
+                if (mounted) {
+                  setState(() {
+                    _currentPage = pageNumber ?? 1;
+                  });
+                }
+              },
+            ),
           ),
-        ),
+          
+          // Document loading indicator
+          if (_isLoading)
+            Container(
+              color: Colors.black12,
+              child: const Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircularProgressIndicator(),
+                    SizedBox(height: 16),
+                    Text('Loading PDF...', style: TextStyle(fontSize: 14)),
+                  ],
+                ),
+              ),
+            ),
+            
+           // Page indicator now handled by PdfPageNumber in viewerOverlayBuilder
+        ],
+      ),
     );
   }
 
-  Future<void> _promptForPassword(BuildContext context) async {
-    final password = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const PasswordSelectionDialog(), 
-    );
-
-    if (password != null && password.isNotEmpty) {
-      setState(() {
-        _currentPassword = password;
-        _viewerKey = UniqueKey(); // Force reload
-      });
-    }
-  }
-
-  // --- PDF Tools Implementation (Same as before, simplified calls) ---
+  // --- PDF Tools Implementation ---
   
   Future<void> _handleRemovePassword(BuildContext context) async {
-     // ... (Existing logic leveraging PdfToolsService)
-     // For brevity, copied logic is assumed handled by external changes or kept.
-     // Since I am overwriting the file, I MUST explicitly include the tool handlers.
-     // I will use a simplified version that calls the tools service.
-     
      await _runToolOperation(context, (tools, savePath) => tools.removePassword(
         filePath: widget.filePath,
         password: _currentPassword,
@@ -230,13 +397,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
     if (result == null || result.isEmpty) return;
     
-    // Simple recursive password prompt handling not implemented in this abbreviated version
-    // But basic merge is here:
     await _runToolOperation(context, (tools, savePath) => tools.mergePdf(
        sourcePath: widget.filePath,
        sourcePassword: _currentPassword,
        otherPath: result.first,
-       otherPassword: '', // Todo prompt if needed
+       otherPassword: '', 
        savePath: savePath
     ), '_merged');
   }

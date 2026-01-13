@@ -74,6 +74,9 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
   
+  // Performance cache for folder counts (avoid repeated service calls during scroll)
+  final Map<String, (int fileCount, int folderCount)> _folderCountCache = {};
+  
   // Public accessors for MainScreen back navigation
   String? get currentFolderId => _currentFolderId;
   Set<String> get selectedFileIds => _selectedFileIds;
@@ -337,6 +340,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _initialize({bool showLoading = true}) async {
+    _folderCountCache.clear(); // Clear cache on reload
     if (showLoading) setState(() => _isLoading = true);
     try {
       await _docService.initialize();
@@ -2444,48 +2448,105 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         return _buildEmptyState();
       }
 
-      return Column(
-        children: [
-          // Filter bar
-          _buildFilterBar(),
-          // Content
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-                children: [
-                  if (folders.isNotEmpty) ...[
-                    Text(
+      // Pre-populate folder count cache for smooth scrolling
+      for (final folder in folders) {
+        if (!_folderCountCache.containsKey(folder.id)) {
+          final files = _docService.getFilesInFolder(folder.id);
+          final fileCount = _applyFileFilter(files).length;
+          final subfolderCount = _docService.getSubfolders(folder.id).length;
+          _folderCountCache[folder.id] = (fileCount, subfolderCount);
+        }
+      }
+
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final isCheckMode = _selectedFileIds.isNotEmpty;
+          // Responsive Grid: 1 column on mobile, multiple on tablet
+          // Threshold 600dp. Card height approx 80dp.
+          final gridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 600, 
+            mainAxisExtent: 80, // Fixed height for ListTiles
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 0,
+          );
+
+          return CustomScrollView(
+            slivers: [
+              // Filter Bar
+              SliverToBoxAdapter(
+                child: _buildFilterBar(),
+              ),
+              
+              // Spacing
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+
+              // Folders Section
+              if (folders.isNotEmpty) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
                       'Folders',
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...folders.map((folder) => _buildFolderCard(folder)),
-                    const SizedBox(height: 24),
-                  ],
-                  if (unorganizedFiles.isNotEmpty) ...[
-                    Text(
-                      'Unorganized Files',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    ...unorganizedFiles.map((file) => _buildFileCard(file)),
-                  ] else if (_filterType != 'All' && folders.isEmpty) ...[
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Text('No $_filterType files found'),
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
-                ],
-              ),
-            ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+                  sliver: SliverGrid(
+                    gridDelegate: gridDelegate,
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildFolderCard(folders[index]),
+                      childCount: folders.length,
+                      addAutomaticKeepAlives: false, // Performance
+                      addRepaintBoundaries: true,
+                    ),
+                  ),
+                ),
+              ],
 
-        ],
+              // Unorganized Files Section
+              if (unorganizedFiles.isNotEmpty) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    child: Text(
+                      'Unorganized Files',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+                  sliver: SliverGrid(
+                    gridDelegate: gridDelegate,
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildFileCard(unorganizedFiles[index]),
+                      childCount: unorganizedFiles.length,
+                      addAutomaticKeepAlives: false, // Performance
+                      addRepaintBoundaries: true,
+                    ),
+                  ),
+                ),
+              ],
+
+              // No Results
+              if (_filterType != 'All' && folders.isEmpty && unorganizedFiles.isEmpty)
+                SliverToBoxAdapter(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Text('No $_filterType files found'),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        }
       );
     } else {
       // Show folder contents (subfolders + files)
@@ -2500,49 +2561,87 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       subfolders = _sortItems(List.from(subfolders));
       files = _sortItems(List.from(files));
       
-      if (subfolders.isEmpty && files.isEmpty) {
-        return Column(
-          children: [
-            _buildFilterBar(),
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.folder_open,
-                      size: 80,
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+      // Pre-populate folder count cache for smooth scrolling
+      for (final folder in subfolders) {
+        if (!_folderCountCache.containsKey(folder.id)) {
+          final folderFiles = _docService.getFilesInFolder(folder.id);
+          final fileCount = _applyFileFilter(folderFiles).length;
+          final subCount = _docService.getSubfolders(folder.id).length;
+          _folderCountCache[folder.id] = (fileCount, subCount);
+        }
+      }
+      
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final gridDelegate = SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 600, 
+            mainAxisExtent: 80,
+            crossAxisSpacing: 16,
+            mainAxisSpacing: 0,
+          );
+
+          if (subfolders.isEmpty && files.isEmpty) {
+            return Column(
+              children: [
+                _buildFilterBar(),
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.folder_open,
+                          size: 80,
+                          color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(_filterType == 'All' ? 'Folder is empty' : 'No $_filterType files found'),
+                        const SizedBox(height: 8),
+                        if (_filterType == 'All')
+                          const Text('Use the button below to add files or create folders'),
+                      ],
                     ),
-                    const SizedBox(height: 16),
-                    Text(_filterType == 'All' ? 'Folder is empty' : 'No $_filterType files found'),
-                    const SizedBox(height: 8),
-                    if (_filterType == 'All')
-                      const Text('Use the button below to add files or create folders'),
-                  ],
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(child: _buildFilterBar()),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              
+              SliverPadding(
+                padding: const EdgeInsets.only(left: 16, right: 16, bottom: 24),
+                sliver: SliverGrid(
+                  gridDelegate: gridDelegate,
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      if (index < subfolders.length) {
+                        return _buildFolderCard(subfolders[index]);
+                      } else {
+                        return _buildFileCard(files[index - subfolders.length]);
+                      }
+                    },
+                    childCount: subfolders.length + files.length,
+                    addAutomaticKeepAlives: false,
+                    addRepaintBoundaries: true,
+                  ),
                 ),
               ),
-            ),
-          ],
-        );
-      }
-
-      return Column(
-        children: [
-          _buildFilterBar(),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-                children: [
-                  ...subfolders.map((folder) => _buildFolderCard(folder)),
-                  ...files.map((file) => _buildFileCard(file)),
-                ],
-              ),
-            ),
-
-        ],
+            ],
+          );
+        }
       );
     }
+  }
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   /// Build filter bar with file type chips showing counts
@@ -2645,11 +2744,22 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     return folders.where((folder) => _folderContainsMatchingFiles(folder.id)).toList();
   }
 
-  /// Build subtitle showing file and folder counts
+  /// Build subtitle showing file and folder counts (uses cache for performance)
   String _buildFolderSubtitle(String folderId) {
+    // Check cache first to avoid expensive service calls during scroll
+    final cached = _folderCountCache[folderId];
+    if (cached != null) {
+      final (fileCount, subfolderCount) = cached;
+      final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
+      final folderPart = '$subfolderCount ${subfolderCount == 1 ? 'folder' : 'folders'}';
+      return '$filePart, $folderPart';
+    }
+    
+    // Fallback: compute and cache (should rarely happen)
     final allFiles = _docService.getFilesInFolder(folderId);
     final fileCount = _applyFileFilter(allFiles).length;
     final subfolderCount = _docService.getSubfolders(folderId).length;
+    _folderCountCache[folderId] = (fileCount, subfolderCount);
     
     final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
     final folderPart = '$subfolderCount ${subfolderCount == 1 ? 'folder' : 'folders'}';
@@ -2694,14 +2804,13 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Widget _buildFolderCard(DocumentItem folder) {
-    // Calculate file count based on filter
-    final allFiles = _docService.getFilesInFolder(folder.id);
-    final fileCount = _applyFileFilter(allFiles).length;
-    
+    // Use folder's stored child count for performance - avoid calling service during scroll
     final isSelected = _selectedFileIds.contains(folder.id);
     
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+    // Use RepaintBoundary to isolate repaint costs
+    return RepaintBoundary(
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 12),
       color: isSelected ? Colors.blue.withOpacity(0.1) : null,
       child: InkWell(
         onLongPress: () {
@@ -2877,16 +2986,17 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         ),
       ),
     ),
-  );
+  ));
   }
 
   Widget _buildFileCard(DocumentItem file) {
     final isSelected = _selectedFileIds.contains(file.id);
-    final fileSizeKb = (file.size / 1024).toStringAsFixed(1);
+    final fileSize = _formatFileSize(file.size);
     final isMissing = file.missingOnDevice;
+    final fileColor = _getFileColor(file); // Cache color to avoid recalculation
 
-    return Opacity(
-      opacity: isMissing ? 0.6 : 1.0,
+    // Use RepaintBoundary to isolate repaint costs
+    return RepaintBoundary(
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
         color: isSelected 
@@ -2921,7 +3031,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   decoration: BoxDecoration(
                     color: isMissing 
                         ? Colors.red.withOpacity(0.1) 
-                        : _getFileColor(file).withOpacity(0.1),
+                        : fileColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
@@ -2929,7 +3039,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                         ? const Icon(Icons.delete_forever, color: Colors.red, size: 28)
                         : Icon(
                             _getFileIcon(file),
-                            color: _getFileColor(file),
+                            color: fileColor,
                           ),
                   ),
                 ),
@@ -2971,7 +3081,7 @@ class _DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
               ),
             ),
             subtitle: Text(
-              isMissing ? 'Missing from device' : '$fileSizeKb KB',
+              isMissing ? 'Missing from device' : fileSize,
               style: TextStyle(
                 color: isMissing ? Colors.red : null,
               ),
