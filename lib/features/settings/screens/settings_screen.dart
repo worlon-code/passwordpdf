@@ -18,6 +18,7 @@ import '../../../main.dart';
 import '../../update/services/update_service.dart';
 import '../../update/models/update_info.dart';
 import '../../update/widgets/update_dialogs.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -33,6 +34,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final EncryptionService _encryptionService = EncryptionService();
   bool _biometricSupported = false;
   int _versionTapCount = 0;
+  String _appVersion = '';
+  String _buildNumber = '';
 
 
   @override
@@ -40,6 +43,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _log.info('SettingsScreen', 'Screen initialized');
     _checkBiometricSupport();
+    _loadAppVersion();
+  }
+  
+  Future<void> _loadAppVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = info.version;
+        _buildNumber = info.buildNumber;
+      });
+    }
   }
 
   @override
@@ -706,8 +720,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       leading: const Icon(Icons.info),
                       title: const Text('App Version'),
                       subtitle: Text(settings.developerModeEnabled 
-                          ? '$appVersion (Dev)' 
-                          : appVersion),
+                          ? '$_appVersion+$_buildNumber (Dev)' 
+                          : '$_appVersion'),
                       onTap: () {
                         if (settings.developerModeEnabled) return;
                         

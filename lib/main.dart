@@ -63,8 +63,7 @@ class PendingFileOpen {
   static bool get hasPending => filePath != null;
 }
 
-// App version for tracking
-const String appVersion = '1.0.0-beta.2';
+
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -73,7 +72,7 @@ void main() async {
     WidgetsFlutterBinding.ensureInitialized();
     
     final log = LoggingService();
-    log.info('App', '=== PDF Password Manager v$appVersion Starting ===');
+    log.info('App', '=== PDF Password Manager Starting ===');
     
     // Global Flutter Error Handler (Layout errors, etc)
     FlutterError.onError = (FlutterErrorDetails details) {
