@@ -561,79 +561,11 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
     }
     
-    // Now check encryption key setup
-    await _checkEncryptionKey();
+    // Encryption key setup is now handled globally in MainScreen
+    // await _checkEncryptionKey(); // Removed duplicate check
   }
 
-  /// Check and prompt for encryption key setup (first-time only)
-  Future<void> _checkEncryptionKey() async {
-    final encryptionService = EncryptionService();
-    final keyIsSet = await encryptionService.isKeySet();
-    
-    if (!keyIsSet) {
-      if (!mounted) return;
-      
-      // Generate a default key
-      String suggestedKey = encryptionService.generateRandomKey();
-      final controller = TextEditingController(text: suggestedKey);
-      
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: const Text('Encryption Key Setup'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Set up your encryption key for secure password storage.'),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: controller,
-                  decoration: InputDecoration(
-                    labelText: 'Encryption Key',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.refresh),
-                      tooltip: 'Generate new key',
-                      onPressed: () {
-                        setState(() {
-                          controller.text = encryptionService.generateRandomKey();
-                        });
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Save this key securely! You cannot recover it later.',
-                  style: TextStyle(color: Colors.orange, fontSize: 12),
-                ),
-              ],
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () async {
-                  if (controller.text.isNotEmpty) {
-                    await encryptionService.setEncryptionKey(controller.text);
-                    if (context.mounted) Navigator.pop(context);
-                  }
-                },
-                child: const Text('Save Key'),
-              ),
-            ],
-          ),
-        ),
-      );
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Encryption key set successfully!')),
-        );
-      }
-    }
-  }
+
 
   Future<void> _createFolder() async {
     final controller = TextEditingController();

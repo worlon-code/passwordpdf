@@ -2,18 +2,20 @@ import 'package:flutter/material.dart';
 import '../../../services/encryption_service.dart';
 
 /// Dialog for setting up encryption key (one-time setup)
-Future<bool> showEncryptionKeySetupDialog(BuildContext context) async {
+Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = false}) async {
+
   final encryptionService = EncryptionService();
-  final keyController = TextEditingController();
-  bool obscureKey = true;
+  // Pre-fill with a random strong key by default
+  final keyController = TextEditingController(text: encryptionService.generateRandomKey());
+  bool obscureKey = false; // Show it by default so they can see the generated key
   
   final result = await showDialog<bool>(
     context: context,
-    barrierDismissible: true, // Allow dismiss
+    barrierDismissible: !force, // disallow dismiss if forced
     builder: (context) => StatefulBuilder(
       builder: (context, setState) {
-        return WillPopScope(
-          onWillPop: () async => true, // Allow back button
+        return PopScope(
+          canPop: !force, // Prevent back button if forced
           child: AlertDialog(
           title: const Row(
             children: [
@@ -38,15 +40,31 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context) async {
                   labelText: 'Encryption Key',
                   hintText: 'Enter a strong key',
                   border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      obscureKey ? Icons.visibility : Icons.visibility_off,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        obscureKey = !obscureKey;
-                      });
-                    },
+                  suffixIcon: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        tooltip: 'Generate Random Key',
+                        onPressed: () {
+                          setState(() {
+                             keyController.text = encryptionService.generateRandomKey();
+                             // Make visible when generating
+                             obscureKey = false;
+                          });
+                        },
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          obscureKey ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            obscureKey = !obscureKey;
+                          });
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -58,10 +76,11 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context) async {
             ],
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
+            if (!force)
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
             ElevatedButton(
               onPressed: () async {
                 final key = keyController.text.trim();

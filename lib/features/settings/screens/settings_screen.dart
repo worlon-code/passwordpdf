@@ -15,6 +15,9 @@ import '../widgets/color_picker_dialog.dart';
 import '../../developer/screens/developer_screen.dart';
 import '../../password_manager/screens/password_manager_screen.dart';
 import '../../../main.dart';
+import '../../update/services/update_service.dart';
+import '../../update/models/update_info.dart';
+import '../../update/widgets/update_dialogs.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -726,6 +729,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.system_update),
+                  title: const Text('Check for Updates'),
+                  onTap: () => _checkForUpdates(context),
+                  trailing: const Icon(Icons.chevron_right),
+                ),
+                const Divider(height: 1),
                 const ListTile(
                   leading: Icon(Icons.description),
                   title: Text('PDF Password Manager'),
@@ -789,6 +799,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
           color: Theme.of(context).colorScheme.primary,
         ),
       ),
+    );
+  }
+
+  Future<void> _checkForUpdates(BuildContext context) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Checking for updates...')),
+    );
+
+    final service = UpdateService();
+    final info = await service.checkForUpdate();
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    if (info != null) {
+      showDialog(
+        context: context,
+        builder: (ctx) => UpdateAvailableDialog(
+          updateInfo: info,
+          onUpdate: () => _performUpdate(ctx, service, info),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('App is up to date based on Public Release Channel')),
+      );
+    }
+  }
+
+  Future<void> _performUpdate(BuildContext context, UpdateService service, UpdateInfo info) async {
+    bool started = false;
+    double progress = 0;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+           builder: (context, setDialogState) {
+              if (!started) {
+                  started = true;
+                  service.downloadUpdate(info.downloadUrl, (received, total) {
+                      if (total != -1) {
+                         setDialogState(() {
+                            progress = received / total;
+                         });
+                      }
+                  }).then((file) {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
+                      
+                      if (file != null) {
+                         service.installUpdate(file);
+                      } else {
+                         if (context.mounted) {
+                           ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Download failed')),
+                           );
+                         }
+                      }
+                  });
+              }
+              return UpdateProgressDialog(progress: progress);
+           }
+        );
+      }
     );
   }
 }

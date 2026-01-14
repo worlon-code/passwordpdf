@@ -34,6 +34,7 @@ class SettingsService extends ChangeNotifier {
   bool _developerModeEnabled = false;
   int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
   int _autoLockTimeout = 10; // Default 10 minutes
+  int _lastViewedBuildNumber = 0; // For What's New dialog
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -48,6 +49,7 @@ class SettingsService extends ChangeNotifier {
   bool get developerModeEnabled => _developerModeEnabled;
   int get defaultScreenIndex => _defaultScreenIndex;
   int get autoLockTimeout => _autoLockTimeout;
+  int get lastViewedBuildNumber => _lastViewedBuildNumber;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -113,6 +115,9 @@ class SettingsService extends ChangeNotifier {
     if (timeout != null) {
       _autoLockTimeout = timeout.clamp(3, 30);
     }
+
+    // Load last viewed build number
+    _lastViewedBuildNumber = _prefs!.getInt('last_viewed_build_number') ?? 0;
 
     _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet, developerMode=$_developerModeEnabled, defaultScreen=$_defaultScreenIndex, autoLockTimeout=$_autoLockTimeout');
     notifyListeners();
@@ -279,6 +284,14 @@ class SettingsService extends ChangeNotifier {
     _autoLockTimeout = minutes.clamp(3, 30);
     await _prefs?.setInt('auto_lock_timeout', _autoLockTimeout);
     _log.info('SettingsService', 'Auto-lock timeout set to: $_autoLockTimeout minutes');
+    notifyListeners();
+  }
+
+  /// Set last viewed build number (to suppress What's New for this version)
+  Future<void> setLastViewedBuildNumber(int buildNumber) async {
+    _lastViewedBuildNumber = buildNumber;
+    await _prefs?.setInt('last_viewed_build_number', _lastViewedBuildNumber);
+    // No notify needed strictly, but good practice
     notifyListeners();
   }
 

@@ -25,6 +25,12 @@ import 'features/documents/screens/all_documents_screen.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 import 'models/document_item_model.dart';
 import 'features/authentication/widgets/animated_splash_logo.dart';
+import 'features/update/services/update_service.dart';
+import 'features/update/widgets/whats_new_dialog.dart';
+import 'features/update/widgets/update_dialogs.dart';
+import 'features/update/models/update_info.dart';
+import 'features/password_manager/widgets/encryption_key_setup_dialog.dart'; // Added
+import 'package:package_info_plus/package_info_plus.dart';
 
 /// Static class to hold pending file to open (for Open With flow)
 class PendingFileOpen {
@@ -746,6 +752,121 @@ class _MainScreenState extends State<MainScreen> {
          PendingFileOpen.clearDuplicates(); // Only clear duplicates, leave file open if any
       }
     });
+
+
+
+
+    // Run Startup Checks (Encryption -> What's New -> Updates)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _performStartupChecks();
+    });
+  }
+
+  Future<void> _performStartupChecks() async {
+    final encryptionService = EncryptionService();
+    // 1. Enforce Encryption Setup FIRST
+    final hasKey = await encryptionService.isKeySet();
+    if (!hasKey) {
+       if (!mounted) return;
+       // Force setup (barrierDismissible: false is handled in the dialog widget)
+       final success = await showEncryptionKeySetupDialog(context, force: true);
+       if (!success) {
+         // Should not happen if forced, but if it does, maybe prompt again or exit?
+         // For now, if they somehow bypassed it, we just return (blocking other features effectively)
+         return; 
+       }
+    }
+
+    final updateService = UpdateService();
+    // 2. Cleanup old APKs
+    await updateService.cleanupUpdateFile();
+    
+    // 3. Check for "What's New" (Current > LastViewed)
+    // We prioritize showing what changed in the *current* version before telling them to update again.
+    if (!mounted) return;
+    
+    final settings = Provider.of<SettingsService>(context, listen: false);
+    final packageInfo = await PackageInfo.fromPlatform();
+    final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+    
+    bool showedWhatsNew = false;
+
+    if (currentBuild > settings.lastViewedBuildNumber) {
+      UpdateInfo? info = await updateService.getLatestReleaseInfo();
+      // Only show if we can fetch notes.
+      if (info != null && info.buildNumber >= currentBuild) {
+        if (!mounted) return;
+        showedWhatsNew = true;
+        await showDialog(
+          context: context,
+          barrierDismissible: false, // Make them read it
+          builder: (context) => WhatsNewDialog(
+            updateInfo: info,
+            onDismiss: () => Navigator.pop(context),
+          ),
+        );
+      }
+      // Update check seen
+      await settings.setLastViewedBuildNumber(currentBuild);
+    }
+
+    if (!mounted) return;
+
+    // 4. Check for Pending Updates (Remote > Current)
+    // Only check if we didn't just show "What's New" (avoid double dialog fatigue), 
+    // OR if we really want to be aggressive. User requested "next will be update one".
+    // So we proceed.
+    
+    final updateInfo = await updateService.checkForUpdate();
+    if (updateInfo != null) {
+      if (!mounted) return;
+      await showDialog(
+        context: context,
+        builder: (ctx) => UpdateAvailableDialog(
+           updateInfo: updateInfo,
+           onUpdate: () => _performUpdate(ctx, updateService, updateInfo),
+        )
+      );
+    }
+  }
+
+  Future<void> _performUpdate(BuildContext context, UpdateService service, UpdateInfo info) async {
+    bool started = false;
+    double progress = 0;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+           builder: (context, setDialogState) {
+              if (!started) {
+                  started = true;
+                  service.downloadUpdate(info.downloadUrl, (received, total) {
+                      if (total != -1) {
+                         setDialogState(() {
+                            progress = received / total;
+                         });
+                      }
+                  }).then((file) {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
+                      
+                      if (file != null) {
+                         service.installUpdate(file);
+                      } else {
+                         if (context.mounted) {
+                           ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Download failed')),
+                           );
+                         }
+                      }
+                  });
+              }
+              return UpdateProgressDialog(progress: progress);
+           }
+        );
+      }
+    );
   }
 
   void _showDuplicateSelectionSheet() {
