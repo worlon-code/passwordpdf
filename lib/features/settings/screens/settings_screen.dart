@@ -743,9 +743,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const Divider(height: 1),
+                // Auto-Update Toggle
+                const Divider(height: 1),
+                Consumer<SettingsService>(
+                  builder: (context, settings, child) {
+                    return SwitchListTile(
+                      title: const Text('Check for updates on startup'),
+                      subtitle: const Text('Automatically check using GitHub Releases'),
+                      secondary: const Icon(Icons.update),
+                      value: settings.autoCheckUpdates,
+                      onChanged: (value) => settings.setAutoCheckUpdates(value),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                
+                // Manual Check Tile with Red Dot
                 ListTile(
                   leading: const Icon(Icons.system_update),
-                  title: const Text('Check for Updates'),
+                  title: Row(
+                    children: [
+                      const Text('Check for Updates'),
+                      const SizedBox(width: 8),
+                      // Red Dot Indicator
+                      ValueListenableBuilder<bool>(
+                        valueListenable: Provider.of<UpdateService>(context, listen: false).updateAvailableNotifier,
+                        builder: (context, hasUpdate, child) {
+                          if (!hasUpdate) return const SizedBox.shrink();
+                          return Container(
+                            width: 10,
+                            height: 10,
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                   onTap: () => _checkForUpdates(context),
                   trailing: const Icon(Icons.chevron_right),
                 ),

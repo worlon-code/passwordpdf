@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/update_info.dart';
+import '../services/update_service.dart';
+import 'package:open_filex/open_filex.dart';
 
 class UpdateAvailableDialog extends StatelessWidget {
   final UpdateInfo updateInfo;
@@ -73,19 +75,16 @@ class UpdateProgressDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InvocationDialog(progress: progress); // Internal helper
+    return InvocationDialog(progress: progress);
   }
 }
 
-// Separate stateful widget to handle progress updates cleanly if we used a stream
-// But since we are passing progress, we likely rebuild the dialog or use StateSetter
 class InvocationDialog extends StatelessWidget {
   final double progress;
   const InvocationDialog({super.key, required this.progress});
   
   @override
   Widget build(BuildContext context) {
-    // PopScope prevents back button during download
     return PopScope(
       canPop: false,
       child: AlertDialog(
@@ -101,4 +100,67 @@ class InvocationDialog extends StatelessWidget {
       ),
     );
   }
+}
+
+// Global Helper Functions
+Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
+    showDialog(
+      context: context,
+      builder: (ctx) => UpdateAvailableDialog(
+        updateInfo: info,
+        onUpdate: () => performUpdate(ctx, info),
+      ),
+    );
+}
+
+Future<void> performUpdate(BuildContext context, UpdateInfo info) async {
+    final service = UpdateService();
+    bool started = false;
+    // ignore: unused_local_variable
+    double progress = 0;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+           builder: (context, setDialogState) {
+              if (!started) {
+                  started = true;
+                  service.downloadUpdate(info.downloadUrl, (received, total) {
+                      if (total != -1) {
+                         try {
+                           setDialogState(() {
+                              progress = received / total;
+                           });
+                         } catch (e) {
+                           // ignore
+                         }
+                      }
+                  }).then((file) async {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
+                      
+                      if (file != null) {
+                         final result = await service.installUpdate(file);
+                         if (result.type != ResultType.done) {
+                            if (context.mounted) {
+                               ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Install failed: ${result.message}')),
+                               );
+                            }
+                         }
+                      } else {
+                         if (context.mounted) {
+                           ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Download failed')),
+                           );
+                         }
+                      }
+                  });
+              }
+              return UpdateProgressDialog(progress: progress);
+           }
+        );
+      }
+    );
 }

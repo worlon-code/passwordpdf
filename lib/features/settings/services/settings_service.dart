@@ -35,6 +35,7 @@ class SettingsService extends ChangeNotifier {
   int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
   int _autoLockTimeout = 10; // Default 10 minutes
   int _lastViewedBuildNumber = 0; // For What's New dialog
+  bool _autoCheckUpdates = true; // Default true
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -50,6 +51,7 @@ class SettingsService extends ChangeNotifier {
   int get defaultScreenIndex => _defaultScreenIndex;
   int get autoLockTimeout => _autoLockTimeout;
   int get lastViewedBuildNumber => _lastViewedBuildNumber;
+  bool get autoCheckUpdates => _autoCheckUpdates;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -118,8 +120,21 @@ class SettingsService extends ChangeNotifier {
 
     // Load last viewed build number
     _lastViewedBuildNumber = _prefs!.getInt('last_viewed_build_number') ?? 0;
+    
+    // Load auto-update check
+    _autoCheckUpdates = _prefs!.getBool('auto_check_updates') ?? true;
 
-    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet, developerMode=$_developerModeEnabled, defaultScreen=$_defaultScreenIndex, autoLockTimeout=$_autoLockTimeout');
+    _log.info('SettingsService', 'Settings loaded: autoCheckUpdates=$_autoCheckUpdates');
+    notifyListeners();
+  }
+  
+  // ... existing setters ...
+
+  /// Set auto-update check preference
+  Future<void> setAutoCheckUpdates(bool enabled) async {
+    _autoCheckUpdates = enabled;
+    await _prefs?.setBool('auto_check_updates', enabled);
+    _log.info('SettingsService', 'Auto-check updates set to: $enabled');
     notifyListeners();
   }
 

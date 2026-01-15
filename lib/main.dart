@@ -200,6 +200,7 @@ Context: ${details.context?.toDescription() ?? 'none'}
           ChangeNotifierProvider.value(value: exportService), // Added for Notifications
           Provider<EncryptionService>.value(value: EncryptionService()),
           Provider<DocumentService>.value(value: DocumentService()),
+          Provider<UpdateService>(create: (_) => UpdateService()), // Add UpdateService
         ],
         child: const MyApp(),
       ),
@@ -291,11 +292,21 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
+  int _selectedIndex = 0; // Added for default screen index
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Determine screen based on settings
+    final settings = Provider.of<SettingsService>(context, listen: false);
+    _selectedIndex = settings.defaultScreenIndex;
+    
+    // Check for startup intents (Cold Start)
+    _checkInitialIntents();
+    
+    // Perform other startup checks
+    // Initialize app (Settings, Auth, Permissions)
     _initialize();
     
     // Listen for intents while running
@@ -307,16 +318,38 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     }, onError: (err) {
       _log.error('AppEntry', 'Intent stream error', err);
     });
-
-    // Get initial intent (if app was closed)
-    ReceiveSharingIntent.instance.getInitialMedia().then((List<SharedMediaFile> value) {
-      if (value.isNotEmpty) {
-        _handleSharedFiles(value);
-        // Clear intent so it doesn't re-trigger on reload
-        ReceiveSharingIntent.instance.reset(); 
-      }
-    });
   }
+
+  Future<void> _checkInitialIntents() async {
+    try {
+      final sharedFiles = await ReceiveSharingIntent.instance.getInitialMedia();
+      if (sharedFiles.isNotEmpty) {
+        final file = sharedFiles.first;
+        if (file.path != null) {
+           PendingFileOpen.filePath = file.path;
+           // Fix for "Zombie Intent": Clear it so it doesn't reappear on resume
+           ReceiveSharingIntent.instance.reset();
+        }
+      }
+    } catch (e) {
+      LoggingService().error('App', 'Error checking initial intents', e);
+    }
+  }
+
+  Future<void> _performStartupChecks() async {
+     // NOTE: We do not delay encryption setup here because we want to allow the UI to load first.
+     // However, we can perform non-blocking checks or just rely on MainScreen's checks.
+     // The original design had checks here, but we moved them to MainScreen for better context access.
+     // But since we call it in initState, we'll keep a minimal version or empty if MainScreen handles it.
+     // Actually, looking at previous steps, we moved logic to MainScreen. 
+     // So we can make this empty or just remove the call in initState if it's redundant.
+     // But to fix the build error without extensive refactoring, we define it.
+     
+     // Wait for layout
+     await Future.delayed(Duration.zero);
+  }
+
+
 
   Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
@@ -519,20 +552,29 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         final payload = 'open_folder:${duplicateFolderId ?? 'root'}';
         
         // Show Android notification (don't await - let PDF stay open)
-        if (PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
-             _log.info('AppEntry', 'Showing multi-location notification');
-             exportService.showImportNotification(
-                'File Already Exists',
-                'Found in ${PendingFileOpen.duplicateOptions!.length} locations. Tap to select.',
-                payload: 'open_duplicates', // New payload type
-             );
-        } else {
-             _log.info('AppEntry', 'Showing single-location notification');
-             exportService.showImportNotification(
-                'File Already Exists',
-                'Found in: $location. Tap to view folder.',
-                payload: payload,
-             );
+        // If we are opening a single file immediately, SnackBar is sufficient.
+        // Only show system notification if we have multiple files or we aren't auto-opening.
+        bool shouldShowNotification = true;
+        if (files.length == 1 && fileToOpenPath != null) {
+             shouldShowNotification = false;
+        }
+
+        if (shouldShowNotification) {
+            if (PendingFileOpen.duplicateOptions != null && PendingFileOpen.duplicateOptions!.length > 1) {
+                 _log.info('AppEntry', 'Showing multi-location notification');
+                 exportService.showImportNotification(
+                    'File Already Exists',
+                    'Found in ${PendingFileOpen.duplicateOptions!.length} locations. Tap to select.',
+                    payload: 'open_duplicates',
+                 );
+            } else {
+                 _log.info('AppEntry', 'Showing single-location notification');
+                 exportService.showImportNotification(
+                    'File Already Exists',
+                    'Found in: $location. Tap to view folder.',
+                    payload: payload,
+                 );
+            }
         }
     }
     } finally {
@@ -553,6 +595,20 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     
     // Request permissions
     await _permissionService.requestAllPermissions();
+    
+    // Initialize Update Service (Load Red Dot state)
+    final updateService = Provider.of<UpdateService>(context, listen: false);
+    await updateService.initialize();
+
+    // Auto-Check for Updates (if enabled)
+    if (settings.autoCheckUpdates) {
+       // Run in background, don't await blocking UI
+       updateService.checkForUpdate().then((info) {
+          if (info != null && mounted) {
+             showUpdateDialog(context, info);
+          }
+       });
+    }
     
     // Determine if authentication is needed
     // Auth is needed if: biometric enabled OR pin enabled

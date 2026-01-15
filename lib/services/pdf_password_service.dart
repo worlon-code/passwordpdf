@@ -144,6 +144,23 @@ class PdfPasswordService {
     await _save();
   }
   
+  /// Get all unique decrypted passwords to try
+  Future<List<String>> getAllUniquePasswords() async {
+    await initialize();
+    final passwords = <String>{};
+    
+    for (final encrypted in _documentPasswords.values) {
+      if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
+      
+      final decrypted = await _encryptionService.decrypt(encrypted);
+      if (decrypted != null && decrypted.isNotEmpty) {
+        passwords.add(decrypted);
+      }
+    }
+    
+    return passwords.toList();
+  }
+  
   /// Migrate password keys from old app storage paths to new original paths
   /// Called during app startup with the new document list
   Future<void> migratePasswordPaths(Map<String, String> oldToNewPathMap) async {
