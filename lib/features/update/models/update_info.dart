@@ -14,12 +14,14 @@ class UpdateInfo {
   });
 
   factory UpdateInfo.fromJson(Map<String, dynamic> json) {
+    // Robust parsing with fallbacks
     return UpdateInfo(
-      version: json['version'] as String,
-      buildNumber: json['buildNumber'] as int,
-      downloadUrl: json['downloadUrl'] as String,
-      releaseNotes: json['releaseNotes'] as String? ?? '',
-      forceUpdate: json['forceUpdate'] as bool? ?? false,
+      // Support 'latestVersion' legacy key if 'version' is missing or null
+      version: (json['version'] ?? json['latestVersion'] ?? '') as String,
+      buildNumber: (json['buildNumber'] ?? 0) as int,
+      downloadUrl: (json['downloadUrl'] ?? '') as String,
+      releaseNotes: (json['releaseNotes'] ?? '') as String,
+      forceUpdate: (json['forceUpdate'] ?? false) as bool,
     );
   }
 }
