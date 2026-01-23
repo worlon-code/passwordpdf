@@ -21,16 +21,40 @@ class UpdateService {
     updateAvailableNotifier.value = hasUpdate;
   }
 
-  Future<UpdateInfo?> checkForUpdate() async {
+  Future<UpdateInfo?> checkForUpdate({bool force = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Weekly Check Logic
+    if (!force) {
+      final lastCheckStr = prefs.getString('last_update_check_time');
+      if (lastCheckStr != null) {
+        final lastCheck = DateTime.tryParse(lastCheckStr);
+        if (lastCheck != null) {
+          final now = DateTime.now();
+          final difference = now.difference(lastCheck).inDays;
+          if (difference < 7) {
+            print('UpdateService: Skipping auto-check (Last check: $difference days ago)');
+            
+            // Still check red dot status from prefs to keep UI consistent
+            final hasUpdate = prefs.getBool('update_available') ?? false;
+            updateAvailableNotifier.value = hasUpdate;
+            return null;
+          }
+        }
+      }
+    }
+
     final info = await getLatestReleaseInfo();
     if (info == null) return null;
 
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
-      final prefs = await SharedPreferences.getInstance();
 
       print('UpdateService Check: Current Build: $currentBuild, Remote Build: ${info.buildNumber}');
+
+      // Update last check time
+      await prefs.setString('last_update_check_time', DateTime.now().toIso8601String());
 
       if (info.buildNumber > currentBuild) {
         updateAvailableNotifier.value = true; // Trigger Red Dot

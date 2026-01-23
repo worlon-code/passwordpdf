@@ -858,7 +858,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     final service = UpdateService();
-    final info = await service.checkForUpdate();
+    final info = await service.checkForUpdate(force: true);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();

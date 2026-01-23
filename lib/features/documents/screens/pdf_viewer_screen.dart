@@ -6,10 +6,16 @@ import '../../../services/pdf_password_service.dart';
 import '../widgets/reorder_pages_dialog.dart';
 import '../widgets/split_pdf_dialog.dart';
 import '../widgets/password_selection_dialog.dart';
+import 'package:share_plus/share_plus.dart';
+import '../widgets/page_navigation_dialog.dart';
 import 'file_system_browser.dart';
 import '../../settings/services/settings_service.dart';
 import '../../common/utils/file_conflict_resolver.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
+import '../widgets/folder_selection_dialog.dart';
+import '../widgets/duplicate_files_dialog.dart';
+import '../../../services/document_service.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
@@ -236,7 +242,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
           onPressed: _handleBackButton, // Unified Back Behavior
         ),
         actions: [
-          if (_isSearching && _textSearcher != null) ...[
+          if (_isLoading) ...[
+            const SizedBox.shrink(),
+          ] else if (_isSearching && _textSearcher != null) ...[
              IconButton(
                icon: const Icon(Icons.keyboard_arrow_up),
                onPressed: _textSearcher!.matches.isNotEmpty ? () => _textSearcher!.goToPrevMatch() : null,
@@ -255,11 +263,22 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                     ),
                   ),
                 ),
-          ] else if (!_isLoading)
+          ] else ...[
+            IconButton(
+              icon: const Icon(Icons.save_alt),
+              tooltip: 'Save to Folder',
+              onPressed: () => _handleSaveFile(context),
+            ),
+            IconButton(
+              icon: const Icon(Icons.share),
+              tooltip: 'Share File',
+              onPressed: () => _handleShareFile(),
+            ),
             IconButton(
               icon: const Icon(Icons.search),
               onPressed: _startSearch,
             ),
+          ],
           
           if (!_isSearching)
           PopupMenuButton<String>(
@@ -269,10 +288,16 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               else if (value == 'reorder') await _handleReorder(context);
               else if (value == 'split') await _handleSplit(context);
               else if (value == 'merge') await _handleMerge(context);
+              else if (value == 'go_to_page') await _handleGoToPage(context);
             },
             itemBuilder: (context) {
               final isProtected = _currentPassword.isNotEmpty;
               return [
+                const PopupMenuItem(
+                  value: 'go_to_page',
+                  child: Row(children: [Icon(Icons.directions), SizedBox(width: 8), Text('Go to Page')]),
+                ),
+                const PopupMenuDivider(),
                 const PopupMenuItem(value: 'split', child: Row(children: [Icon(Icons.call_split), SizedBox(width: 8), Text('Split PDF')])),
                 const PopupMenuItem(value: 'merge', child: Row(children: [Icon(Icons.merge), SizedBox(width: 8), Text('Merge PDF')])),
                 const PopupMenuItem(value: 'reorder', child: Row(children: [Icon(Icons.sort), SizedBox(width: 8), Text('Reorder Pages')])),
@@ -544,6 +569,96 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
        otherPassword: '', 
        savePath: savePath
     ), '_merged');
+  }
+
+  // --- Feature Implementation ---
+
+  Future<void> _handleGoToPage(BuildContext context) async {
+    final result = await showDialog<int>(
+      context: context,
+      builder: (context) => PageNavigationDialog(
+        totalPages: _totalPages,
+        currentPage: _currentPage,
+      ),
+    );
+
+    if (result != null && mounted) {
+      _pdfViewerController.goToPage(pageNumber: result);
+    }
+  }
+
+  Future<void> _handleShareFile() async {
+    try {
+      await Share.shareXFiles([XFile(widget.filePath)], text: widget.fileName);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Share failed: $e'), backgroundColor: Colors.red));
+      }
+    }
+  }
+
+  Future<void> _handleSaveFile(BuildContext context) async {
+    final docService = DocumentService();
+    
+    // 1. Library Duplicate Check (Check if file already exists in library)
+    final duplicates = await docService.checkForDuplicates([widget.filePath]);
+    if (duplicates.isNotEmpty) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => DuplicateFilesDialog(duplicates: duplicates),
+      );
+      if (proceed != true) return;
+    }
+
+    // 2. Folder Selection
+    final folderId = await showDialog<String>(
+      context: context,
+      builder: (context) => FolderSelectionDialog(
+        docService: docService,
+        title: 'Save to Folder',
+        subtitle: 'Select destination for library',
+      ),
+    );
+    if (folderId == null) return;
+
+    final targetFolderId = folderId == '__ROOT__' ? null : folderId;
+
+    try {
+      if (mounted) showDialog(context: context, barrierDismissible: false, builder: (c) => const Center(child: CircularProgressIndicator()));
+
+      // 3. Resolve Physical Path
+      final targetDir = await docService.getPhysicalPathForFolder(targetFolderId);
+      if (!Directory(targetDir).existsSync()) {
+        await Directory(targetDir).create(recursive: true);
+      }
+
+      final targetPath = path.join(targetDir, widget.fileName);
+
+      // 4. Conflict Resolution
+      final resolvedPath = await FileConflictResolver.resolve(context: context, filePath: targetPath);
+      if (resolvedPath == null) {
+        if (mounted) Navigator.pop(context); // Close loading
+        return;
+      }
+
+      // 5. Copy File
+      await File(widget.filePath).copy(resolvedPath);
+
+      // 6. Add to Library
+      await docService.addFile(resolvedPath, folderId: targetFolderId, isNew: true, isImportedFile: true);
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Saved to ${targetFolderId == null ? 'Root' : 'Folder'}'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Save failed: $e'), backgroundColor: Colors.red));
+      }
+    }
   }
 
   Future<void> _runToolOperation(

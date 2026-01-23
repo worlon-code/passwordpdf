@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:convert';
 import '../models/document_item_model.dart';
 import './logging_service.dart';
+import 'package:path/path.dart' as path;
 
 /// Result of a file import operation
 class ImportResult {
@@ -403,6 +404,34 @@ class DocumentService {
       }
     }
     return null;
+  }
+
+  /// Get physical directory path for a folder ID
+  Future<String> getPhysicalPathForFolder(String? folderId) async {
+    final appDocDir = await getApplicationDocumentsDirectory();
+    final baseDir = path.join(appDocDir.path, 'Documents');
+    
+    if (folderId == null) {
+      return baseDir;
+    }
+
+    final folder = _items.firstWhere((i) => i.id == folderId);
+    
+    // If it's a synced/imported folder, it has a physical source path
+    if (folder.sourcePath != null) {
+      return folder.sourcePath!;
+    }
+
+    // Otherwise, build logical path relative to App Storage
+    final segments = <String>[folder.name];
+    var current = folder;
+    while (current.parentId != null) {
+      final parent = _items.firstWhere((i) => i.id == current.parentId);
+      segments.insert(0, parent.name);
+      current = parent;
+    }
+
+    return path.joinAll([baseDir, ...segments]);
   }
 
   /// Check for duplicates across ALL folders (for Add Files feature)
