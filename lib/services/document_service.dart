@@ -5,6 +5,7 @@ import 'dart:convert';
 import '../models/document_item_model.dart';
 import './logging_service.dart';
 import 'package:path/path.dart' as path;
+import '../features/settings/services/settings_service.dart';
 
 /// Result of a file import operation
 class ImportResult {
@@ -408,8 +409,8 @@ class DocumentService {
 
   /// Get physical directory path for a folder ID
   Future<String> getPhysicalPathForFolder(String? folderId) async {
-    final appDocDir = await getApplicationDocumentsDirectory();
-    final baseDir = path.join(appDocDir.path, 'Documents');
+    // For manual folders, the root is the user-selected export path
+    final baseDir = SettingsService().exportPath;
     
     if (folderId == null) {
       return baseDir;
@@ -422,7 +423,7 @@ class DocumentService {
       return folder.sourcePath!;
     }
 
-    // Otherwise, build logical path relative to App Storage
+    // Otherwise, build logical path relative to the Export Path
     final segments = <String>[folder.name];
     var current = folder;
     while (current.parentId != null) {
