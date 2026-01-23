@@ -33,6 +33,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final LoggingService _log = LoggingService();
   final EncryptionService _encryptionService = EncryptionService();
   bool _biometricSupported = false;
+  String _biometricLabel = 'Biometric Authentication';
+  String _biometricShortLabel = 'Biometric';
+  IconData _biometricIcon = Icons.fingerprint;
   int _versionTapCount = 0;
   String _appVersion = '';
   String _buildNumber = '';
@@ -65,9 +68,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _checkBiometricSupport() async {
     final supported = await _biometricService.isDeviceSupported();
-    setState(() {
-      _biometricSupported = supported;
-    });
+    final label = await _biometricService.getBiometricLabel();
+    final shortLabel = label.replaceAll(' Unlock', '');
+    final iconStr = await _biometricService.getBiometricIcon();
+    
+    IconData icon = Icons.fingerprint;
+    if (iconStr == 'face') icon = Icons.face;
+    if (iconStr == 'remove_red_eye') icon = Icons.visibility;
+
+    if (mounted) {
+      setState(() {
+        _biometricSupported = supported;
+        _biometricLabel = label;
+        _biometricShortLabel = shortLabel;
+        _biometricIcon = icon;
+      });
+    }
   }
 
 
@@ -522,23 +538,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: Column(
               children: [
-                // Fingerprint option
+                // Biometric option
                 Consumer<SettingsService>(
                   builder: (context, settings, child) {
                     return SwitchListTile(
-                      title: const Text('Fingerprint Authentication'),
+                      title: Text(_biometricLabel),
                       subtitle: Text(
                         _biometricSupported
                             ? settings.biometricEnabled ? 'Enabled' : 'Disabled'
                             : 'Not supported',
                       ),
-                      secondary: const Icon(Icons.fingerprint),
+                      secondary: Icon(_biometricIcon),
                       value: settings.biometricEnabled,
                       onChanged: _biometricSupported
                           ? (value) async {
                               if (value) {
                                 final authenticated = await _biometricService.authenticate(
-                                  localizedReason: 'Authenticate to enable fingerprint lock',
+                                  localizedReason: 'Authenticate to enable $_biometricShortLabel access',
                                 );
                                 if (authenticated) {
                                   settings.setBiometricEnabled(true);
@@ -588,10 +604,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         authText = 'PIN only';
                         break;
                       case AuthMethod.fingerprintOnly:
-                        authText = 'Fingerprint only';
+                        authText = '$_biometricShortLabel only';
                         break;
                       case AuthMethod.both:
-                        authText = 'Fingerprint + PIN backup';
+                        authText = '$_biometricShortLabel + PIN backup';
                         break;
                     }
                     return ListTile(

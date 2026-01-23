@@ -238,21 +238,31 @@ class DocumentService {
                         }
                     } else {
                         // It's a Manual Folder item. DON'T MOVE it. 
-                        // Instead, create a NEW reference in this synced folder.
-                        _log.info('DocumentService', '[Sync] Step: CLONE - ${existingItem.name} exists in manual folder, creating sync reference');
-                        if (entity is File) {
-                            final ext = name.split('.').last.toLowerCase();
-                            if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
-                                try {
-                                    await addReference(entity.path, name, 
-                                        folderId: folderId, 
-                                        allowDuplicate: true, 
-                                        isNew: true 
-                                    );
-                                } catch (e) {
-                                    _log.error('DocumentService', 'Sync failed to clone manual item: $e');
+                        // Instead, create a NEW reference in this synced folder IF it doesn't already have one.
+                        
+                        // Check if this specific synced folder already contains a reference to this file
+                        final alreadyHasRef = _items.any((i) => 
+                            i.sourcePath == entity.path && i.parentId == folderId
+                        );
+
+                        if (!alreadyHasRef) {
+                            _log.info('DocumentService', '[Sync] Step: CLONE - ${existingItem.name} exists in manual folder, creating sync reference');
+                            if (entity is File) {
+                                final ext = name.split('.').last.toLowerCase();
+                                if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                                    try {
+                                        await addReference(entity.path, name, 
+                                            folderId: folderId, 
+                                            allowDuplicate: true, 
+                                            isNew: true 
+                                        );
+                                    } catch (e) {
+                                        _log.error('DocumentService', 'Sync failed to clone manual item: $e');
+                                    }
                                 }
                             }
+                        } else {
+                            _log.info('DocumentService', '[Sync] Step: SKIP_CLONE - Reference already exists in this synced folder');
                         }
                     }
                 }
