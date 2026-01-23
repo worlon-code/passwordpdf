@@ -19,13 +19,34 @@ class UpdateService {
 
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // Check if we already have the latest version to clear stale flag
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+      
+      // If we are initialized and have an update flag, let's double check it against current build if possible
+      // But since we don't have remote info here easily without fetching, 
+      // we'll rely on checkForUpdate being called at startup.
+      // However, to be safe, if we just updated, the flag might be stale.
+    } catch (_) {}
+
     final hasUpdate = prefs.getBool('update_available') ?? false;
     updateAvailableNotifier.value = hasUpdate;
+  }
+
+  Future<void> _clearUpdateFlag() async {
+    final prefs = await SharedPreferences.getInstance();
+    updateAvailableNotifier.value = false;
+    await prefs.setBool('update_available', false);
   }
 
   Future<UpdateInfo?> checkForUpdate({bool force = false}) async {
     final prefs = await SharedPreferences.getInstance();
     
+    final packageInfo = await PackageInfo.fromPlatform();
+    final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
+
     // Weekly Check Logic
     if (!force) {
       final lastCheckStr = prefs.getString('last_update_check_time');
@@ -37,7 +58,10 @@ class UpdateService {
           if (difference < 7) {
             _log.info('UpdateService', 'Skipping auto-check (Last check: $difference days ago)');
             
-            // Still check red dot status from prefs to keep UI consistent
+            // Check if flag is stale (we might have updated since last check)
+            // But we don't know the remote build number without fetching.
+            // However, if the user JUST updated, they are on a higher build than before.
+            
             final hasUpdate = prefs.getBool('update_available') ?? false;
             updateAvailableNotifier.value = hasUpdate;
             return null;
@@ -53,9 +77,6 @@ class UpdateService {
     }
 
     try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      final currentBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
-
       _log.info('UpdateService', 'Check: Current Build: $currentBuild, Remote Build: ${info.buildNumber}');
 
       // Update last check time
@@ -67,10 +88,7 @@ class UpdateService {
         return info;
       } else {
         // No update available (or we are on the latest)
-        if (updateAvailableNotifier.value) {
-           updateAvailableNotifier.value = false;
-           await prefs.setBool('update_available', false);
-        }
+        await _clearUpdateFlag();
       }
     } catch (e, stack) {
       _log.error('UpdateService', 'Update check failed', e, stack);

@@ -23,6 +23,7 @@ class PdfViewerScreen extends StatefulWidget {
   final String? password;
   final VoidCallback? onPasswordRequired;
   final VoidCallback? onSuccess;
+  final bool isExternal;
   final bool deleteOnClose;
 
   const PdfViewerScreen({
@@ -32,6 +33,7 @@ class PdfViewerScreen extends StatefulWidget {
     this.password,
     this.onPasswordRequired,
     this.onSuccess,
+    this.isExternal = false,
     this.deleteOnClose = false,
   });
 
@@ -264,11 +266,12 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   ),
                 ),
           ] else ...[
-            IconButton(
-              icon: const Icon(Icons.save_alt),
-              tooltip: 'Save to Folder',
-              onPressed: () => _handleSaveFile(context),
-            ),
+            if (widget.isExternal)
+              IconButton(
+                icon: const Icon(Icons.save_alt),
+                tooltip: 'Save to Folder',
+                onPressed: () => _handleSaveFile(context),
+              ),
             IconButton(
               icon: const Icon(Icons.share),
               tooltip: 'Share File',
@@ -598,9 +601,59 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   Future<void> _handleSaveFile(BuildContext context) async {
+    final theme = Theme.of(context);
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+               padding: const EdgeInsets.all(16),
+               child: Text('Save File', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+            ListTile(
+              leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(8)),
+                  child: Icon(Icons.library_books, color: theme.colorScheme.onPrimaryContainer),
+              ),
+              title: const Text('Save to App Library'),
+              subtitle: const Text('Organize in App Folders & Sync'),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onTap: () => Navigator.pop(c, 'library'),
+            ),
+            const Divider(indent: 16, endIndent: 16),
+            ListTile(
+              leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: theme.colorScheme.secondaryContainer, borderRadius: BorderRadius.circular(8)),
+                  child: Icon(Icons.phone_android, color: theme.colorScheme.onSecondaryContainer),
+              ),
+              title: const Text('Save to Device Storage'),
+              subtitle: const Text('Pick a specific folder on device'),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              onTap: () => Navigator.pop(c, 'device'),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+
+    if (choice == 'library') {
+      await _saveToLibrary(context);
+    } else if (choice == 'device') {
+      await _saveToDevice(context);
+    }
+  }
+
+  Future<void> _saveToLibrary(BuildContext context) async {
     final docService = DocumentService();
     
-    // 1. Library Duplicate Check (Check if file already exists in library)
+    // 1. Library Duplicate Check
     final duplicates = await docService.checkForDuplicates([widget.filePath]);
     if (duplicates.isNotEmpty) {
       final proceed = await showDialog<bool>(
@@ -615,8 +668,8 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       context: context,
       builder: (context) => FolderSelectionDialog(
         docService: docService,
-        title: 'Save to Folder',
-        subtitle: 'Select destination for library',
+        title: 'Save to Document Library',
+        subtitle: 'Select destination folder',
       ),
     );
     if (folderId == null) return;
@@ -627,6 +680,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       if (mounted) showDialog(context: context, barrierDismissible: false, builder: (c) => const Center(child: CircularProgressIndicator()));
 
       // 3. Resolve Physical Path
+      // Updated DocumentService uses Flat Storage for manual folders, resolving to Root Export Path
       final targetDir = await docService.getPhysicalPathForFolder(targetFolderId);
       if (!Directory(targetDir).existsSync()) {
         await Directory(targetDir).create(recursive: true);
@@ -659,6 +713,53 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Save failed: $e'), backgroundColor: Colors.red));
       }
     }
+  }
+
+  Future<void> _saveToDevice(BuildContext context) async {
+      // 1. Pick Folder
+      final result = await Navigator.push<List<String>>(
+          context,
+          MaterialPageRoute(
+               builder: (context) => const FileSystemBrowser(
+                   allowFolderSelection: true,
+                   allowMultiple: false,
+                   initialPath: '/storage/emulated/0', // Start at root
+               )
+          )
+      );
+      
+      if (result == null || result.isEmpty) return;
+      final targetDir = result.first;
+      
+      try {
+          if (mounted) showDialog(context: context, barrierDismissible: false, builder: (c) => const Center(child: CircularProgressIndicator()));
+          
+          final targetPath = path.join(targetDir, widget.fileName);
+          
+          // 2. Conflict Resolution (Standard: Rename/Overwrite)
+          // FileConflictResolver handles "File already exists" dialog
+          final resolvedPath = await FileConflictResolver.resolve(context: context, filePath: targetPath);
+          
+          if (resolvedPath == null) {
+              if (mounted) Navigator.pop(context); // Close loading
+              return;
+          }
+          
+          // 3. Copy File
+          await File(widget.filePath).copy(resolvedPath);
+          
+          if (mounted) {
+              Navigator.pop(context); // Close loading
+              ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Saved to ${path.basename(targetDir)}'), backgroundColor: Colors.green)
+              );
+          }
+      } catch (e) {
+         if (mounted) {
+            if (Navigator.canPop(context)) Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red));
+         }
+      }
   }
 
   Future<void> _runToolOperation(

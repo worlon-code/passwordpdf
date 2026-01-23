@@ -222,17 +222,38 @@ class DocumentService {
                 
                 // Enforce Structure: If it belongs to this imported folder, ensure it's inside it
                 if (existingItem.parentId != folderId) {
-                    _log.info('DocumentService', '[Sync] Step: MOVE - Moving ${existingItem.name} back to ${folder.name}');
-                    try {
-                        if (existingItem.isFolder) {
-                            await moveFolderToFolder(existingItem.id, folderId);
-                        } else {
-                            await moveFilesToFolder([existingItem.id], folderId);
+                    if (existingItem.isImported) {
+                        // It's part of a sync hierarchy, move it back to its correct location
+                        _log.info('DocumentService', '[Sync] Step: MOVE - Moving ${existingItem.name} back to ${folder.name}');
+                        try {
+                            if (existingItem.isFolder) {
+                                await moveFolderToFolder(existingItem.id, folderId);
+                            } else {
+                                await moveFilesToFolder([existingItem.id], folderId);
+                            }
+                            _log.info('DocumentService', '[Sync] Step: MOVE_DONE - ${existingItem.name}');
+                        } catch (moveError, moveStack) {
+                            _log.error('DocumentService', '[Sync] Step: MOVE_FAILED - ${existingItem.name}: $moveError\n$moveStack', moveError);
+                            rethrow;
                         }
-                        _log.info('DocumentService', '[Sync] Step: MOVE_DONE - ${existingItem.name}');
-                    } catch (moveError, moveStack) {
-                        _log.error('DocumentService', '[Sync] Step: MOVE_FAILED - ${existingItem.name}: $moveError\n$moveStack', moveError);
-                        rethrow;
+                    } else {
+                        // It's a Manual Folder item. DON'T MOVE it. 
+                        // Instead, create a NEW reference in this synced folder.
+                        _log.info('DocumentService', '[Sync] Step: CLONE - ${existingItem.name} exists in manual folder, creating sync reference');
+                        if (entity is File) {
+                            final ext = name.split('.').last.toLowerCase();
+                            if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                                try {
+                                    await addReference(entity.path, name, 
+                                        folderId: folderId, 
+                                        allowDuplicate: true, 
+                                        isNew: true 
+                                    );
+                                } catch (e) {
+                                    _log.error('DocumentService', 'Sync failed to clone manual item: $e');
+                                }
+                            }
+                        }
                     }
                 }
                 
@@ -423,16 +444,10 @@ class DocumentService {
       return folder.sourcePath!;
     }
 
-    // Otherwise, build logical path relative to the Export Path
-    final segments = <String>[folder.name];
-    var current = folder;
-    while (current.parentId != null) {
-      final parent = _items.firstWhere((i) => i.id == current.parentId);
-      segments.insert(0, parent.name);
-      current = parent;
-    }
-
-    return path.joinAll([baseDir, ...segments]);
+    // Manual Folder -> Flat Storage
+    // All files in manual folders are stored physically in the root Export Path
+    // This prevents creating physical subdirectories that would confuse Sync logic
+    return baseDir;
   }
 
   /// Check for duplicates across ALL folders (for Add Files feature)

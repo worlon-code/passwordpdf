@@ -384,6 +384,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 builder: (_) => PdfViewerScreen(
                   filePath: filePath,
                   fileName: fileName,
+                  isExternal: true,
                   deleteOnClose: isTemp,
                 ),
               ),
