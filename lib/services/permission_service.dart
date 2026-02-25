@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:permission_handler/permission_handler.dart';
 import 'logging_service.dart';
 
@@ -14,11 +15,19 @@ class PermissionService {
   Future<Map<Permission, PermissionStatus>> requestAllPermissions() async {
     _log.info(_tag, 'Requesting all necessary permissions...');
     
-    final permissions = <Permission>[
-      Permission.storage,
-      Permission.manageExternalStorage,
-      Permission.notification,
-    ];
+    final permissions = <Permission>[];
+    
+    if (Platform.isAndroid) {
+      permissions.addAll([
+        Permission.storage,
+        Permission.manageExternalStorage,
+        Permission.notification,
+      ]);
+    } else if (Platform.isIOS) {
+      permissions.addAll([
+        Permission.notification,
+      ]);
+    }
     
     final statuses = <Permission, PermissionStatus>{};
     
@@ -55,6 +64,11 @@ class PermissionService {
   /// Check if all necessary permissions are granted
   Future<bool> areAllPermissionsGranted() async {
     _log.debug(_tag, 'Checking if all permissions are granted...');
+    
+    if (Platform.isIOS) {
+      // iOS apps have sandboxed file access by default
+      return true;
+    }
     
     final storage = await Permission.storage.isGranted;
     _log.debug(_tag, 'Storage permission: $storage');

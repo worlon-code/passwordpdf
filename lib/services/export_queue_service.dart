@@ -242,7 +242,15 @@ class ExportQueueService extends ChangeNotifier {
     if (_notificationsInitialized) return;
     
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
     
     await _notificationsPlugin.initialize(
       initSettings,
@@ -273,7 +281,8 @@ class ExportQueueService extends ChangeNotifier {
       onlyAlertOnce: progress != null, // Don't buzz for progress updates
     );
     
-    final details = NotificationDetails(android: androidDetails);
+    const iosDetails = DarwinNotificationDetails();
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(id, title, body, details, payload: payload ?? 'export_progress');
   }
 
@@ -289,7 +298,8 @@ class ExportQueueService extends ChangeNotifier {
       priority: Priority.high,
     );
     
-    final details = NotificationDetails(android: androidDetails);
+    const iosDetails = DarwinNotificationDetails();
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(1000, title, body, details, payload: payload);
   }
 

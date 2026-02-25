@@ -35,7 +35,8 @@ class DeviceDocumentService {
         return true;
       }
     }
-    return false;
+    // iOS: Apps have sandboxed file access by default
+    return true;
   }
 
   SortOption _currentSortOption = SortOption.dateModified;
