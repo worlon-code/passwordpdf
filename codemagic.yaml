@@ -154,4 +154,3 @@ workflows:
     artifacts:
       - $CM_BUILD_DIR/passwordpdf-simulator.zip
 
-tas
