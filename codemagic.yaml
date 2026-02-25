@@ -77,3 +77,81 @@ workflows:
 
     artifacts:
       - $CM_BUILD_DIR/passwordpdf.ipa
+
+  ios-simulator:
+    name: iOS Simulator Build (for Appetize.io)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Set iOS deployment target and generate Podfile
+        script: |
+          cd ios
+          cat > Podfile << 'EOF'
+          platform :ios, '13.0'
+
+          ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+          project 'Runner', {
+            'Debug' => :debug,
+            'Profile' => :release,
+            'Release' => :release,
+          }
+
+          def flutter_root
+            generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+            unless File.exist?(generated_xcode_build_settings_path)
+              raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+            end
+
+            File.foreach(generated_xcode_build_settings_path) do |line|
+              matches = line.match(/FLUTTER_ROOT\=(.*)/)
+              return matches[1].strip if matches
+            end
+            raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+          end
+
+          require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+          target 'Runner' do
+            use_frameworks!
+            use_modular_headers!
+
+            flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+          end
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+              end
+            end
+          end
+          EOF
+
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install
+
+      - name: Build iOS Simulator app
+        script: |
+          flutter build ios --debug --simulator
+
+      - name: Package for Appetize.io
+        script: |
+          cd build/ios/iphonesimulator
+          zip -r -9 passwordpdf-simulator.zip Runner.app
+          mv passwordpdf-simulator.zip $CM_BUILD_DIR/passwordpdf-simulator.zip
+
+    artifacts:
+      - $CM_BUILD_DIR/passwordpdf-simulator.zip
+
+tas
