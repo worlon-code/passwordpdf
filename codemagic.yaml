@@ -33,9 +33,4 @@ workflows:
       - $CM_BUILD_DIR/passwordpdf.ipa
       - flutter_drive.log
 
-    publishing:
-      email:
-        recipients: []
-        notify:
-          success: false
-          failure: false
+
