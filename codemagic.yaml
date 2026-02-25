@@ -1,0 +1,41 @@
+workflows:
+  ios-build:
+    name: iOS Unsigned IPA Build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: 3.27.4
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Install CocoaPods
+        script: |
+          cd ios && pod install
+
+      - name: Build unsigned iOS app
+        script: |
+          flutter build ios --release --no-codesign
+
+      - name: Package as unsigned IPA
+        script: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
+          zip -r -9 passwordpdf.ipa Payload
+          mv passwordpdf.ipa $CM_BUILD_DIR/passwordpdf.ipa
+
+    artifacts:
+      - build/ios/iphoneos/passwordpdf.ipa
+      - $CM_BUILD_DIR/passwordpdf.ipa
+      - flutter_drive.log
+
+    publishing:
+      email:
+        recipients: []
+        notify:
+          success: false
+          failure: false
