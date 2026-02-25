@@ -1,3 +1,5 @@
+ext.kotlin_version = '2.1.0'
+
 allprojects {
     repositories {
         google()
@@ -7,11 +9,40 @@ allprojects {
 
 rootProject.buildDir = "../build"
 subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
-}
-subprojects {
     project.evaluationDependsOn(":app")
 }
+
+subprojects {
+    project.configurations.all {
+        resolutionStrategy {
+            force 'androidx.browser:browser:1.8.0'
+            force 'androidx.core:core-ktx:1.15.0'
+            force 'androidx.core:core:1.15.0'
+        }
+    }
+}
+
+// Global Listener to override plugin defaults after they are evaluated
+gradle.afterProject { project ->
+    if (project.plugins.hasPlugin("com.android.library") || project.plugins.hasPlugin("com.android.application")) {
+        project.android {
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+        }
+    }
+}
+
+// Global configuration for Kotlin
+allprojects {
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = "17"
+        }
+    }
+}
+
 
 tasks.register("clean", Delete) {
     delete rootProject.buildDir

@@ -1,5 +1,5 @@
-import '../../models/recent_document_model.dart';
-import '../../services/storage_service.dart';
+import '../../../models/recent_document_model.dart';
+import '../../../services/storage_service.dart';
 import 'dart:io';
 
 /// Service for managing recent documents

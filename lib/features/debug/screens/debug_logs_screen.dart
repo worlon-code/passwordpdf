@@ -3,7 +3,10 @@ import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
 import '../../../services/logging_service.dart';
+import '../../settings/services/settings_service.dart';
+import '../../common/utils/file_conflict_resolver.dart';
 
 /// Debug Logs screen for viewing app logs
 class DebugLogsScreen extends StatefulWidget {
@@ -95,25 +98,46 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
         buffer.writeln('---');
       }
 
-      // Get temp directory and save file
-      final tempDir = await getTemporaryDirectory();
-      final fileName = 'debug_logs_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
-      final file = File('${tempDir.path}/$fileName');
-      await file.writeAsString(buffer.toString());
+      // Get configure export path
+      final settings = context.read<SettingsService>();
+      final exportPath = settings.exportPath;
+      
+      if (exportPath == null) {
+        throw Exception('Export path not configured');
+      }
 
-      // Share the file
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        subject: 'PDF Manager Debug Logs',
-        text: 'Debug logs exported from PDF Manager app',
+      final exportDir = Directory(exportPath);
+      if (!exportDir.existsSync()) {
+        exportDir.createSync(recursive: true);
+      }
+
+      final fileName = 'debug_logs_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
+      final defaultPath = '${exportDir.path}/$fileName';
+
+      final savePath = await FileConflictResolver.resolve(
+        context: context,
+        filePath: defaultPath,
       );
 
-      _loggingService.info('DebugLogsScreen', 'Logs exported: $fileName');
-    } catch (e) {
-      _loggingService.error('DebugLogsScreen', 'Failed to export logs', e);
+      if (savePath == null) return;
+
+      final file = File(savePath);
+      await file.writeAsString(buffer.toString());
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to export logs: $e')),
+          SnackBar(
+            content: Text('Logs saved to .../${fileName}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _loggingService.info('DebugLogsScreen', 'Logs saved: ${file.path}');
+      }
+    } catch (e) {
+      _loggingService.error('DebugLogsScreen', 'Failed to save logs', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save logs: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -158,9 +182,9 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
         title: const Text('Debug Logs'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.share),
+            icon: const Icon(Icons.save_alt),
             onPressed: _exportLogs,
-            tooltip: 'Export Logs',
+            tooltip: 'Save Logs',
           ),
           IconButton(
             icon: const Icon(Icons.copy),

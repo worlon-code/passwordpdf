@@ -17,6 +17,7 @@ class PermissionService {
     final permissions = <Permission>[
       Permission.storage,
       Permission.manageExternalStorage,
+      Permission.notification,
     ];
     
     final statuses = <Permission, PermissionStatus>{};

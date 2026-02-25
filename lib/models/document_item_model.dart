@@ -3,21 +3,35 @@ class DocumentItem {
   final String id;
   final String name;
   final DocumentItemType type;
-  final String? filePath; // Only for files
+  final String? sourcePath; // Original device path (Zero Copy: no app storage copy)
   final String? parentId; // Parent folder ID for nested structure
   final List<String> fileIds; // Only for folders - contains file IDs
+  final int size; // File size in bytes (0 for folders or legacy)
   final DateTime createdAt;
   final DateTime modifiedAt;
+  final bool isImported; // True if created via Folder Import (Restricted Move/Sync Managed)
+  final bool isImportedFile; // True if file manually added to synced folder
+  final bool isNew; // For "NEW" badge
+  final bool missingOnDevice; // For "Removed" files
+  final DateTime? addedAt;
+  final DateTime? lastSynced;
 
   DocumentItem({
     required this.id,
     required this.name,
     required this.type,
-    this.filePath,
+    this.sourcePath,
     this.parentId,
     List<String>? fileIds,
+    this.size = 0,
     DateTime? createdAt,
     DateTime? modifiedAt,
+    this.isImported = false,
+    this.isImportedFile = false,
+    this.isNew = false,
+    this.missingOnDevice = false,
+    this.addedAt,
+    this.lastSynced,
   })  : fileIds = fileIds ?? [],
         createdAt = createdAt ?? DateTime.now(),
         modifiedAt = modifiedAt ?? DateTime.now();
@@ -27,19 +41,35 @@ class DocumentItem {
 
   DocumentItem copyWith({
     String? name,
+    String? sourcePath,
     String? parentId,
+    bool clearParentId = false,
     List<String>? fileIds,
+    int? size,
     DateTime? modifiedAt,
+    bool? isImported,
+    bool? isImportedFile,
+    bool? isNew,
+    bool? missingOnDevice,
+    DateTime? addedAt,
+    DateTime? lastSynced,
   }) {
     return DocumentItem(
       id: id,
       name: name ?? this.name,
       type: type,
-      filePath: filePath,
-      parentId: parentId ?? this.parentId,
+      sourcePath: sourcePath ?? this.sourcePath,
+      parentId: clearParentId ? null : (parentId ?? this.parentId),
       fileIds: fileIds ?? this.fileIds,
+      size: size ?? this.size,
       createdAt: createdAt,
       modifiedAt: modifiedAt ?? DateTime.now(),
+      isImported: isImported ?? this.isImported,
+      isImportedFile: isImportedFile ?? this.isImportedFile,
+      isNew: isNew ?? this.isNew,
+      missingOnDevice: missingOnDevice ?? this.missingOnDevice,
+      addedAt: addedAt ?? this.addedAt,
+      lastSynced: lastSynced ?? this.lastSynced,
     );
   }
 
@@ -48,26 +78,43 @@ class DocumentItem {
       'id': id,
       'name': name,
       'type': type.toString(),
-      'filePath': filePath,
+      'sourcePath': sourcePath, 
+      'filePath': sourcePath, 
       'parentId': parentId,
       'fileIds': fileIds,
+      'size': size,
       'createdAt': createdAt.toIso8601String(),
       'modifiedAt': modifiedAt.toIso8601String(),
+      'isImported': isImported,
+      'isImportedFile': isImportedFile,
+      'isNew': isNew,
+      'missingOnDevice': missingOnDevice,
+      'addedAt': addedAt?.toIso8601String(),
+      'lastSynced': lastSynced?.toIso8601String(),
     };
   }
 
   factory DocumentItem.fromJson(Map<String, dynamic> json) {
+    final path = json['sourcePath'] as String? ?? json['filePath'] as String?;
+    
     return DocumentItem(
       id: json['id'] as String,
       name: json['name'] as String,
       type: DocumentItemType.values.firstWhere(
         (e) => e.toString() == json['type'],
       ),
-      filePath: json['filePath'] as String?,
+      sourcePath: path,
       parentId: json['parentId'] as String?,
       fileIds: (json['fileIds'] as List<dynamic>?)?.cast<String>() ?? [],
+      size: json['size'] as int? ?? 0,
       createdAt: DateTime.parse(json['createdAt'] as String),
       modifiedAt: DateTime.parse(json['modifiedAt'] as String),
+      isImported: json['isImported'] as bool? ?? false,
+      isImportedFile: json['isImportedFile'] as bool? ?? false,
+      isNew: json['isNew'] as bool? ?? false,
+      missingOnDevice: json['missingOnDevice'] as bool? ?? false,
+      addedAt: json['addedAt'] != null ? DateTime.parse(json['addedAt']) : null,
+      lastSynced: json['lastSynced'] != null ? DateTime.parse(json['lastSynced']) : null,
     );
   }
 }
@@ -80,8 +127,8 @@ enum DocumentItemType {
 /// Helper to get file extension
 extension DocumentItemExtension on DocumentItem {
   String? get fileExtension {
-    if (isFile && filePath != null) {
-      final parts = filePath!.split('.');
+    if (isFile && sourcePath != null) {
+      final parts = sourcePath!.split('.');
       if (parts.length > 1) {
         return parts.last.toLowerCase();
       }

@@ -25,9 +25,17 @@ class SettingsService extends ChangeNotifier {
   );
   final LoggingService _log = LoggingService();
   
-  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode _themeMode = ThemeMode.light;
   AuthMethod _authMethod = AuthMethod.none;
   bool _hasPinSet = false;
+  Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
+  int _fontSizeAdjustment = -4; // -7 to 0, default -4
+  int _maxLogCount = 8000;
+  bool _developerModeEnabled = false;
+  int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
+  int _autoLockTimeout = 10; // Default 10 minutes
+  int _lastViewedBuildNumber = 0; // For What's New dialog
+  bool _autoCheckUpdates = true; // Default true
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -36,6 +44,14 @@ class SettingsService extends ChangeNotifier {
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get biometricEnabled => _authMethod == AuthMethod.fingerprintOnly || _authMethod == AuthMethod.both;
   bool get pinEnabled => _authMethod == AuthMethod.pinOnly || _authMethod == AuthMethod.both;
+  Color get accentColor => _accentColor;
+  int get fontSizeAdjustment => _fontSizeAdjustment;
+  int get maxLogCount => _maxLogCount;
+  bool get developerModeEnabled => _developerModeEnabled;
+  int get defaultScreenIndex => _defaultScreenIndex;
+  int get autoLockTimeout => _autoLockTimeout;
+  int get lastViewedBuildNumber => _lastViewedBuildNumber;
+  bool get autoCheckUpdates => _autoCheckUpdates;
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -67,11 +83,58 @@ class SettingsService extends ChangeNotifier {
       );
     }
 
+    // Load accent color
+    final accentColorInt = _prefs!.getInt('accent_color');
+    if (accentColorInt != null) {
+      _accentColor = Color(accentColorInt);
+    }
+
+    // Load font size adjustment
+    final fontAdj = _prefs!.getInt('font_size_adjustment');
+    if (fontAdj != null) {
+      _fontSizeAdjustment = fontAdj.clamp(-7, 0);
+    }
+
+    // Load max log count
+    final maxLog = _prefs!.getInt('max_log_count');
+    if (maxLog != null) {
+      _maxLogCount = maxLog.clamp(1000, 50000);
+    }
+    _log.setMaxLogLimit(_maxLogCount);
+
     // Check if PIN is set
     final pin = await _secureStorage.read(key: 'app_pin');
     _hasPinSet = pin != null && pin.isNotEmpty;
+    
+    // Load developer mode
+    _developerModeEnabled = _prefs!.getBool('developer_mode_enabled') ?? false;
+    
+    // Load default screen index (0 = All Docs, 1 = Documents)
+    _defaultScreenIndex = _prefs!.getInt('default_screen_index') ?? 0;
 
-    _log.info('SettingsService', 'Settings loaded: themeMode=$_themeMode, authMethod=$_authMethod, hasPinSet=$_hasPinSet');
+    // Load auto-lock timeout
+    final timeout = _prefs!.getInt('auto_lock_timeout');
+    if (timeout != null) {
+      _autoLockTimeout = timeout.clamp(3, 30);
+    }
+
+    // Load last viewed build number
+    _lastViewedBuildNumber = _prefs!.getInt('last_viewed_build_number') ?? 0;
+    
+    // Load auto-update check
+    _autoCheckUpdates = _prefs!.getBool('auto_check_updates') ?? true;
+
+    _log.info('SettingsService', 'Settings loaded: autoCheckUpdates=$_autoCheckUpdates');
+    notifyListeners();
+  }
+  
+  // ... existing setters ...
+
+  /// Set auto-update check preference
+  Future<void> setAutoCheckUpdates(bool enabled) async {
+    _autoCheckUpdates = enabled;
+    await _prefs?.setBool('auto_check_updates', enabled);
+    _log.info('SettingsService', 'Auto-check updates set to: $enabled');
     notifyListeners();
   }
 
@@ -89,6 +152,28 @@ class SettingsService extends ChangeNotifier {
     } else {
       await setThemeMode(ThemeMode.dark);
     }
+  }
+
+  /// Set accent color
+  Future<void> setAccentColor(Color color) async {
+    _accentColor = color;
+    await _prefs?.setInt('accent_color', color.value);
+    notifyListeners();
+  }
+
+  /// Set font size adjustment (-7 to 0)
+  Future<void> setFontSizeAdjustment(int adjustment) async {
+    _fontSizeAdjustment = adjustment.clamp(-7, 0);
+    await _prefs?.setInt('font_size_adjustment', _fontSizeAdjustment);
+    notifyListeners();
+  }
+
+  /// Set max log count (1000 to 50000)
+  Future<void> setMaxLogCount(int count) async {
+    _maxLogCount = count.clamp(1000, 50000);
+    await _prefs?.setInt('max_log_count', _maxLogCount);
+    _log.setMaxLogLimit(_maxLogCount);
+    notifyListeners();
   }
 
   /// Set authentication method
@@ -183,8 +268,8 @@ class SettingsService extends ChangeNotifier {
     return await setPin(newPin);
   }
 
-  /// Get export path (defaults to Downloads)
-  String? get exportPath => _prefs?.getString('export_path');
+  /// Get export path (defaults to Downloads/PDF Manager)
+  String get exportPath => _prefs?.getString('export_path') ?? '/storage/emulated/0/Download/PDF Manager';
 
   /// Set export path
   Future<void> setExportPath(String path) async {
@@ -193,10 +278,36 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Clear export path (revert to default Downloads)
-  Future<void> clearExportPath() async {
-    await _prefs?.remove('export_path');
-    _log.info('SettingsService', 'Export path cleared, using default');
+  /// Enable Developer Mode (one-time unlock)
+  Future<void> enableDeveloperMode() async {
+    _developerModeEnabled = true;
+    await _prefs?.setBool('developer_mode_enabled', true);
+    _log.info('SettingsService', 'Developer mode enabled');
     notifyListeners();
   }
+
+  /// Set default screen index (0 = All Docs, 1 = Documents)
+  Future<void> setDefaultScreenIndex(int index) async {
+    _defaultScreenIndex = index.clamp(0, 1);
+    await _prefs?.setInt('default_screen_index', _defaultScreenIndex);
+    _log.info('SettingsService', 'Default screen set to: ${_defaultScreenIndex == 0 ? 'All Docs' : 'Documents'}');
+    notifyListeners();
+  }
+
+  /// Set auto-lock timeout (3 to 30 minutes)
+  Future<void> setAutoLockTimeout(int minutes) async {
+    _autoLockTimeout = minutes.clamp(3, 30);
+    await _prefs?.setInt('auto_lock_timeout', _autoLockTimeout);
+    _log.info('SettingsService', 'Auto-lock timeout set to: $_autoLockTimeout minutes');
+    notifyListeners();
+  }
+
+  /// Set last viewed build number (to suppress What's New for this version)
+  Future<void> setLastViewedBuildNumber(int buildNumber) async {
+    _lastViewedBuildNumber = buildNumber;
+    await _prefs?.setInt('last_viewed_build_number', _lastViewedBuildNumber);
+    // No notify needed strictly, but good practice
+    notifyListeners();
+  }
+
 }

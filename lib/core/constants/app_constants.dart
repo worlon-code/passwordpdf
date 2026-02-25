@@ -6,12 +6,15 @@ class AppConstants {
   
   // Database
   static const String databaseName = 'passwordpdf.db';
-  static const int databaseVersion = 1;
+  static const int databaseVersion = 3;
   
   // Tables
   static const String passwordsTable = 'passwords';
   static const String recentDocumentsTable = 'recent_documents';
   static const String settingsTable = 'settings';
+  static const String exportJobsTable = 'export_jobs';
+  static const String logsTable = 'logs';
+  static const String filesIndexTable = 'files_index';
   
   // Encryption
   static const String encryptionKeyName = 'pdf_encryption_key';

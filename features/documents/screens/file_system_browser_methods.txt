@@ -1,0 +1,84 @@
+  Future<bool> _checkPermission() async {
+     if (await Permission.storage.isGranted || await Permission.manageExternalStorage.isGranted) return true;
+     final status = await Permission.manageExternalStorage.request();
+     if (status.isGranted) return true;
+     if (await Permission.storage.request().isGranted) return true;
+     setState(() {
+       _isLoading = false;
+       _errorMessage = 'Storage permission required.';
+     });
+     return false;
+  }
+
+  Future<bool> _onWillPop() async {
+    if (_isVirtualMode) {
+        // Exit virtual mode -> Go to Root
+        _openDirectory(Directory('/storage/emulated/0'));
+        return false;
+    }
+    
+    final isRoot = _currentDir.path == '/storage/emulated/0';
+    if (!isRoot) {
+        _navigateUp();
+        return false; // Don't pop
+    }
+    return true; // Pop app/tab
+  }
+
+  void _navigateUp() {
+    final parent = _currentDir.parent;
+    if (parent.path == _currentDir.path) return;
+    if (_currentDir.path == '/storage/emulated/0') return;
+    _currentDir = parent;
+    _loadDirectory();
+  }
+
+  void _openDirectory(Directory d) {
+    setState(() => _isVirtualMode = false);
+    _currentDir = d;
+    _loadDirectory();
+  }
+  
+  void _openCategory(String path) {
+      Navigator.pop(context); // Close Drawer
+      
+      if (path == 'recent' || path == 'all_docs') {
+          _loadVirtualView(path);
+      } else {
+          final dir = Directory(path);
+          if (dir.existsSync()) {
+              _openDirectory(dir);
+          } else {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Folder not found: $path')));
+          }
+      }
+  }
+
+  void _toggleSelection(String path) {
+    setState(() {
+      if (_selectedPaths.contains(path)) {
+        _selectedPaths.remove(path);
+      } else {
+        if (!widget.allowMultiple) _selectedPaths.clear();
+        _selectedPaths.add(path);
+      }
+    });
+    widget.onSelectionChanged?.call(_selectedPaths.toList());
+  }
+
+  IconData _getFileIcon(String fileName) {
+      final ext = fileName.split('.').last.toLowerCase();
+      switch (ext) {
+          case 'pdf': return Icons.picture_as_pdf;
+          case 'doc': 
+          case 'docx': return Icons.description;
+          case 'xls': 
+          case 'xlsx': return Icons.table_chart;
+          case 'txt': return Icons.text_snippet;
+          case 'jpg':
+          case 'jpeg':
+          case 'png': return Icons.image;
+          default: return Icons.insert_drive_file;
+      }
+  }
+}

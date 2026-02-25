@@ -1,4 +1,5 @@
 import 'package:local_auth/local_auth.dart';
+import 'package:local_auth_platform_interface/local_auth_platform_interface.dart';
 import 'package:flutter/services.dart';
 import 'logging_service.dart';
 
@@ -12,34 +13,25 @@ class BiometricService {
   final LoggingService _log = LoggingService();
   static const String _tag = 'BiometricService';
 
-  /// Check if biometric authentication is available on device
+  /// Check if biometric authentication is available on device (Hardware exists)
   Future<bool> isBiometricAvailable() async {
     try {
-      _log.debug(_tag, 'Checking if biometrics can be checked...');
-      final canCheck = await _localAuth.canCheckBiometrics;
-      _log.info(_tag, 'canCheckBiometrics: $canCheck');
-      
-      final isDeviceSupported = await _localAuth.isDeviceSupported();
-      _log.info(_tag, 'isDeviceSupported: $isDeviceSupported');
-      
-      return canCheck && isDeviceSupported;
+      _log.debug(_tag, 'Checking if biometrics hardware exists...');
+      final isSupported = await _localAuth.isDeviceSupported();
+      _log.info(_tag, 'isDeviceSupported: $isSupported');
+      return isSupported;
     } on PlatformException catch (e) {
       _log.error(_tag, 'Error checking biometric availability', e, StackTrace.current);
       return false;
     }
   }
 
-  /// Get list of available biometric types
+  /// Get list of available biometric types (Enrolled ones)
   Future<List<BiometricType>> getAvailableBiometrics() async {
     try {
-      _log.debug(_tag, 'Getting available biometrics...');
+      _log.debug(_tag, 'Getting enrolled biometrics...');
       final biometrics = await _localAuth.getAvailableBiometrics();
-      _log.info(_tag, 'Available biometrics: ${biometrics.map((b) => b.name).join(', ')}');
-      
-      if (biometrics.isEmpty) {
-        _log.warn(_tag, 'No biometrics enrolled on device');
-      }
-      
+      _log.info(_tag, 'Enrolled biometrics: ${biometrics.map((b) => b.name).join(', ')}');
       return biometrics;
     } on PlatformException catch (e) {
       _log.error(_tag, 'Error getting available biometrics', e, StackTrace.current);
@@ -53,31 +45,23 @@ class BiometricService {
   }) async {
     try {
       _log.info(_tag, 'Starting authentication...');
-      _log.debug(_tag, 'Reason: $localizedReason');
       
-      // First check if available
-      final isAvailable = await isBiometricAvailable();
-      if (!isAvailable) {
-        _log.error(_tag, 'Biometric not available on device');
+      // First check if hardware exists
+      final isSupported = await _localAuth.isDeviceSupported();
+      if (!isSupported) {
+        _log.error(_tag, 'Biometric hardware not supported on this device');
         return false;
       }
       
-      // Check enrolled biometrics
-      final biometrics = await getAvailableBiometrics();
-      if (biometrics.isEmpty) {
-        _log.error(_tag, 'No biometrics enrolled - user needs to set up fingerprint in device settings');
-        return false;
-      }
-      
-      _log.debug(_tag, 'Calling authenticate with stickyAuth=true, biometricOnly=false');
+      _log.debug(_tag, 'Calling authenticate with sensitiveTransaction=false for Face Unlock');
       
       final authenticated = await _localAuth.authenticate(
         localizedReason: localizedReason,
-        options: const AuthenticationOptions(
+        options: AuthenticationOptions(
           stickyAuth: true,
           biometricOnly: false,
+          sensitiveTransaction: false, // CRITICAL: Allows Face Unlock (Weak/Class 2) on Android
           useErrorDialogs: true,
-          sensitiveTransaction: true,
         ),
       );
       
@@ -100,32 +84,20 @@ class BiometricService {
   /// Stop authentication
   Future<void> stopAuthentication() async {
     try {
-      _log.debug(_tag, 'Stopping authentication...');
       await _localAuth.stopAuthentication();
-      _log.info(_tag, 'Authentication stopped');
-    } catch (e, stackTrace) {
-      _log.error(_tag, 'Error stopping authentication', e, stackTrace);
-    }
+    } catch (_) {}
   }
 
-  /// Check if device supports biometric authentication and has enrolled biometrics
+  /// Check if device supports biometric authentication (Main check for Settings toggle)
   Future<bool> isDeviceSupported() async {
     try {
-      _log.debug(_tag, 'Checking full device support...');
-      
-      final isAvailable = await isBiometricAvailable();
-      if (!isAvailable) {
-        _log.warn(_tag, 'Device does not support biometrics or cannot check');
-        return false;
-      }
-
-      final availableBiometrics = await getAvailableBiometrics();
-      final hasEnrolled = availableBiometrics.isNotEmpty;
-      
-      _log.info(_tag, 'Device supported: $hasEnrolled (has ${availableBiometrics.length} enrolled)');
-      return hasEnrolled;
-    } catch (e, stackTrace) {
-      _log.error(_tag, 'Error checking device support', e, stackTrace);
+      // Just check if the device HAS the hardware. 
+      // Enrollment check can happen during the actual toggle/auth flow.
+      final isSupported = await _localAuth.isDeviceSupported();
+      _log.info(_tag, 'isDeviceSupported (Settings Check): $isSupported');
+      return isSupported;
+    } catch (e) {
+      _log.error(_tag, 'Error checking device support', e);
       return false;
     }
   }
@@ -158,5 +130,36 @@ class BiometricService {
     
     _log.info(_tag, 'Detailed status: $status');
     return status;
+  }
+
+  /// Helper to get a human-readable label for available biometrics
+  Future<String> getBiometricLabel() async {
+    final types = await getAvailableBiometrics();
+    if (types.contains(BiometricType.face)) return 'Face Unlock';
+    if (types.contains(BiometricType.fingerprint)) return 'Fingerprint Unlock';
+    if (types.contains(BiometricType.iris)) return 'Iris Unlock';
+    
+    // If no specific type enrolled but hardware is supported
+    if (await isDeviceSupported()) {
+      return 'Biometric Unlock';
+    }
+    
+    return 'Biometric Unlock';
+  }
+
+  /// Helper to get an appropriate icon for available biometrics
+  Future<dynamic> getBiometricIcon() async {
+    final types = await getAvailableBiometrics();
+    
+    if (types.contains(BiometricType.face)) return 'face';
+    if (types.contains(BiometricType.fingerprint)) return 'fingerprint';
+    if (types.contains(BiometricType.iris)) return 'remove_red_eye';
+    
+    // Default security icon if hardware is there but not enrolled
+    if (await isDeviceSupported()) {
+      return 'security';
+    }
+    
+    return 'fingerprint';
   }
 }

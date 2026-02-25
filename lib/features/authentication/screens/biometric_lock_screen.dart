@@ -4,14 +4,17 @@ import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../settings/services/settings_service.dart';
+import '../../../features/authentication/widgets/animated_splash_logo.dart';
 
 /// Lock screen that handles both fingerprint and PIN authentication
 class BiometricLockScreen extends StatefulWidget {
   final VoidCallback onAuthenticated;
+  final bool isOverlay;
 
   const BiometricLockScreen({
     super.key,
     required this.onAuthenticated,
+    this.isOverlay = false,
   });
 
   @override
@@ -28,13 +31,37 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
   bool _pinError = false;
   int _pinAttempts = 0;
 
+  // Dynamic UI elements
+  IconData _biometricIcon = Icons.fingerprint;
+  String _biometricLabel = 'Biometric';
+  String _biometricShortLabel = 'Biometric';
+
   @override
   void initState() {
     super.initState();
-    _log.info('LockScreen', 'Lock screen initialized');
+    _log.info('LockScreen', 'Lock screen initialized (Overlay: ${widget.isOverlay})');
+    _loadBiometricData();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startAuthentication();
     });
+  }
+
+  Future<void> _loadBiometricData() async {
+    final label = await _biometricService.getBiometricLabel();
+    final iconStr = await _biometricService.getBiometricIcon();
+    
+    IconData icon = Icons.fingerprint;
+    if (iconStr == 'face') icon = Icons.face;
+    if (iconStr == 'remove_red_eye') icon = Icons.visibility;
+    if (iconStr == 'security') icon = Icons.security;
+    
+    if (mounted) {
+      setState(() {
+        _biometricLabel = label;
+        _biometricIcon = icon;
+        _biometricShortLabel = label.replaceAll(' Unlock', '');
+      });
+    }
   }
 
   void _startAuthentication() {
@@ -44,9 +71,9 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
     
     // Priority: Fingerprint > PIN
     if (settings.biometricEnabled) {
-      // Fingerprint is enabled, try it first
-      _log.info('LockScreen', 'Fingerprint enabled - starting fingerprint auth');
-      _authenticateWithFingerprint();
+      // Biometric is enabled, try it first
+      _log.info('LockScreen', 'Biometric enabled - starting auth');
+      _authenticateWithBiometrics();
     } else if (settings.pinEnabled) {
       // Only PIN is enabled, show PIN entry directly
       _log.info('LockScreen', 'Only PIN enabled - showing PIN entry');
@@ -61,7 +88,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
     }
   }
 
-  Future<void> _authenticateWithFingerprint() async {
+  Future<void> _authenticateWithBiometrics() async {
     if (_isAuthenticating) return;
 
     setState(() {
@@ -70,7 +97,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
       _showPinEntry = false;
     });
 
-    _log.info('LockScreen', 'Starting fingerprint authentication...');
+    _log.info('LockScreen', 'Starting biometric authentication...');
 
     try {
       final authenticated = await _biometricService.authenticate(
@@ -78,24 +105,24 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
       );
 
       if (authenticated) {
-        _log.info('LockScreen', 'Fingerprint authentication successful');
+        _log.info('LockScreen', 'Biometric authentication successful');
         widget.onAuthenticated();
       } else {
-        _log.warn('LockScreen', 'Fingerprint failed');
+        _log.warn('LockScreen', 'Biometric failed');
         final settings = Provider.of<SettingsService>(context, listen: false);
         
         setState(() {
           _isAuthenticating = false;
           if (settings.hasPinSet) {
             _showPinEntry = true;
-            _message = 'Fingerprint failed. Enter PIN instead';
+            _message = '$_biometricShortLabel failed. Enter PIN instead';
           } else {
             _message = 'Authentication failed. Tap to try again';
           }
         });
       }
     } catch (e, stack) {
-      _log.error('LockScreen', 'Fingerprint error', e, stack);
+      _log.error('LockScreen', 'Biometric error', e, stack);
       final settings = Provider.of<SettingsService>(context, listen: false);
       
       setState(() {
@@ -157,55 +184,51 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // If overlay, use semi-transparent black background. Otherwise use branded gradient.
+    final colorScheme = Theme.of(context).colorScheme;
+    
+    final decoration = widget.isOverlay 
+        ? BoxDecoration(color: Colors.black.withOpacity(0.85)) // Dark overlay
+        : BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primary,
+                colorScheme.secondary,
+                colorScheme.tertiary,
+              ],
+            ),
+          );
+
     return Scaffold(
+      backgroundColor: widget.isOverlay ? Colors.transparent : null,
       body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppTheme.primaryLight,
-              AppTheme.secondaryLight,
-              AppTheme.accentLight,
-            ],
-          ),
-        ),
+        decoration: decoration,
         child: SafeArea(
-          child: _showPinEntry ? _buildPinEntry() : _buildFingerprintAuth(),
+          child: _showPinEntry ? _buildPinEntry() : _buildBiometricAuth(),
         ),
       ),
     );
   }
 
-  Widget _buildFingerprintAuth() {
+  Widget _buildBiometricAuth() {
     final settings = Provider.of<SettingsService>(context, listen: false);
     
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // App Logo
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.lock_outline, size: 80, color: Colors.white),
-          ),
-          
-          const SizedBox(height: 40),
-          
-          const Text(
-            'PDF Password Manager',
-            style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+          // Animated Logo & Text
+          const AnimatedSplashLogo(
+             animateText: true,
           ),
           
           const SizedBox(height: 60),
           
-          // Fingerprint button
+          // Biometric button
           GestureDetector(
-            onTap: _isAuthenticating ? null : _authenticateWithFingerprint,
+            onTap: _isAuthenticating ? null : _authenticateWithBiometrics,
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -215,7 +238,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
               ),
               child: _isAuthenticating
                   ? const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(Colors.white))
-                  : const Icon(Icons.fingerprint, size: 60, color: Colors.white),
+                  : Icon(_biometricIcon, size: 60, color: Colors.white),
             ),
           ),
           
@@ -313,17 +336,17 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
         
         const SizedBox(height: 16),
         
-        // Fingerprint option (only if fingerprint is enabled)
+        // Biometric option (only if biometric is enabled)
         if (settings.biometricEnabled)
           TextButton.icon(
             onPressed: () => setState(() {
               _showPinEntry = false;
               _enteredPin = '';
-              _authenticateWithFingerprint();
+              _authenticateWithBiometrics();
             }),
             style: TextButton.styleFrom(foregroundColor: Colors.white),
-            icon: const Icon(Icons.fingerprint),
-            label: const Text('Use Fingerprint'),
+            icon: Icon(_biometricIcon),
+            label: Text('Use $_biometricShortLabel'),
           ),
         
         const SizedBox(height: 32),
