@@ -168,12 +168,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       barrierDismissible: false,
       builder: (ctx) => const PasswordSelectionDialog(),
     );
-    
-    if (password != null && password.isNotEmpty) {
+
+    // Distinguish: null  = user cancelled/dismissed (pop the viewer),
+    //              ''    = user chose "No Password" -> attempt empty password,
+    //              other = a real password attempt.
+    if (password != null) {
       _currentPassword = password;
       return password;
     }
-    
+
     // User cancelled
     if (mounted) {
        Navigator.pop(context);
