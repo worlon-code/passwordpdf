@@ -157,23 +157,41 @@ class DeviceDocumentService {
               final currentMod = stat.modified.millisecondsSinceEpoch;
               // final isModified = lastMod == null || lastMod != currentMod; // Unused without Trigrams
 
-              batch.insert(
-                AppConstants.filesIndexTable,
-                {
-                  'path': file.path,
-                  'name': name,
-                  'extension': ext,
-                  'parent_path': parent,
-                  'size': stat.size,
-                  'created_at': stat.changed.millisecondsSinceEpoch,
-                  'modified_at': currentMod,
-                  'last_scanned': syncTime,
-                  'is_folder': isFolder,
-                  'has_pdf': hasPdf,
-                  'has_doc': hasDoc,
-                  'has_excel': hasExcel
-                },
-                conflictAlgorithm: ConflictAlgorithm.replace
+              // Phase ?, Step 3: Upsert that preserves curated columns.
+              // Using raw ON CONFLICT DO UPDATE instead of ConflictAlgorithm.replace,
+              // because replace DELETEs the row and wipes is_new/missing_on_device/
+              // added_at/is_imported/is_imported_file. We only refresh scan-owned columns.
+              batch.rawInsert(
+                'INSERT INTO ${AppConstants.filesIndexTable} '
+                '(path, name, extension, parent_path, size, created_at, modified_at, '
+                'last_scanned, is_folder, has_pdf, has_doc, has_excel) '
+                'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+                'ON CONFLICT(path) DO UPDATE SET '
+                'name = excluded.name, '
+                'extension = excluded.extension, '
+                'parent_path = excluded.parent_path, '
+                'size = excluded.size, '
+                'created_at = COALESCE(${AppConstants.filesIndexTable}.created_at, excluded.created_at), '
+                'modified_at = excluded.modified_at, '
+                'last_scanned = excluded.last_scanned, '
+                'is_folder = excluded.is_folder, '
+                'has_pdf = excluded.has_pdf, '
+                'has_doc = excluded.has_doc, '
+                'has_excel = excluded.has_excel',
+                [
+                  file.path,
+                  name,
+                  ext,
+                  parent,
+                  stat.size,
+                  stat.changed.millisecondsSinceEpoch,
+                  currentMod,
+                  syncTime,
+                  isFolder,
+                  hasPdf,
+                  hasDoc,
+                  hasExcel,
+                ],
               );
 
               // Phase 1.10: Trigrams REMOVED (In-Memory Search used instead)
@@ -224,10 +242,13 @@ class DeviceDocumentService {
          
          await batch.commit(noResult: true);
          
-         // Sweep: Delete old records
+         // Phase ?, Step 3: Sweep only scan-owned rows. Imported rows
+         // (is_imported = 1) are not produced by the filesystem scan, so
+         // their last_scanned is always stale — scoping to is_imported = 0
+         // prevents the sweep from deleting user-imported files.
          final deleted = await txn.delete(
             AppConstants.filesIndexTable, 
-            where: 'last_scanned < ?', 
+            where: 'last_scanned < ? AND is_imported = 0', 
             whereArgs: [syncTime]
          );
          _log.info('DeviceDocumentService', 'Sync complete. Removed $deleted stale records.');
