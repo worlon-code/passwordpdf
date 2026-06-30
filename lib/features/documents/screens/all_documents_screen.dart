@@ -663,7 +663,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
           _log.info('AllDocumentsScreen', 'Skipping ${file.path}');
           continue;
         } else if (action.type == ConflictActionType.rename) {
-        } else if (action.type == ConflictActionType.rename) {
+
           // Auto-rename logic: Find next unique suffix (_1, _2, etc.)
           final fileName = file.path.split(Platform.pathSeparator).last;
           final dotIndex = fileName.lastIndexOf('.');
