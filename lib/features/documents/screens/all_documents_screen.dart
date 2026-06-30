@@ -754,32 +754,45 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       String targetName = filesToRename[file.path] ?? fileName;
       
       try {
-        // Handle Overwrite: Delete existing file first
-        if (filesToOverwrite.contains(file.path)) {
-           final existingId = docService.getFileIdInFolder(fileName, folderId);
-           if (existingId != null) {
-             _log.info('AllDocumentsScreen', 'Overwriting: Deleting existing item $existingId');
-             await docService.deleteItem(existingId);
-           }
+        // Phase ?, Step 4: Overwrite = temp-then-swap.
+        // Resolve the existing item id up front but DO NOT delete it yet.
+        // We import the new file first; only after it succeeds do we delete
+        // the old item. This guarantees a failed import can never leave the
+        // user with neither the old nor the new file.
+        final bool isOverwrite = filesToOverwrite.contains(file.path);
+        String? existingId;
+        String importName = targetName;
+        if (isOverwrite) {
+           existingId = docService.getFileIdInFolder(fileName, folderId);
+           // Import the new copy under a temporary unique name so it does not
+           // collide with the still-present original.
+           importName = '__import_tmp_${DateTime.now().millisecondsSinceEpoch}_$targetName';
         }
-        
-        // Import
-        // Note: importFile logic handles creating NEW file. 
-        // If we are overwriting, we just deleted the old one, so it's a new import.
+
+        // Import (always allow duplicate when overwriting, since the original
+        // is intentionally still present at this point).
         final result = await docService.importFile(
           file.path, 
           fileName, 
-          targetName: targetName,
-          allowDuplicate: forceImport
+          targetName: importName,
+          allowDuplicate: forceImport || isOverwrite
         );
         
         if (result.success && result.importItem != null) {
+          // New file is safely imported. Now it is safe to remove the old one.
+          if (isOverwrite && existingId != null) {
+             _log.info('AllDocumentsScreen', 'Overwrite: import succeeded, deleting old item $existingId');
+             await docService.deleteItem(existingId);
+             // Rename the temp import to the intended final name.
+             await docService.renameItem(result.importItem!.id, targetName);
+          }
           successCount++;
           // If we imported into specific folder, move it there
           if (folderId != null) {
              await docService.addFileToFolder(result.importItem!.id, folderId);
           }
         } else {
+          // Import failed: original (if overwrite) is untouched. No data loss.
           failCount++;
           _log.warn('AllDocumentsScreen', 'Failed to import ${file.path}: ${result.errorMessage}');
         }
