@@ -59,7 +59,7 @@ class BiometricService {
         localizedReason: localizedReason,
         options: AuthenticationOptions(
           stickyAuth: true,
-          biometricOnly: false,
+          biometricOnly: true,
           sensitiveTransaction: false, // CRITICAL: Allows Face Unlock (Weak/Class 2) on Android
           useErrorDialogs: true,
         ),
