@@ -447,9 +447,12 @@ class DocumentService {
       return baseDir;
     }
 
-    final folder = _items.firstWhere((i) => i.id == folderId);
-    
-    // If it's a synced/imported folder, it has a physical source path
+    final folderIndex = _items.indexWhere((i) => i.id == folderId);
+    if (folderIndex == -1) {
+      // Folder not found (e.g., deleted); fallback to base directory.
+      return baseDir;
+    }
+    final folder = _items[folderIndex];
     if (folder.sourcePath != null) {
       return folder.sourcePath!;
     }
@@ -715,7 +718,20 @@ class DocumentService {
     if (!folder.isFolder) {
       throw Exception('Item is not a folder');
     }
-    
+        // Prevent moving a folder into itself or ANY descendant (full-depth cycle check).
+        if (newParentId == folderId) {
+          throw Exception('Cannot move folder into itself');
+        }
+        bool isDescendantOf(String candidate, String root) {
+          for (final sub in getSubfolders(root)) {
+            if (sub.id == candidate || isDescendantOf(candidate, sub.id)) return true;
+          }
+          return false;
+        }
+        if (isDescendantOf(newParentId, folderId)) {
+          throw Exception('Cannot move folder into its own descendant');
+        }
+
     // Check for name conflict at destination
     final conflictingFolder = _items.where((item) =>
         item.isFolder &&
