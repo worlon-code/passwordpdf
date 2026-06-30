@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:path/path.dart' as path;
-import 'package:flutter/widgets.dart'; // For Offset if needed
+import '../core/extensions/pdf_document_extensions.dart';
 import '../services/logging_service.dart';
 
 /// Service for advanced PDF operations: Split, Merge, Reorder, Remove Password
@@ -18,36 +18,28 @@ class PdfToolsService {
 
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    
     final newDocument = PdfDocument();
-    
-    for (int i = 0; i < document.pages.count; i++) {
-      final srcPage = document.pages[i];
-      final template = srcPage.createTemplate();
-      // Create section with matching page size
-      final section = newDocument.sections!.add();
-      section.pageSettings.size = srcPage.size;
-      section.pageSettings.margins.all = 0;
-      final page = section.pages.add();
-      page.graphics.drawPdfTemplate(template, const Offset(0, 0));
+    try {
+      // Real page import preserves text/links/form fields (no visual flatten)
+      newDocument.importPageRange(document, 0, document.pages.count - 1);
+
+      String newPath;
+      if (savePath != null) {
+        newPath = savePath;
+      } else {
+        final dir = outputDir ?? path.dirname(filePath);
+        final filename = path.basenameWithoutExtension(filePath);
+        final ext = path.extension(filePath);
+        newPath = path.join(dir, '${filename}_unlocked$ext');
+      }
+
+      final newBytes = await newDocument.save();
+      await File(newPath).writeAsBytes(newBytes);
+      return newPath;
+    } finally {
+      document.dispose();
+      newDocument.dispose();
     }
-    
-    String newPath;
-    if (savePath != null) {
-      newPath = savePath;
-    } else {
-      final dir = outputDir ?? path.dirname(filePath);
-      final filename = path.basenameWithoutExtension(filePath);
-      final ext = path.extension(filePath);
-      newPath = path.join(dir, '${filename}_unlocked$ext');
-    }
-    
-    final newBytes = await newDocument.save();
-    document.dispose();
-    newDocument.dispose();
-    
-    await File(newPath).writeAsBytes(newBytes);
-    return newPath;
   }
 
   /// Add password to a PDF and save as new file
@@ -63,27 +55,28 @@ class PdfToolsService {
     final bytes = await file.readAsBytes();
     // Load without password (it's unprotected)
     final document = PdfDocument(inputBytes: bytes);
-    
-    // Set security
-    document.security.userPassword = password;
-    document.security.ownerPassword = password;
-    // Default security is usually sufficient (RC4 or AES depending on version)
-    
-    String newPath;
-    if (savePath != null) {
-      newPath = savePath;
-    } else {
-      final dir = outputDir ?? path.dirname(filePath);
-      final filename = path.basenameWithoutExtension(filePath);
-      final ext = path.extension(filePath);
-      newPath = path.join(dir, '${filename}_protected$ext');
+    try {
+      // Set security
+      document.security.userPassword = password;
+      document.security.ownerPassword = password;
+      // Default security is usually sufficient (RC4 or AES depending on version)
+
+      String newPath;
+      if (savePath != null) {
+        newPath = savePath;
+      } else {
+        final dir = outputDir ?? path.dirname(filePath);
+        final filename = path.basenameWithoutExtension(filePath);
+        final ext = path.extension(filePath);
+        newPath = path.join(dir, '${filename}_protected$ext');
+      }
+
+      final newBytes = await document.save();
+      await File(newPath).writeAsBytes(newBytes);
+      return newPath;
+    } finally {
+      document.dispose();
     }
-    
-    final newBytes = await document.save();
-    document.dispose();
-    
-    await File(newPath).writeAsBytes(newBytes);
-    return newPath;
   }
 
   /// Reorder pages in a PDF
@@ -99,38 +92,32 @@ class PdfToolsService {
 
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    
     final newDocument = PdfDocument();
-
-    for (final index in pageOrder) {
-      if (index >= 0 && index < document.pages.count) {
-        final srcPage = document.pages[index];
-        final template = srcPage.createTemplate();
-        // Create section with matching page size
-        final section = newDocument.sections!.add();
-        section.pageSettings.size = srcPage.size;
-        section.pageSettings.margins.all = 0;
-        final page = section.pages.add();
-        page.graphics.drawPdfTemplate(template, const Offset(0, 0));
+    try {
+      for (final index in pageOrder) {
+        if (index >= 0 && index < document.pages.count) {
+          // Import one real page at a time, in the requested order
+          newDocument.importPageRange(document, index, index);
+        }
       }
+
+      String newPath;
+      if (savePath != null) {
+        newPath = savePath;
+      } else {
+        final dir = outputDir ?? path.dirname(filePath);
+        final filename = path.basenameWithoutExtension(filePath);
+        final ext = path.extension(filePath);
+        newPath = path.join(dir, '${filename}_reordered$ext');
+      }
+
+      final newBytes = await newDocument.save();
+      await File(newPath).writeAsBytes(newBytes);
+      return newPath;
+    } finally {
+      document.dispose();
+      newDocument.dispose();
     }
-    
-    String newPath;
-    if (savePath != null) {
-      newPath = savePath;
-    } else {
-      final dir = outputDir ?? path.dirname(filePath);
-      final filename = path.basenameWithoutExtension(filePath);
-      final ext = path.extension(filePath);
-      newPath = path.join(dir, '${filename}_reordered$ext');
-    }
-    
-    final newBytes = await newDocument.save();
-    document.dispose();
-    newDocument.dispose();
-    
-    await File(newPath).writeAsBytes(newBytes);
-    return newPath;
   }
   
   /// Split PDF pages
@@ -144,39 +131,33 @@ class PdfToolsService {
     final file = File(filePath);
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    
     final newDocument = PdfDocument();
-    
-    for (final index in pageIndices) {
-      if (index >= 0 && index < document.pages.count) {
-        final srcPage = document.pages[index];
-        final template = srcPage.createTemplate();
-        // Create section with matching page size
-        final section = newDocument.sections!.add();
-        section.pageSettings.size = srcPage.size;
-        section.pageSettings.margins.all = 0;
-        final page = section.pages.add();
-        page.graphics.drawPdfTemplate(template, const Offset(0, 0));
+    try {
+      for (final index in pageIndices) {
+        if (index >= 0 && index < document.pages.count) {
+          // Import the real page (preserves text/links), not a flattened template
+          newDocument.importPageRange(document, index, index);
+        }
       }
+
+      String newPath;
+      if (savePath != null) {
+        newPath = savePath;
+      } else {
+        final dir = outputDir ?? path.dirname(filePath);
+        final filename = path.basenameWithoutExtension(filePath);
+        final ext = path.extension(filePath);
+        final suffix = pageIndices.length > 2 ? '${pageIndices.first+1}-${pageIndices.last+1}' : 'split';
+        newPath = path.join(dir, '${filename}_split_$suffix$ext');
+      }
+
+      final newBytes = await newDocument.save();
+      await File(newPath).writeAsBytes(newBytes);
+      return newPath;
+    } finally {
+      document.dispose();
+      newDocument.dispose();
     }
-    
-    String newPath;
-    if (savePath != null) {
-      newPath = savePath;
-    } else {
-      final dir = outputDir ?? path.dirname(filePath);
-      final filename = path.basenameWithoutExtension(filePath);
-      final ext = path.extension(filePath);
-      final suffix = pageIndices.length > 2 ? '${pageIndices.first+1}-${pageIndices.last+1}' : 'split';
-      newPath = path.join(dir, '${filename}_split_$suffix$ext');
-    }
-    
-    final newBytes = await newDocument.save();
-    document.dispose();
-    newDocument.dispose();
-    
-    await File(newPath).writeAsBytes(newBytes);
-    return newPath;
   }
 
   /// Merge PDFs
@@ -190,50 +171,44 @@ class PdfToolsService {
   }) async {
     // We create a new document to hold the result
     final newDocument = PdfDocument();
-    
-    // Helper to copy pages from a doc preserving size
-    void copyPages(PdfDocument src) {
-      for (int i = 0; i < src.pages.count; i++) {
-        final srcPage = src.pages[i];
-        final template = srcPage.createTemplate();
-        // Create section with matching page size
-        final section = newDocument.sections!.add();
-        section.pageSettings.size = srcPage.size;
-        section.pageSettings.margins.all = 0;
-        final page = section.pages.add();
-        page.graphics.drawPdfTemplate(template, const Offset(0, 0));
-      }
-    }
 
     // Load source
     final sourceFile = File(sourcePath);
     final sourceBytes = await sourceFile.readAsBytes();
     final sourceDoc = PdfDocument(inputBytes: sourceBytes, password: sourcePassword);
-    copyPages(sourceDoc);
-    
+
     // Load other
     final otherFile = File(otherPath);
     final otherBytes = await otherFile.readAsBytes();
     final otherDoc = PdfDocument(inputBytes: otherBytes, password: otherPassword);
-    copyPages(otherDoc);
-    
-    String newPath;
-    if (savePath != null) {
-      newPath = savePath;
-    } else {
-      final dir = outputDir ?? path.dirname(sourcePath);
-      final filename = path.basenameWithoutExtension(sourcePath);
-      final ext = path.extension(sourcePath);
-      newPath = path.join(dir, '${filename}_merged$ext');
+
+    try {
+      // Import real pages from both docs (preserves text/links/form fields)
+      if (sourceDoc.pages.count > 0) {
+        newDocument.importPageRange(sourceDoc, 0, sourceDoc.pages.count - 1);
+      }
+      if (otherDoc.pages.count > 0) {
+        newDocument.importPageRange(otherDoc, 0, otherDoc.pages.count - 1);
+      }
+
+      String newPath;
+      if (savePath != null) {
+        newPath = savePath;
+      } else {
+        final dir = outputDir ?? path.dirname(sourcePath);
+        final filename = path.basenameWithoutExtension(sourcePath);
+        final ext = path.extension(sourcePath);
+        newPath = path.join(dir, '${filename}_merged$ext');
+      }
+
+      final newBytes = await newDocument.save();
+      await File(newPath).writeAsBytes(newBytes);
+      return newPath;
+    } finally {
+      sourceDoc.dispose();
+      otherDoc.dispose();
+      newDocument.dispose();
     }
-    
-    final newBytes = await newDocument.save();
-    sourceDoc.dispose();
-    otherDoc.dispose();
-    newDocument.dispose();
-    
-    await File(newPath).writeAsBytes(newBytes);
-    return newPath;
   }
 
   /// Check if a password is valid for a PDF
@@ -307,9 +282,10 @@ class PdfToolsService {
         }
         
         final endRss = ProcessInfo.currentRss;
-        logger.info('RAM', 'Pre-Check Result: Not Encrypted. End Process RAM: ${(endRss / 1024 / 1024).toStringAsFixed(2)} MB. Delta: ${((endRss - startRss) / 1024 / 1024).toStringAsFixed(2)} MB');
+        logger.info('RAM', 'Pre-Check Result: No /Encrypt marker found in header/trailer. Falling through to Syncfusion check. End Process RAM: ${(endRss / 1024 / 1024).toStringAsFixed(2)} MB. Delta: ${((endRss - startRss) / 1024 / 1024).toStringAsFixed(2)} MB');
         
-        return false;
+        // Heuristic header/trailer scan can miss /Encrypt; confirm with a real Syncfusion check
+        return _isProtectedFallback(file);
       
       } catch (e) {
         // Fallback to Syncfusion (Full Load) if file read fails or structure is weird
