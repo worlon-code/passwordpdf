@@ -773,14 +773,10 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
         // the old item. This guarantees a failed import can never leave the
         // user with neither the old nor the new file.
         final bool isOverwrite = filesToOverwrite.contains(file.path);
-        String? existingId;
-        String importName = targetName;
-        if (isOverwrite) {
-           existingId = docService.getFileIdInFolder(fileName, folderId);
-           // Import the new copy under a temporary unique name so it does not
-           // collide with the still-present original.
-           importName = '__import_tmp_${DateTime.now().millisecondsSinceEpoch}_$targetName';
-        }
+        String? existingId = isOverwrite ? docService.getFileIdInFolder(fileName, folderId) : null;
+        String importName = (isOverwrite && existingId != null)
+            ? '__import_tmp_${DateTime.now().millisecondsSinceEpoch}_$targetName'
+            : targetName;
 
         // Import (always allow duplicate when overwriting, since the original
         // is intentionally still present at this point).
