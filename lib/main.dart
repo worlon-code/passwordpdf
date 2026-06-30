@@ -292,6 +292,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
+  // One-shot guard: once the cold-start launch intent has been consumed,
+  // the resume path must NOT re-read the stale intent via getInitialMedia().
+  bool _initialIntentConsumed = false;
   int _selectedIndex = 0; // Added for default screen index
 
   @override
@@ -333,6 +336,12 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       }
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
+    } finally {
+      // Mark the launch intent as consumed exactly once. The resume path
+      // (_checkForPendingIntent) checks this flag and will NOT re-read the
+      // stale launch intent via getInitialMedia() again.
+      _initialIntentConsumed = true;
+      _log.info('AppEntry', 'Initial intent consumed - resume path will skip getInitialMedia()');
     }
   }
 
@@ -359,6 +368,11 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     }
     
     _isProcessingIntent = true;
+    // Consume the native launch intent immediately so it cannot be re-read by
+    // getInitialMedia() on a later resume (root cause of "Open With" reopening
+    // the previous document). Mark the one-shot guard too.
+    _initialIntentConsumed = true;
+    ReceiveSharingIntent.instance.reset();
     _log.info('AppEntry', 'Received ${files.length} shared files');
     
     // Get exportService as singleton (context.read fails when app resumes from background)
@@ -701,6 +715,14 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
   
   Future<void> _checkForPendingIntent() async {
+    // One-shot guard: the cold-start launch intent was already consumed by
+    // _checkInitialIntents(). On resume, getInitialMedia() still returns that
+    // stale intent, which caused "Open With" to reopen the previous document.
+    // Skip it; only the live getMediaStream() should deliver new resume intents.
+    if (_initialIntentConsumed) {
+      _log.info('AppEntry', 'Initial intent already consumed - skipping getInitialMedia() on resume');
+      return;
+    }
     try {
       final media = await ReceiveSharingIntent.instance.getInitialMedia();
       if (media.isNotEmpty) {
