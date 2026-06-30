@@ -116,18 +116,6 @@ class DeviceDocumentService {
       // Track folders we've already ensured in this batch to avoid duplicates in the batch command list
       final Set<String> processedParents = {};
 
-      // Pre-fetch existing file stats to optimize updates
-      final Map<String, int> existingFiles = {}; // path -> modified_at
-      try {
-         final existingRows = await db.query(
-            AppConstants.filesIndexTable, 
-            columns: ['path', 'modified_at']
-         );
-         for (final row in existingRows) {
-            existingFiles[row['path'] as String] = row['modified_at'] as int;
-         }
-      } catch (_) {}
-
       await db.transaction((txn) async {
          final batch = txn.batch();
          
@@ -152,10 +140,7 @@ class DeviceDocumentService {
               int hasDoc = docFolders.contains(file.path) ? 1 : 0;
               int hasExcel = excelFolders.contains(file.path) ? 1 : 0;
 
-              // Check if file is modified or new
-              final lastMod = existingFiles[file.path];
               final currentMod = stat.modified.millisecondsSinceEpoch;
-              // final isModified = lastMod == null || lastMod != currentMod; // Unused without Trigrams
 
               // Phase ?, Step 3: Upsert that preserves curated columns.
               // Using raw ON CONFLICT DO UPDATE instead of ConflictAlgorithm.replace,
