@@ -154,7 +154,7 @@ class StorageService {
     if (oldVersion < 2) {
       // Add export_jobs table
       await db.execute('''
-        CREATE TABLE ${AppConstants.exportJobsTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.exportJobsTable} (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           status TEXT NOT NULL,
@@ -193,7 +193,7 @@ class StorageService {
     if (oldVersion < 5) {
       // Add logs table
       await db.execute('''
-        CREATE TABLE ${AppConstants.logsTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.logsTable} (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp TEXT NOT NULL,
           level TEXT NOT NULL,
@@ -207,7 +207,7 @@ class StorageService {
     if (oldVersion < 6) {
       // Add Files Index table
       await db.execute('''
-        CREATE TABLE ${AppConstants.filesIndexTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.filesIndexTable} (
           path TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           extension TEXT NOT NULL,
@@ -219,8 +219,8 @@ class StorageService {
         )
       ''');
       
-      await db.execute('CREATE INDEX idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
-      await db.execute('CREATE INDEX idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
     }
 
     if (oldVersion < 7) {
