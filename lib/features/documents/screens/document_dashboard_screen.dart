@@ -1867,6 +1867,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     
     bool obscurePassword = true;
 
+    final saveNameController = TextEditingController(text: saveName);
+
     await showDialog(
       context: context,
       builder: (context) {
@@ -1916,7 +1918,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: TextField(
-                          controller: TextEditingController(text: saveName),
+                          controller: saveNameController,
                           decoration: const InputDecoration(
                             labelText: 'Password Name (e.g. Bank Statement)',
                             border: OutlineInputBorder(),
@@ -1974,6 +1976,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       },
     ).then((result) async {
+      saveNameController.dispose();
       if (result == true) {
         // Password was valid (checked in dialog)
         await pdfService.saveDocumentPassword(filePath, password);
