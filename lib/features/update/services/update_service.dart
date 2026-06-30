@@ -235,11 +235,27 @@ class UpdateService {
     try {
       final dirs = await getExternalCacheDirectories();
       final dir = (dirs != null && dirs.isNotEmpty) ? dirs.first : await getTemporaryDirectory();
-      final file = File('${dir.path}/update.apk');
-      
-      if (await file.exists()) {
-        await file.delete();
-        _log.info('UpdateService', 'Cleaned up install file');
+
+      // Downloads are named 'update_<timestamp>.apk' (see downloadUpdate), so
+      // delete every matching leftover, not a single literal 'update.apk'.
+      int deleted = 0;
+      await for (final entity in dir.list()) {
+        if (entity is File) {
+          final name = entity.uri.pathSegments.isNotEmpty
+              ? entity.uri.pathSegments.last
+              : '';
+          if (name.startsWith('update_') && name.endsWith('.apk')) {
+            try {
+              await entity.delete();
+              deleted++;
+            } catch (e, stack) {
+              _log.error('UpdateService', 'Failed to delete stale update file: ${entity.path}', e, stack);
+            }
+          }
+        }
+      }
+      if (deleted > 0) {
+        _log.info('UpdateService', 'Cleaned up $deleted stale update file(s)');
       }
     } catch (e, stack) {
       _log.error('UpdateService', 'Cleanup failed', e, stack);
