@@ -304,9 +304,8 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
-  // One-shot guard: once the cold-start launch intent has been consumed,
-  // the resume path must NOT re-read the stale intent via getInitialMedia().
-  bool _initialIntentConsumed = false;
+  // Deduplication tracking: last intent path successfully consumed
+  String? _lastConsumedIntentPath;
   int _selectedIndex = 0; // Added for default screen index
 
   @override
@@ -342,6 +341,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         final file = sharedFiles.first;
         if (file.path != null) {
            PendingFileOpen.filePath = file.path;
+           _lastConsumedIntentPath = file.path;
            // Fix for "Zombie Intent": Clear it so it doesn't reappear on resume
            ReceiveSharingIntent.instance.reset();
         }
@@ -349,11 +349,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
     } finally {
-      // Mark the launch intent as consumed exactly once. The resume path
-      // (_checkForPendingIntent) checks this flag and will NOT re-read the
-      // stale launch intent via getInitialMedia() again.
-      _initialIntentConsumed = true;
-      _log.info('AppEntry', 'Initial intent consumed - resume path will skip getInitialMedia()');
+      _log.info('AppEntry', 'Initial intent check complete - last consumed: $_lastConsumedIntentPath');
     }
   }
 
@@ -382,8 +378,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     _isProcessingIntent = true;
     // Consume the native launch intent immediately so it cannot be re-read by
     // getInitialMedia() on a later resume (root cause of "Open With" reopening
-    // the previous document). Mark the one-shot guard too.
-    _initialIntentConsumed = true;
+    // the previous document).
+    if (files.isNotEmpty && files.first.path != null) {
+      _lastConsumedIntentPath = files.first.path;
+    }
     ReceiveSharingIntent.instance.reset();
     _log.info('AppEntry', 'Received ${files.length} shared files');
     
@@ -731,22 +729,15 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
   
   Future<void> _checkForPendingIntent() async {
-    // One-shot guard: the cold-start launch intent was already consumed by
-    // _checkInitialIntents(). On resume, getInitialMedia() still returns that
-    // stale intent, which caused "Open With" to reopen the previous document.
-    // Skip it; only the live getMediaStream() should deliver new resume intents.
-    if (_initialIntentConsumed) {
-      _log.info('AppEntry', 'Initial intent already consumed - skipping getInitialMedia() on resume');
-      return;
-    }
     try {
       final media = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (media.isNotEmpty) {
-        _log.info('AppEntry', 'Found ${media.length} pending files on resume');
-        _handleSharedFiles(media);
-        ReceiveSharingIntent.instance.reset(); // Clear initial intent
-        _log.info('AppEntry', 'Initial intent reset');
+      if (media.isEmpty) return;
+      if (media.first.path == _lastConsumedIntentPath) {
+        ReceiveSharingIntent.instance.reset();
+        return;
       }
+      _handleSharedFiles(media);
+      ReceiveSharingIntent.instance.reset();
     } catch (e) {
       _log.error('AppEntry', 'Error checking pending intent', e);
     }
