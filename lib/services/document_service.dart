@@ -1,5 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart';
+
 import 'dart:io';
 import 'dart:convert';
 import '../models/document_item_model.dart';
@@ -833,12 +833,12 @@ class DocumentService {
     if (item.isFolder) {
       // Delete all files in this folder
       final filesInFolder = getFilesInFolder(itemId);
-      for (final file in filesInFolder) {
-        if (deleteFromDevice) {
-           await _deleteFileFromDevice(file.sourcePath);
+        for (final file in filesInFolder) {
+          if (deleteFromDevice && !file.isImportedFile) {
+            await _deleteFileFromDevice(file.sourcePath);
+          }
+          _items.removeWhere((i) => i.id == file.id);
         }
-        _items.removeWhere((i) => i.id == file.id);
-      }
       
       // Recursively delete subfolders
       final subfolders = getSubfolders(itemId);
@@ -850,9 +850,9 @@ class DocumentService {
     }
     
     // Remove the item itself
-    if (deleteFromDevice && item.isFile) {
-       await _deleteFileFromDevice(item.sourcePath);
-    }
+          if (deleteFromDevice && item.isFile && !item.isImportedFile) {
+            await _deleteFileFromDevice(item.sourcePath);
+          }
 
     _items.removeWhere((i) => i.id == itemId);
     
@@ -893,16 +893,30 @@ class DocumentService {
 
 
   /// Load documents from storage
+  /// Load documents from storage
   Future<void> _loadDocuments() async {
     try {
       final String? jsonString = _prefs?.getString(_documentsKey);
       if (jsonString != null) {
+        // Decode FIRST. If decoding fails we throw before touching _items,
+        // so a corrupt blob cannot blank the in-memory library.
         final List<dynamic> jsonList = json.decode(jsonString);
+
+        // Parse each record defensively into a temp list BEFORE clearing.
+        final parsed = <DocumentItem>[];
+        int skipped = 0;
+        for (final json in jsonList) {
+          try {
+            parsed.add(DocumentItem.fromJson(json));
+          } catch (recordError) {
+            skipped++;
+            _log.error('DocumentService', 'Skipping corrupt document record: $recordError', recordError);
+          }
+        }
+
         _items.clear();
-        _items.addAll(
-          jsonList.map((json) => DocumentItem.fromJson(json)).toList(),
-        );
-        _log.info('DocumentService', 'Loaded ${_items.length} items');
+        _items.addAll(parsed);
+        _log.info('DocumentService', 'Loaded ${_items.length} items (skipped $skipped corrupt)');
       }
     } catch (e) {
       _log.error('DocumentService', 'Failed to load documents', e);
