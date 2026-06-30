@@ -15,7 +15,9 @@ class UpdateAvailableDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return PopScope(
+      canPop: !updateInfo.forceUpdate,
+      child: AlertDialog(
       title: Row(
         children: [
           const Icon(Icons.system_update, color: Colors.blue),
@@ -64,6 +66,7 @@ class UpdateAvailableDialog extends StatelessWidget {
           }
         ),
       ],
+    ),
     );
   }
 }
@@ -106,6 +109,7 @@ class InvocationDialog extends StatelessWidget {
 Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
     showDialog(
       context: context,
+      barrierDismissible: !info.forceUpdate,
       builder: (ctx) => UpdateAvailableDialog(
         updateInfo: info,
         onUpdate: () => performUpdate(ctx, info),
@@ -137,7 +141,7 @@ Future<void> performUpdate(BuildContext context, UpdateInfo info) async {
                            // ignore
                          }
                       }
-                  }).then((file) async {
+                  }, expectedSha256: info.sha256).then((file) async {
                       if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
                       
                       if (file != null) {

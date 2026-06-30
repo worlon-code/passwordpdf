@@ -882,6 +882,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (info != null) {
       showDialog(
         context: context,
+        barrierDismissible: !info.forceUpdate,
         builder: (ctx) => UpdateAvailableDialog(
           updateInfo: info,
           onUpdate: () => _performUpdate(ctx, service, info),
@@ -912,7 +913,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             progress = received / total;
                          });
                       }
-                  }).then((file) {
+                  }, expectedSha256: info.sha256).then((file) {
                       if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
                       
                       if (file != null) {

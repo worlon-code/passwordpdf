@@ -899,6 +899,7 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted) return;
       await showDialog(
         context: context,
+        barrierDismissible: !updateInfo.forceUpdate,
         builder: (ctx) => UpdateAvailableDialog(
            updateInfo: updateInfo,
            onUpdate: () => _performUpdate(ctx, updateService, updateInfo),
@@ -925,7 +926,7 @@ class _MainScreenState extends State<MainScreen> {
                             progress = received / total;
                          });
                       }
-                  }).then((file) {
+                  }, expectedSha256: info.sha256).then((file) {
                       if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
                       
                       if (file != null) {
