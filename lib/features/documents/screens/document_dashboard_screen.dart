@@ -248,9 +248,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                      String newName = fileName;
                      int i = 1;
                      while (_docService.getFileIdInFolder(newName, _currentFolderId) != null) {
-                         final ext = newName.split('.').last;
-                         final nameNoExt = newName.substring(0, newName.length - ext.length - 1);
-                         newName = '${nameNoExt}_$i.$ext';
+                         final dotIndex = newName.lastIndexOf('.');
+                         // No dot, or leading-dot only (e.g. ".bashrc") => treat as no extension.
+                         final hasExt = dotIndex > 0;
+                         final ext = hasExt ? newName.substring(dotIndex + 1) : '';
+                         final nameNoExt = hasExt ? newName.substring(0, dotIndex) : newName;
+                         newName = hasExt ? '${nameNoExt}_$i.$ext' : '${nameNoExt}_$i';
                          i++;
                      }
                      // Import with new name
