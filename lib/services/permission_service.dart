@@ -18,9 +18,15 @@ class PermissionService {
     final permissions = <Permission>[];
     
     if (Platform.isAndroid) {
+      // Scoped permissions only. On Android 13+ (API 33) READ_EXTERNAL_STORAGE
+      // is ignored and the granular READ_MEDIA_* permissions apply instead;
+      // requesting all of them is safe (the OS grants only what's relevant).
+      // We intentionally DO NOT request MANAGE_EXTERNAL_STORAGE (all-files
+      // access) — it triggers a Google Play sensitive-permission policy review
+      // and is unnecessary for this app's use of the file picker / scoped dirs.
       permissions.addAll([
-        Permission.storage,
-        Permission.manageExternalStorage,
+        Permission.storage,        // legacy READ/WRITE_EXTERNAL_STORAGE (<= API 32)
+        Permission.photos,         // READ_MEDIA_IMAGES (API 33+)
         Permission.notification,
       ]);
     } else if (Platform.isIOS) {
@@ -71,13 +77,13 @@ class PermissionService {
     }
     
     final storage = await Permission.storage.isGranted;
-    _log.debug(_tag, 'Storage permission: $storage');
+    _log.debug(_tag, 'Storage permission (legacy): $storage');
     
-    // For Android 11+, check manage external storage
-    final manageStorage = await Permission.manageExternalStorage.isGranted;
-    _log.debug(_tag, 'Manage external storage permission: $manageStorage');
+    // Android 13+ uses granular media permissions instead of storage.
+    final media = await Permission.photos.isGranted;
+    _log.debug(_tag, 'Media (photos) permission: $media');
     
-    return storage || manageStorage;
+    return storage || media;
   }
 
   /// Open app settings for manually granting permissions
@@ -93,7 +99,7 @@ class PermissionService {
     final status = <String, String>{};
     
     status['storage'] = (await Permission.storage.status).toString();
-    status['manageExternalStorage'] = (await Permission.manageExternalStorage.status).toString();
+    status['photos'] = (await Permission.photos.status).toString();
     
     _log.info(_tag, 'Permission status: $status');
     return status;

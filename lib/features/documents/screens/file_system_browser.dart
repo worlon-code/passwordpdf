@@ -525,10 +525,19 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
   }
 
   Future<bool> _checkPermission() async {
-     if (await Permission.storage.isGranted || await Permission.manageExternalStorage.isGranted) return true;
-     final status = await Permission.manageExternalStorage.request();
-     if (status.isGranted) return true;
-     if (await Permission.storage.request().isGranted) return true;
+     final androidInfo = Platform.isAndroid ? await DeviceInfoPlugin().androidInfo : null;
+     final isAndroid13 = androidInfo != null && androidInfo.version.sdkInt >= 33;
+
+     if (isAndroid13) {
+       if (await Permission.photos.isGranted) return true;
+       final status = await Permission.photos.request();
+       if (status.isGranted) return true;
+     } else {
+       if (await Permission.storage.isGranted) return true;
+       final status = await Permission.storage.request();
+       if (status.isGranted) return true;
+     }
+
      setState(() {
        _isLoading = false;
        _errorMessage = 'Storage permission required.';

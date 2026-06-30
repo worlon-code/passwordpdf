@@ -17,16 +17,16 @@ class DeviceDocumentService {
   Future<bool> requestPermissions() async {
     if (Platform.isAndroid) {
       final androidInfo = await DeviceInfoPlugin().androidInfo;
-      if (androidInfo.version.sdkInt >= 30) {
-        // Android 11+
-        final status = await Permission.manageExternalStorage.status;
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+ uses granular media permissions
+        final status = await Permission.photos.status;
         if (!status.isGranted) {
-          final result = await Permission.manageExternalStorage.request();
+          final result = await Permission.photos.request();
           return result.isGranted;
         }
         return true;
       } else {
-        // Android 10 and below
+        // Android 12 and below
         final status = await Permission.storage.status;
         if (!status.isGranted) {
           final result = await Permission.storage.request();
