@@ -501,7 +501,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text(path),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
-                    AppEntry.ignoreNextPause = true; // Prevent auto-lock
+                    AppEntry.exemptNextPause(); // Prevent auto-lock during picker (time-boxed)
                     final dir = await FilePicker.platform.getDirectoryPath(
                       dialogTitle: 'Select Download Location',
                     );

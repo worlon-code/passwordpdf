@@ -272,8 +272,20 @@ class MyApp extends StatelessWidget {
 class AppEntry extends StatefulWidget {
   const AppEntry({super.key});
 
-  // Flag to ignore valid user interactions that pause the app (e.g. File Picker)
-  static bool ignoreNextPause = false;
+  // Timestamp until which a single backgrounding is exempt from auto-lock
+  // (e.g. the OS file/directory picker briefly pauses the app). Expires fast
+  // so it can never permanently suppress the lock screen.
+  static DateTime? pauseExemptUntil;
+
+  // Duration of the picker exemption window.
+  static const Duration pauseExemptionWindow = Duration(seconds: 30);
+
+  /// Mark the next backgrounding (within [pauseExemptionWindow]) as exempt
+  /// from auto-lock timeout tracking. Call immediately before launching a
+  /// system picker / share sheet.
+  static void exemptNextPause() {
+    pauseExemptUntil = DateTime.now().add(pauseExemptionWindow);
+  }
 
   // Track when the app went into background (Static to allow forcing timeout from other screens)
   static DateTime? backgroundTime;
@@ -655,12 +667,14 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
-      if (AppEntry.ignoreNextPause) {
-         _log.info('AppEntry', 'App paused but ignoreNextPause is true - Skipping timeout tracking');
-         AppEntry.ignoreNextPause = false; // Reset flag
+      final exemptUntil = AppEntry.pauseExemptUntil;
+      if (exemptUntil != null && DateTime.now().isBefore(exemptUntil)) {
+         _log.info('AppEntry', 'App paused but within picker exemption window - Skipping timeout tracking');
+         AppEntry.pauseExemptUntil = null; // One-shot: consume the exemption
          return;
       }
-      
+      AppEntry.pauseExemptUntil = null; // Expired/unused exemption never lingers
+
       AppEntry.backgroundTime = DateTime.now();
       _log.info('AppEntry', 'App paused - tracking background time: ${AppEntry.backgroundTime}');
     }
@@ -670,13 +684,15 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
        
        if (AppEntry.backgroundTime != null) {
          final diff = DateTime.now().difference(AppEntry.backgroundTime!);
-         _log.info('AppEntry', 'Background duration: ${diff.inMinutes} minutes');
+         _log.info('AppEntry', 'Background duration: ${diff.inSeconds} seconds');
          
-         // Auto-lock only after user-configured timeout (default 10m)
+         // Auto-lock only after user-configured timeout (default 10m).
+         // Compare in seconds against timeout*60 so sub-minute timeouts work
+         // and integer-minute truncation can never skip the lock.
          final settings = Provider.of<SettingsService>(context, listen: false);
          final timeoutMinutes = settings.autoLockTimeout;
          
-         if (diff.inMinutes >= timeoutMinutes) {
+         if (diff.inSeconds >= timeoutMinutes * 60) {
             // Only lock if security is enabled AND we are currently authenticated
             if ((settings.biometricEnabled || settings.pinEnabled) && _isAuthenticated) {
                _log.info('AppEntry', 'Timeout (>$timeoutMinutes m) - Pushing Lock Screen Route');
@@ -700,9 +716,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
                  ),
                );
             }
-         } else {
-            _log.info('AppEntry', 'Timeout not reached (<10m) - access granted');
-         }
+          } else {
+             _log.info('AppEntry', 'Timeout not reached (<$timeoutMinutes m) - access granted');
+          }
          
          AppEntry.backgroundTime = null; // Reset
        }
@@ -1053,7 +1069,7 @@ class _MainScreenState extends State<MainScreen> {
           
           if (shouldExit == true) {
             AppEntry.backgroundTime = DateTime(2000);
-            AppEntry.ignoreNextPause = true;
+            AppEntry.exemptNextPause();
             SystemNavigator.pop();
           }
         }
