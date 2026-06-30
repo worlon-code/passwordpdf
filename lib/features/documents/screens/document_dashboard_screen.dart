@@ -1392,9 +1392,13 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         destinationFiles = _docService.getUnorganizedFiles();
       }
 
-      final filesToMove = _selectedFileIds.map((id) => 
-        _docService.getAllItems().firstWhere((item) => item.id == id)
-      ).toList();
+      final filesToMove = _selectedFileIds
+          .map((id) => _docService.getAllItems().firstWhere(
+                (item) => item.id == id,
+                orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+              ))
+          .where((item) => item.id.isNotEmpty)
+          .toList();
       
       final conflictingItems = <ConflictItem>[];
       final Map<String, ConflictAction> resolutions = {};
@@ -1466,8 +1470,13 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             // currentFileId remains same, but name changed in DB
           } else if (action.type == ConflictActionType.overwrite) {
              // Delete Destination File
-             final destFile = destinationFiles.firstWhere((f) => f.name.toLowerCase() == file.name.toLowerCase());
-             await _docService.deleteItem(destFile.id); // This deletes the destination entry
+             final destFile = destinationFiles.firstWhere(
+               (f) => f.name.toLowerCase() == file.name.toLowerCase(),
+               orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+             );
+             if (destFile.id.isNotEmpty) {
+               await _docService.deleteItem(destFile.id); // This deletes the destination entry
+             }
           }
         }
 
