@@ -457,8 +457,11 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Use password only if encrypt checked
-    final zipPassword = encrypt ? password : null;
+    // Use password only if encrypt checked AND a non-empty password was entered.
+    // An empty-but-checked password must be treated as no password.
+    final zipPassword = (encrypt && password != null && password!.trim().isNotEmpty)
+        ? password
+        : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -1285,8 +1288,11 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Use password only if encrypt checked
-    final zipPassword = encrypt ? password : null;
+    // Use password only if encrypt checked AND a non-empty password was entered.
+    // An empty-but-checked password must be treated as no password.
+    final zipPassword = (encrypt && password != null && password!.trim().isNotEmpty)
+        ? password
+        : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -2383,11 +2389,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
       // Pre-populate folder count cache for smooth scrolling
       for (final folder in folders) {
-        if (!_folderCountCache.containsKey(folder.id)) {
+        final cacheKey = '$_filterType:${folder.id}';
+        if (!_folderCountCache.containsKey(cacheKey)) {
           final files = _docService.getFilesInFolder(folder.id);
           final fileCount = _applyFileFilter(files).length;
           final subfolderCount = _docService.getSubfolders(folder.id).length;
-          _folderCountCache[folder.id] = (fileCount, subfolderCount);
+          _folderCountCache[cacheKey] = (fileCount, subfolderCount);
         }
       }
 
@@ -2496,11 +2503,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       
       // Pre-populate folder count cache for smooth scrolling
       for (final folder in subfolders) {
-        if (!_folderCountCache.containsKey(folder.id)) {
+        final cacheKey = '$_filterType:${folder.id}';
+        if (!_folderCountCache.containsKey(cacheKey)) {
           final folderFiles = _docService.getFilesInFolder(folder.id);
           final fileCount = _applyFileFilter(folderFiles).length;
           final subCount = _docService.getSubfolders(folder.id).length;
-          _folderCountCache[folder.id] = (fileCount, subCount);
+          _folderCountCache[cacheKey] = (fileCount, subCount);
         }
       }
       
@@ -2597,7 +2605,10 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 label: Text(label),
                 selected: isSelected,
                 onSelected: (selected) {
-                  setState(() => _filterType = type);
+                  setState(() {
+                    _folderCountCache.clear();
+                    _filterType = type;
+                  });
                 },
                 selectedColor: Theme.of(context).colorScheme.primaryContainer,
               ),
@@ -2679,8 +2690,9 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   /// Build subtitle showing file and folder counts (uses cache for performance)
   String _buildFolderSubtitle(String folderId) {
+    final cacheKey = '$_filterType:$folderId';
     // Check cache first to avoid expensive service calls during scroll
-    final cached = _folderCountCache[folderId];
+    final cached = _folderCountCache[cacheKey];
     if (cached != null) {
       final (fileCount, subfolderCount) = cached;
       final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
@@ -2692,7 +2704,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     final allFiles = _docService.getFilesInFolder(folderId);
     final fileCount = _applyFileFilter(allFiles).length;
     final subfolderCount = _docService.getSubfolders(folderId).length;
-    _folderCountCache[folderId] = (fileCount, subfolderCount);
+    _folderCountCache[cacheKey] = (fileCount, subfolderCount);
     
     final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
     final folderPart = '$subfolderCount ${subfolderCount == 1 ? 'folder' : 'folders'}';
