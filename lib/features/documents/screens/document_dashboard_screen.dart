@@ -3264,15 +3264,28 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     int deletedCount = 0;
     final ids = List<String>.from(_selectedFileIds);
     
-    for (final id in ids) {
-       await _docService.deleteItem(id, deleteFromDevice: deleteFromDevice);
-       deletedCount++;
+    try {
+      for (final id in ids) {
+         try {
+            await _docService.deleteItem(id, deleteFromDevice: deleteFromDevice);
+            deletedCount++;
+         } catch (e) {
+            // Phase ?, Step 9: skip the failing item, keep deleting the rest.
+            _log.error('DocumentDashboardScreen', 'Failed to delete item $id', e);
+         }
+      }
+    } finally {
+      // Always clear the loading flag and selection, even if the loop threw.
+      if (mounted) {
+        setState(() {
+          _selectedFileIds.clear();
+          _isLoading = false;
+        });
+      } else {
+        _selectedFileIds.clear();
+        _isLoading = false;
+      }
     }
-    
-    setState(() {
-      _selectedFileIds.clear();
-      _isLoading = false;
-    });
     
     if (mounted) {
        ScaffoldMessenger.of(context).showSnackBar(

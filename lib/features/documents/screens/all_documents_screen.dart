@@ -211,24 +211,37 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       _isLoadingMore = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 100));
+    try {
+      await Future.delayed(const Duration(milliseconds: 100));
 
-    final moreFiles = await _deviceService.getDocuments(
-      offset: _currentOffset,
-      limit: _pageSize,
-      filterType: _selectedFilter,
-      searchQuery: _searchQuery,
-      parentPath: _isFolderView ? _currentFolderPath : null,
-      flatList: !_isFolderView,
-    );
+      final moreFiles = await _deviceService.getDocuments(
+        offset: _currentOffset,
+        limit: _pageSize,
+        filterType: _selectedFilter,
+        searchQuery: _searchQuery,
+        parentPath: _isFolderView ? _currentFolderPath : null,
+        flatList: !_isFolderView,
+      );
 
-    if (mounted) {
-      setState(() {
-        _displayedFiles.addAll(moreFiles);
-        _currentOffset += moreFiles.length;
-        _hasMore = moreFiles.length >= _pageSize;
+      if (mounted) {
+        setState(() {
+          _displayedFiles.addAll(moreFiles);
+          _currentOffset += moreFiles.length;
+          _hasMore = moreFiles.length >= _pageSize;
+        });
+      }
+    } catch (e) {
+      // Phase ?, Step 9: log but never leave the loading flag stuck.
+      _log.error('AllDocumentsScreen', 'Load more failed', e);
+    } finally {
+      // Always clear the flag, even on error, so pagination can retry.
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      } else {
         _isLoadingMore = false;
-      });
+      }
     }
   }
 
