@@ -883,7 +883,6 @@ class DocumentService {
     }
     
     await _saveDocuments();
-    await _saveDocuments();
     _log.info('DocumentService', 'Deleted item: ${item.name} (Device delete: $deleteFromDevice)');
   }
 
