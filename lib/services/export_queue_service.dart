@@ -551,4 +551,15 @@ class ExportQueueService extends ChangeNotifier {
       return null;
     }
   }
+
+  @override
+  void dispose() {
+    _workerTimer?.cancel();
+    _workerTimer = null;
+    if (!_notificationTapController.isClosed) {
+      _notificationTapController.close();
+    }
+    _log.info('ExportQueueService', 'Disposed');
+    super.dispose();
+  }
 }
