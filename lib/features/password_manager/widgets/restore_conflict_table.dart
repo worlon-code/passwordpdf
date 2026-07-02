@@ -15,79 +15,135 @@ class _RestoreConflictTableState extends State<RestoreConflictTable> {
       case ConflictStatus.fresh:
         return 'New';
       case ConflictStatus.sameNameSameSecret:
-        return 'Identical (no-op)';
+        return 'Already saved (identical)';
       case ConflictStatus.sameNameDiffSecret:
-        return 'Name clash';
+        return 'Same name, different password';
       case ConflictStatus.sameSecretDiffName:
-        return 'Same value, other name';
+        return 'Same password already saved';
     }
+  }
+
+  void _setAll(ConflictResolution r) {
+    setState(() {
+      for (final c in widget.conflicts) {
+        if (c.status == ConflictStatus.sameNameSameSecret) continue;
+        c.resolution = r;
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final importable =
+        widget.conflicts
+            .where(
+              (c) =>
+                  c.status != ConflictStatus.sameNameSameSecret &&
+                  c.resolution != ConflictResolution.skip,
+            )
+            .length;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Review Restore'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, widget.conflicts),
-            child: const Text('IMPORT', style: TextStyle(color: Colors.white)),
+      appBar: AppBar(title: const Text('Review restore')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${widget.conflicts.length} item(s) to review',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _setAll(ConflictResolution.keepBoth),
+                  child: const Text('Import all'),
+                ),
+                TextButton(
+                  onPressed: () => _setAll(ConflictResolution.skip),
+                  child: const Text('Skip all'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.separated(
+              itemCount: widget.conflicts.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, i) {
+                final c = widget.conflicts[i];
+                final identical = c.status == ConflictStatus.sameNameSameSecret;
+                return ListTile(
+                  title: Text(
+                    c.backupName.isEmpty ? '(unnamed)' : c.backupName,
+                  ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_statusLabel(c.status)),
+                      if (c.localName.isNotEmpty)
+                        Text(
+                          'Existing: ${c.localName}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      if (c.resolution == ConflictResolution.rename &&
+                          c.renameTo != null)
+                        Text(
+                          'Import as: ${c.renameTo}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                    ],
+                  ),
+                  trailing:
+                      identical
+                          ? const Text('Skipped')
+                          : DropdownButton<ConflictResolution>(
+                            value: c.resolution,
+                            items: const [
+                              DropdownMenuItem(
+                                value: ConflictResolution.skip,
+                                child: Text('Skip'),
+                              ),
+                              DropdownMenuItem(
+                                value: ConflictResolution.keepBoth,
+                                child: Text('Import'),
+                              ),
+                              DropdownMenuItem(
+                                value: ConflictResolution.rename,
+                                child: Text('Rename'),
+                              ),
+                            ],
+                            onChanged: (v) async {
+                              if (v == null) return;
+                              if (v == ConflictResolution.rename) {
+                                final name = await _promptRename(c.backupName);
+                                if (name == null || name.isEmpty) return;
+                                c.renameTo = name;
+                              }
+                              setState(() => c.resolution = v);
+                            },
+                          ),
+                );
+              },
+            ),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        scrollDirection: Axis.vertical,
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: DataTable(
-            columns: const [
-              DataColumn(label: Text('Backup name')),
-              DataColumn(label: Text('Local name')),
-              DataColumn(label: Text('Status')),
-              DataColumn(label: Text('Action')),
-            ],
-            rows:
-                widget.conflicts.map((c) {
-                  return DataRow(
-                    cells: [
-                      DataCell(Text(c.backupName)),
-                      DataCell(Text(c.localName.isEmpty ? '—' : c.localName)),
-                      DataCell(Text(_statusLabel(c.status))),
-                      DataCell(
-                        c.status == ConflictStatus.sameNameSameSecret
-                            ? const Text('Skipped')
-                            : DropdownButton<ConflictResolution>(
-                              value: c.resolution,
-                              items: const [
-                                DropdownMenuItem(
-                                  value: ConflictResolution.skip,
-                                  child: Text('Skip'),
-                                ),
-                                DropdownMenuItem(
-                                  value: ConflictResolution.keepBoth,
-                                  child: Text('Keep both'),
-                                ),
-                                DropdownMenuItem(
-                                  value: ConflictResolution.rename,
-                                  child: Text('Rename'),
-                                ),
-                              ],
-                              onChanged: (v) async {
-                                if (v == null) return;
-                                if (v == ConflictResolution.rename) {
-                                  final name = await _promptRename(
-                                    c.backupName,
-                                  );
-                                  if (name == null) return;
-                                  c.renameTo = name;
-                                }
-                                setState(() => c.resolution = v);
-                              },
-                            ),
-                      ),
-                    ],
-                  );
-                }).toList(),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: ElevatedButton.icon(
+            icon: const Icon(Icons.download_done),
+            label: Text(importable == 0 ? 'Import' : 'Import ($importable)'),
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(48),
+            ),
+            onPressed: () => Navigator.pop(context, widget.conflicts),
           ),
         ),
       ),
