@@ -1,6 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as crypto; // sha256 key-health token
+import 'package:shared_preferences/shared_preferences.dart'; // v2 key-health mirror (survives Keystore wipe)
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -31,17 +32,27 @@ class EncryptionService {
   static const String _legacyKeyStorageKey = 'encryption_key';
   // sha256(legacy key) recorded when health is known-good; gates all overwrites.
   static const String _legacyKeyHealthToken = 'legacy_key_health_v1';
+  // sha256(aes_key_v2) mirror stored in PLAIN SharedPreferences so it SURVIVES a
+  // Keystore wipe (secure storage vanishes with the Keystore). Lets us detect
+  // that aes_key_v2 was wiped + silently re-minted, which would orphan v2 data.
+  static const String _v2KeyHealthPref = 'v2_key_health_v1';
   static const String _v2Tag = 'v2:'; // ciphertext namespace tag (read-both)
 
   SecretKey? _aesKey; // cached v2 key (decoded)
   bool _legacyKeyHealthy = false; // true only after token matches
+  bool _v2KeyHealthy = false; // true only when the v2 key matches its health mirror (or fresh)
 
   /// Call ONCE from single-threaded startup, before any encrypt/decrypt.
   Future<void> initCrypto() async {
     // Idempotency guard: re-entry within a process is a no-op so a second
     // aes_key_v2 can never be minted (double-mint protection, code-level).
     if (_aesKey != null) return;
-    // 1) Ensure v2 key exists (mint once).
+       // 1) Ensure v2 key exists (mint once) + detect a Keystore wipe/re-mint.
+    // Read the plain-prefs health mirror BEFORE minting: if a mirror exists but
+    // the current v2 key is gone (or differs), the Keystore was wiped and any v2
+    // data written under the old key is now unreadable -> disable v2 writes.
+    final prefs = await SharedPreferences.getInstance();
+    final priorHealth = prefs.getString(_v2KeyHealthPref);
     var b64 = await _secureStorage.read(key: _aesKeyStorageKey);
     if (b64 == null || b64.isEmpty) {
       final fresh = await AesGcm.with256bits().newSecretKey();
@@ -51,6 +62,26 @@ class EncryptionService {
       _log.info('EncryptionService', 'Minted aes_key_v2 (256-bit)');
     }
     _aesKey = SecretKey(base64Decode(b64));
+    final healthNow = crypto.sha256.convert(base64Decode(b64)).toString();
+    if (priorHealth == null) {
+      // First run of wipe-detection (fresh install, or upgrade from a build that
+      // minted the key before detection existed). Trust-on-first-use: record the
+      // baseline. Safe because no v2 data can exist before the writer ships.
+      await prefs.setString(_v2KeyHealthPref, healthNow);
+      _v2KeyHealthy = true;
+    } else if (priorHealth == healthNow) {
+      _v2KeyHealthy = true; // current key matches its mirror
+    } else {
+      // Mirror exists but the current key differs: re-minted after a Keystore
+      // wipe (or the key changed). v2 data under the old key is orphaned. Keep
+      // the old mirror as evidence and DISABLE v2 writes; recovery = passphrase
+      // Restore.
+      _v2KeyHealthy = false;
+      _log.error(
+        'EncryptionService',
+        'v2 key health MISMATCH (Keystore wipe/re-mint) — v2 writes DISABLED',
+      );
+    }
 
     // 2) Key-health gate on the LEGACY key.
     final legacy = await _secureStorage.read(key: _legacyKeyStorageKey);
@@ -75,6 +106,9 @@ class EncryptionService {
   }
 
   bool get canOverwriteLegacy => _legacyKeyHealthy && _aesKey != null;
+  /// Safe to WRITE new v2 ciphertext. The v2 writer + migration MUST gate on
+  /// this so a wiped/re-minted key can never produce unreadable v2 data.
+  bool get canWriteV2 => _v2KeyHealthy && _aesKey != null;
 
   // Callback to notify when key is set
   void Function()? onKeySet;
