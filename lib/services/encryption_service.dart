@@ -1,6 +1,9 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:cryptography/cryptography.dart';
+import 'package:crypto/crypto.dart' as crypto; // sha256 key-health token
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 import 'logging_service.dart';
 
 /// Service for encryption key management

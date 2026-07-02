@@ -46,7 +46,8 @@ dependencies:
   
   # Update System
   dio: ^5.7.0
-  crypto: ^3.0.3
+  crypto: ^3.0.3            # sha256 for key-health token + PIN fallback
+  cryptography: ^2.7.0      # AES-256-GCM (Task 15) + Argon2id (Tasks 16/19)
   package_info_plus: ^8.1.0
 
 dependency_overrides:
