@@ -28,6 +28,7 @@ class ExportJob {
   final String? exportDir;
   final ExportType type;
   final bool isDeveloper; // New field
+  final bool removePasswords;
   int progress;
   int processedItems;
   int totalItems;
@@ -38,6 +39,7 @@ class ExportJob {
     required this.items,
     this.type = ExportType.zip,
     this.isDeveloper = false, // Default false
+    this.removePasswords = false,
     this.exportDir,
     this.zipPassword,
     this.status = ExportStatus.queued,
@@ -79,6 +81,7 @@ class ExportJob {
       'total_items': totalItems,
       'type': type.name,
       'is_developer': isDeveloper ? 1 : 0, // Save flag
+      'remove_passwords': removePasswords ? 1 : 0,
     };
   }
 
@@ -93,6 +96,7 @@ class ExportJob {
           ? ExportType.values.firstWhere((e) => e.name == json['type'], orElse: () => ExportType.zip)
           : ExportType.zip,
       isDeveloper: json['is_developer'] == 1, // Load flag
+      removePasswords: json['remove_passwords'] == 1,
       status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
       progress: json['progress'] ?? 0,
       processedItems: json['processed_items'] ?? 0,
@@ -303,8 +307,7 @@ class ExportQueueService extends ChangeNotifier {
     await _notificationsPlugin.show(1000, title, body, details, payload: payload);
   }
 
-  /// Add a new export job to queue
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false}) async {
+  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false, bool removePasswords = false}) async {
     // Cap history at 100 jobs
     if (_jobs.length >= 100) {
       // Remove oldest (completed/error) first, or just oldest
@@ -339,6 +342,7 @@ class ExportQueueService extends ChangeNotifier {
       totalItems: total,
       type: type,
       isDeveloper: isDeveloper,
+      removePasswords: removePasswords,
     );
     _jobs.add(job);
     _persistJob(job); // Save initial state
