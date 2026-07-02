@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:file_picker/file_picker.dart';
+
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'dart:io';
@@ -10,6 +10,7 @@ import '../../../services/storage_service.dart';
 import '../../../services/password_backup_service.dart';
 import '../../settings/services/settings_service.dart';
 
+import '../../documents/screens/file_system_browser.dart';
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
 import '../widgets/restore_file_picker.dart';
@@ -173,13 +174,23 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
       }
       return;
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
+    final backupDir = Directory(p.join(SettingsService().exportPath, 'Backup'));
+    final initialPath = backupDir.existsSync()
+        ? backupDir.path
+        : (Directory('/storage/emulated/0/Download').existsSync()
+            ? '/storage/emulated/0/Download'
+            : null);
+    final paths = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (_) => FileSystemBrowser(
+          initialPath: initialPath,
+          allowedExtensions: const ['json'],
+          allowMultiple: false,
+        ),
+      ),
     );
-    if (result == null || result.files.isEmpty) return;
-    final path = result.files.single.path;
-    if (path == null || !mounted) return;
+    if (paths == null || paths.isEmpty || !mounted) return;
+    final path = paths.first;
     final pass = await _promptPassphrase(confirm: false);
     if (pass == null) return;
     try {
