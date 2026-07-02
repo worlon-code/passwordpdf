@@ -130,12 +130,13 @@ class PdfToolsService {
     final file = File(filePath);
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    final newDocument = PdfDocument();
     try {
-      for (final index in pageIndices) {
-        if (index >= 0 && index < document.pages.count) {
-          // Import the real page (preserves text/links), not a flattened template
-          newDocument.importPageRange(document, index, index);
+      // Determine pages to remove (those NOT in pageIndices)
+      final keepSet = pageIndices.toSet();
+      // Iterate descending to keep indices stable when removing
+      for (int i = document.pages.count - 1; i >= 0; i--) {
+        if (!keepSet.contains(i)) {
+          document.pages.removeAt(i);
         }
       }
 
@@ -150,12 +151,11 @@ class PdfToolsService {
         newPath = path.join(dir, '${filename}_split_$suffix$ext');
       }
 
-      final newBytes = await newDocument.save();
+      final newBytes = await document.save();
       await File(newPath).writeAsBytes(newBytes);
       return newPath;
     } finally {
       document.dispose();
-      newDocument.dispose();
     }
   }
 
