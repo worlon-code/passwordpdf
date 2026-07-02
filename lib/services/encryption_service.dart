@@ -344,7 +344,11 @@ class EncryptionService {
   /// stored v1 blob. Used by the migration verify (later steps); proves the
   /// legacy decrypt was correct before any overwrite.
   String xorEncryptLegacy(String plainText) {
-    final keyBytes = utf8.encode(_encryptionKey!);
+    final key = _encryptionKey;
+    if (key == null) {
+      throw StateError('xorEncryptLegacy: legacy key not loaded');
+    }
+    final keyBytes = utf8.encode(key);
     final plainBytes = utf8.encode(plainText);
     final out = <int>[];
     for (int i = 0; i < plainBytes.length; i++) {

@@ -395,6 +395,22 @@ class StorageService {
     );
   }
 
+  /// Compare-and-swap a password's ciphertext for the v1->v2 migration sweep.
+  /// The WHERE matches BOTH id AND the exact old ciphertext ON PURPOSE: the
+  /// encrypted_value predicate makes this a no-op (0 rows) if the row was edited
+  /// or replaced underneath us, so a stale sweep write can never clobber a user
+  /// change. Do NOT simplify to id-only. Returns rows affected (1=ok, 0=skip).
+  Future<int> migratePasswordCiphertext(
+      int id, String oldValue, String newValue) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.passwordsTable,
+      {'encrypted_value': newValue},
+      where: 'id = ? AND encrypted_value = ?',
+      whereArgs: [id, oldValue],
+    );
+  }
+
   /// Delete a password
   Future<int> deletePassword(int id) async {
     final db = await database;
