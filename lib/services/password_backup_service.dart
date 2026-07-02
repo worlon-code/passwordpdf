@@ -188,7 +188,7 @@ extension RestoreOps on PasswordBackupService {
       throw const FormatException('Corrupted backup contents');
     }
     final entries = rawEntries
-        .map((e) => (e as Map).map((k, v) => MapEntry('\$k', '\$v')))
+        .map((e) => (e as Map).map((k, v) => MapEntry(k.toString(), v.toString())))
         .toList();
 
     final locals = await _storage.getAllPasswords();
