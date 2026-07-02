@@ -405,6 +405,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Future<void> _exportSelectedItems() async {
     String? password;
     bool encrypt = false;
+    bool removePasswords = false;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -439,6 +440,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       obscureText: true,
                       onChanged: (val) => password = val,
                     ),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: removePasswords,
+                        onChanged: (val) => setState(() => removePasswords = val ?? false),
+                      ),
+                      const Expanded(
+                        child: Text('Remove password from PDFs in the ZIP'),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               actions: [
@@ -524,7 +536,10 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
 
       // Add to queue
-      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath, zipPassword: zipPassword);
+      _exportQueue.addJob('Bulk Export', exportItems,
+          exportDir: exportPath,
+          zipPassword: zipPassword,
+          removePasswords: removePasswords);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
