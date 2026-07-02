@@ -450,24 +450,15 @@ class ExportQueueService extends ChangeNotifier {
           if (job.removePasswords && isPdf) {
             // Main-isolate only: secure storage + Keystore key are single-threaded.
             final pwd = await _pdfPasswordService.getPasswordForDocument(item.filePath!);
-            if (pwd == null) {
-              // No stored password -> cannot strip. Skip & report. Original untouched.
-              skippedNoPassword.add(item.name);
-              _log.warn('ExportQueueService',
-                  'Skip remove-password (no stored password): ${item.name}');
-              job.processedItems++;
-              await Future.delayed(Duration.zero);
-              continue;
-            }
-            if (pwd.isEmpty) {
-              // NO_PASSWORD sentinel: not actually protected -> archive as-is.
+            if (pwd == null || pwd.isEmpty) {
+              // No stored password (not protected / untracked / verified NO_PASSWORD):
+              // add the original as-is. NEVER drop the file from the ZIP.
               bytes = await file.readAsBytes();
             } else {
               final tmpDir = await getTemporaryDirectory();
               final tmpPath = path.join(tmpDir.path,
                   'unlock_${DateTime.now().microsecondsSinceEpoch}_${item.name}');
               try {
-                // removePassword runs on the MAIN isolate, BEFORE any compute() encode.
                 final outPath = await _pdfToolsService.removePassword(
                   filePath: item.filePath!,
                   password: pwd,
@@ -476,14 +467,11 @@ class ExportQueueService extends ChangeNotifier {
                 tempPaths.add(outPath);
                 bytes = await File(outPath).readAsBytes();
               } catch (e) {
-                // Wrong stored password / corrupt PDF: do NOT leak the protected
-                // original into an "unlocked" export. Skip & report.
+                // Couldn't strip the password: include the ORIGINAL (still protected), do NOT drop it.
                 skippedNoPassword.add(item.name);
                 _log.warn('ExportQueueService',
-                    'Remove-password failed, skipping ${item.name}: $e');
-                job.processedItems++;
-                await Future.delayed(Duration.zero);
-                continue;
+                    'Remove-password failed, including original (still protected) for ${item.name}: $e');
+                bytes = await file.readAsBytes();
               }
             }
           } else {
