@@ -87,6 +87,28 @@ class EncryptionService {
       );
     }
 
+    // 1b) v2-key FUNCTIONAL self-test: a hash match only proves the key BYTES
+    // are unchanged, not that the Keystore can still perform crypto with them
+    // (a key can be present but invalidated). Require a real encrypt->decrypt
+    // round-trip before trusting the key to WRITE v2 data.
+    if (_v2KeyHealthy) {
+      try {
+        final probe = utf8.encode('v2_selftest');
+        final algo = AesGcm.with256bits();
+        final box = await algo.encrypt(probe, secretKey: _aesKey!);
+        final back = await algo.decrypt(box, secretKey: _aesKey!);
+        if (utf8.decode(back) != 'v2_selftest') {
+          _v2KeyHealthy = false;
+          _log.error('EncryptionService',
+              'v2 key self-test MISMATCH — v2 writes DISABLED');
+        }
+      } catch (e) {
+        _v2KeyHealthy = false;
+        _log.error('EncryptionService',
+            'v2 key self-test threw — v2 writes DISABLED', e);
+      }
+    }
+
     // 2) Key-health gate on the LEGACY key.
     final legacy = await _secureStorage.read(key: _legacyKeyStorageKey);
     if (legacy != null && legacy.isNotEmpty) {
