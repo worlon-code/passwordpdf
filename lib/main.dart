@@ -12,6 +12,8 @@ import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
 import 'services/permission_service.dart';
 import 'services/encryption_service.dart';
+import 'services/storage_service.dart';
+import 'services/password_migration_service.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -82,6 +84,17 @@ void main() async {
     } catch (e) {
       log.error('App', 'initCrypto failed at startup: $e');
     }
+
+    // One-time v1->v2 password migration sweep. Fire-and-forget so it never
+    // blocks startup; idempotent, gated on both keys healthy, CAS +
+    // prove-before-overwrite. Passwords open normally meanwhile (read-both).
+    PasswordMigrationService(EncryptionService(), StorageService())
+        .migrateLegacyToV2()
+        .then((n) {
+      if (n > 0) log.info('App', 'Password migration: $n row(s) -> v2');
+    }).catchError((e) {
+      log.error('App', 'Password migration sweep failed', e);
+    });
     
     // Global Flutter Error Handler (Layout errors, etc)
     FlutterError.onError = (FlutterErrorDetails details) {
