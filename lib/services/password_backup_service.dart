@@ -164,7 +164,7 @@ extension RestoreOps on PasswordBackupService {
     final decoded = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
     final entries =
         (decoded['entries'] as List)
-            .map((e) => (e as Map).map((k, v) => MapEntry('\$k', '\$v')))
+            .map((e) => (e as Map).cast<String, String>())
             .toList();
 
     final locals = await _storage.getAllPasswords();
@@ -217,12 +217,13 @@ extension RestoreOps on PasswordBackupService {
     for (final c in conflicts) {
       if (c.resolution == ConflictResolution.skip) continue;
       if (c.status == ConflictStatus.sameNameSameSecret) continue;
-      var name = c.backupName;
-      if (c.resolution == ConflictResolution.rename && c.renameTo != null) {
-        name = c.renameTo!.trim();
-      } else if (c.resolution == ConflictResolution.keepBoth &&
-          c.status == ConflictStatus.sameNameDiffSecret) {
-        name = await _uniquify(c.backupName);
+      final String name;
+      if (c.resolution == ConflictResolution.rename) {
+        final wanted = c.renameTo?.trim() ?? '';
+        if (wanted.isEmpty) continue;
+        name = await _availableName(wanted);
+      } else {
+        name = await _availableName(c.backupName);
       }
       final enc = await _encryption.encrypt(c.backupSecret);
       if (enc == null) continue;
@@ -236,6 +237,13 @@ extension RestoreOps on PasswordBackupService {
       imported++;
     }
     return imported;
+  }
+
+  /// Never returns a name that already exists locally, so insertPassword's
+  /// ConflictAlgorithm.replace can never overwrite an unrelated local row.
+  Future<String> _availableName(String wanted) async {
+    if (!await _storage.passwordKeyExists(wanted)) return wanted;
+    return _uniquify(wanted);
   }
 
   Future<String> _uniquify(String base) async {
