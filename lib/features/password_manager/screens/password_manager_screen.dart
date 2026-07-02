@@ -162,18 +162,10 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   }
 
   Future<void> _onRestore() async {
-    if (!await _encryptionService.isKeySet()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Set an encryption key first, then restore your backup.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
+    // No legacy-key gate here: restore must work on a fresh install / after a
+    // Keystore wipe (there may be no legacy key). Readiness is enforced inside
+    // applyRestore via adoptCurrentV2KeyAsHealthy(), which throws FormatException
+    // (caught below) if the device key is unusable.
     final backupDir = Directory(p.join(SettingsService().exportPath, 'Backup'));
     final initialPath = backupDir.existsSync()
         ? backupDir.path
