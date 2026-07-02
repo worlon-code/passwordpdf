@@ -119,7 +119,7 @@ class RestoreConflict {
   String? renameTo;
   final Map<String, String> _entry;
 
-  String get backupSecret => _entry['secret']!;
+  String get backupSecret => _entry['secret'] ?? '';
 }
 
 extension RestoreOps on PasswordBackupService {

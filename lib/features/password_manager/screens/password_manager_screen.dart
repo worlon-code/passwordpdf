@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'dart:io';
@@ -12,6 +12,7 @@ import '../../settings/services/settings_service.dart';
 
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
+import '../widgets/restore_file_picker.dart';
 
 /// Password manager screen to view and manage saved passwords
 class PasswordManagerScreen extends StatefulWidget {
@@ -172,19 +173,19 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
       }
       return;
     }
-    final picked = await FilePicker.platform.pickFiles(withData: true);
-    if (picked == null || picked.files.single.bytes == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null || !mounted) return;
     final pass = await _promptPassphrase(confirm: false);
     if (pass == null) return;
     try {
-      final conflicts = await _backup.restoreFromBytes(
-        picked.files.single.bytes!,
-        pass,
-      );
+      final bytes = await File(path).readAsBytes();
+      final conflicts = await _backup.restoreFromBytes(bytes, pass);
       if (!mounted) return;
-      // Auto-resolve: new entries import; same-name/different-password imports
-      // (applyRestore auto-renames the clash); identical entries are skipped.
-      // Only "same password already saved under another name" needs review.
       final needReview = <RestoreConflict>[];
       for (final c in conflicts) {
         switch (c.status) {
@@ -222,6 +223,12 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Restore failed: $e')));
       }
     }
   }
