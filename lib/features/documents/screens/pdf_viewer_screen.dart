@@ -542,10 +542,33 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
      );
      if (newOrder == null) return;
 
+     final tools = PdfToolsService();
+     bool confirmedFlatten = true;
+     if (await tools.willFlattenOnReorder(filePath: widget.filePath, password: _currentPassword)) {
+       if (context.mounted) {
+         confirmedFlatten = await showDialog<bool>(
+           context: context,
+           builder: (c) => AlertDialog(
+             title: const Text('Flatten Interactive Content?'),
+             content: const Text('Reordering pages will flatten form fields, annotations, and bookmarks. The document will look the same but will no longer be interactive. Do you want to continue?'),
+             actions: [
+               TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+               TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Continue')),
+             ],
+           ),
+         ) ?? false;
+       } else {
+         confirmedFlatten = false;
+       }
+     }
+     if (!confirmedFlatten) return;
+
+     if (!context.mounted) return;
      await _runToolOperation(context, (tools, savePath) => tools.reorderPages(
        filePath: widget.filePath,
        password: _currentPassword,
        pageOrder: newOrder,
+       confirmedFlatten: confirmedFlatten,
        savePath: savePath
      ), '_reordered');
   }

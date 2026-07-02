@@ -6,6 +6,63 @@ import '../services/logging_service.dart';
 
 /// Service for advanced PDF operations: Split, Merge, Reorder, Remove Password
 class PdfToolsService {
+  bool _hasInteractiveContent(PdfDocument document) {
+    return document.form.fields.count > 0 || document.bookmarks.count > 0;
+  }
+
+  /// Check if reordering will flatten interactive content (forms/bookmarks)
+  Future<bool> willFlattenOnReorder({
+    required String filePath,
+    required String password,
+  }) async {
+    final file = File(filePath);
+    if (!file.existsSync()) return false;
+    final bytes = await file.readAsBytes();
+    try {
+      final document = PdfDocument(inputBytes: bytes, password: password);
+      try {
+        return _hasInteractiveContent(document);
+      } finally {
+        document.dispose();
+      }
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Check if merging will flatten interactive content (forms/bookmarks)
+  Future<bool> willFlattenOnMerge({
+    required String sourcePath,
+    required String sourcePassword,
+    required String otherPath,
+    required String otherPassword,
+  }) async {
+    bool sourceHas = false;
+    bool otherHas = false;
+
+    final sourceFile = File(sourcePath);
+    if (sourceFile.existsSync()) {
+      final sourceBytes = await sourceFile.readAsBytes();
+      try {
+        final sourceDoc = PdfDocument(inputBytes: sourceBytes, password: sourcePassword);
+        sourceHas = _hasInteractiveContent(sourceDoc);
+        sourceDoc.dispose();
+      } catch (_) {}
+    }
+
+    final otherFile = File(otherPath);
+    if (otherFile.existsSync()) {
+      final otherBytes = await otherFile.readAsBytes();
+      try {
+        final otherDoc = PdfDocument(inputBytes: otherBytes, password: otherPassword);
+        otherHas = _hasInteractiveContent(otherDoc);
+        otherDoc.dispose();
+      } catch (_) {}
+    }
+
+    return sourceHas || otherHas;
+  }
+
   /// Remove password from a PDF and save as new file
   Future<String> removePassword({
     required String filePath,
@@ -83,6 +140,7 @@ class PdfToolsService {
     required String filePath,
     required String password,
     required List<int> pageOrder, // 0-based indices
+    required bool confirmedFlatten,
     String? outputDir,
     String? savePath,
   }) async {
@@ -91,31 +149,38 @@ class PdfToolsService {
 
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    final newDocument = PdfDocument();
     try {
-      for (final index in pageOrder) {
-        if (index >= 0 && index < document.pages.count) {
-          // Import one real page at a time, in the requested order
-          newDocument.importPageRange(document, index, index);
+      if (_hasInteractiveContent(document) && !confirmedFlatten) {
+        throw Exception('Operation will flatten interactive content (forms/bookmarks). Confirm to proceed.');
+      }
+
+      final newDocument = PdfDocument();
+      try {
+        for (final index in pageOrder) {
+          if (index >= 0 && index < document.pages.count) {
+            // Import one real page at a time, in the requested order
+            newDocument.importPageRange(document, index, index);
+          }
         }
-      }
 
-      String newPath;
-      if (savePath != null) {
-        newPath = savePath;
-      } else {
-        final dir = outputDir ?? path.dirname(filePath);
-        final filename = path.basenameWithoutExtension(filePath);
-        final ext = path.extension(filePath);
-        newPath = path.join(dir, '${filename}_reordered$ext');
-      }
+        String newPath;
+        if (savePath != null) {
+          newPath = savePath;
+        } else {
+          final dir = outputDir ?? path.dirname(filePath);
+          final filename = path.basenameWithoutExtension(filePath);
+          final ext = path.extension(filePath);
+          newPath = path.join(dir, '${filename}_reordered$ext');
+        }
 
-      final newBytes = await newDocument.save();
-      await File(newPath).writeAsBytes(newBytes);
-      return newPath;
+        final newBytes = await newDocument.save();
+        await File(newPath).writeAsBytes(newBytes);
+        return newPath;
+      } finally {
+        newDocument.dispose();
+      }
     } finally {
       document.dispose();
-      newDocument.dispose();
     }
   }
   
