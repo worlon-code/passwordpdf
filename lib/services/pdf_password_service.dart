@@ -16,6 +16,10 @@ class PdfPasswordService {
   
   static const String _documentsPasswordsKey = 'document_passwords';
   static const String _migrationCompleteKey = 'password_paths_migrated_v2';
+  /// TEMP (crypto key testing): when true, PDF password caching + auto-unlock
+  /// are DISABLED and any stored PDF passwords are wiped on init. Revert by
+  /// setting this to false. MUST be false before shipping to prod.
+  static bool cachingDisabled = true;
   
   /// Map of file path -> encrypted password
   Map<String, String> _documentPasswords = {};
@@ -24,6 +28,18 @@ class PdfPasswordService {
   /// Initialize the service
   Future<void> initialize() async {
     if (_isInitialized) return;
+
+    // TEMP (crypto key testing): caching disabled -> wipe any stored PDF
+    // passwords once and skip loading them. Revert with cachingDisabled=false.
+    if (cachingDisabled) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_documentsPasswordsKey);
+      } catch (_) {}
+      _documentPasswords = {};
+      _isInitialized = true;
+      return;
+    }
     
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -49,6 +65,7 @@ class PdfPasswordService {
   /// Checks both exact path and filename match for backward compatibility
   Future<String?> getPasswordForDocument(String filePath) async {
     await initialize();
+    if (cachingDisabled) return null; // TEMP: crypto key testing
     
     // 1. Try exact path match first
     var encryptedPassword = _documentPasswords[filePath];
@@ -87,6 +104,7 @@ class PdfPasswordService {
   /// Store successful password for a document
   Future<void> saveDocumentPassword(String filePath, String password) async {
     await initialize();
+    if (cachingDisabled) return; // TEMP: crypto key testing — no PDF pw caching
     
     if (password.isEmpty) {
       // Document doesn't need password
@@ -105,6 +123,7 @@ class PdfPasswordService {
   /// Check if document has a stored password
   Future<bool> hasStoredPassword(String filePath) async {
     await initialize();
+    if (cachingDisabled) return false; // TEMP: crypto key testing
     
     // Check exact match
     if (_documentPasswords.containsKey(filePath)) {
@@ -147,6 +166,7 @@ class PdfPasswordService {
   /// Get all unique decrypted passwords to try
   Future<List<String>> getAllUniquePasswords() async {
     await initialize();
+    if (cachingDisabled) return <String>[]; // TEMP: crypto key testing
     final passwords = <String>{};
     
     for (final encrypted in _documentPasswords.values) {
