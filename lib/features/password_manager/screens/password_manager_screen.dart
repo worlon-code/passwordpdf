@@ -8,6 +8,7 @@ import '../../../models/password_model.dart';
 import '../../../services/encryption_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/password_backup_service.dart';
+import '../../settings/services/settings_service.dart';
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
 
@@ -98,22 +99,61 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
     if (pass == null) return;
     try {
       final bytes = await _backup.createBackup(pass);
-      final dir = await getTemporaryDirectory();
-      final file = File(
-        p.join(
-          dir.path,
-          'passwords-${DateTime.now().millisecondsSinceEpoch}.pwdbak',
-        ),
+      if (!mounted) return;
+      final choice = await showDialog<String>(
+        context: context,
+        builder:
+            (ctx) => AlertDialog(
+              title: const Text('Backup ready'),
+              content: const Text('Save it to your device, or share it?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'save'),
+                  child: const Text('Save to device'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'share'),
+                  child: const Text('Share'),
+                ),
+              ],
+            ),
       );
-      await file.writeAsBytes(bytes, flush: true);
-      await Share.shareXFiles([
-        XFile(file.path),
-      ], text: 'Password Manager backup');
+      if (choice == null) return;
+      final fileName =
+          'passwords-${DateTime.now().millisecondsSinceEpoch}.pwdbak';
+      if (choice == 'save') {
+        final backupDir = Directory(
+          p.join(SettingsService().exportPath, 'Backup'),
+        );
+        if (!await backupDir.exists()) {
+          await backupDir.create(recursive: true);
+        }
+        final outFile = File(p.join(backupDir.path, fileName));
+        await outFile.writeAsBytes(bytes, flush: true);
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Saved to ${outFile.path}')));
+        }
+      } else {
+        final tmp = await getTemporaryDirectory();
+        final file = File(p.join(tmp.path, fileName));
+        await file.writeAsBytes(bytes, flush: true);
+        await Share.shareXFiles([
+          XFile(file.path),
+        ], text: 'Password Manager backup');
+      }
     } on FormatException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Backup failed: $e')));
       }
     }
   }
