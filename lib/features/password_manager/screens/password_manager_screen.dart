@@ -9,6 +9,7 @@ import '../../../services/encryption_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/password_backup_service.dart';
 import '../../settings/services/settings_service.dart';
+
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
 
@@ -120,7 +121,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
       );
       if (choice == null) return;
       final fileName =
-          'passwords-${DateTime.now().millisecondsSinceEpoch}.pwdbak';
+          'passwords-${DateTime.now().millisecondsSinceEpoch}.json';
       if (choice == 'save') {
         final backupDir = Directory(
           p.join(SettingsService().exportPath, 'Backup'),
@@ -159,9 +160,6 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   }
 
   Future<void> _onRestore() async {
-    // Guard: restore re-encrypts each entry under the LOCAL key. If no key is
-    // set, encrypt() returns null and the import would silently write nothing.
-    // Recovery must never fail silently, so require a key first.
     if (!await _encryptionService.isKeySet()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -184,13 +182,35 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         pass,
       );
       if (!mounted) return;
-      final resolved = await Navigator.of(context).push<List<RestoreConflict>>(
-        MaterialPageRoute(
-          builder: (_) => RestoreConflictTable(conflicts: conflicts),
-        ),
-      );
-      if (resolved == null) return;
-      final n = await _backup.applyRestore(resolved);
+      // Auto-resolve: new entries import; same-name/different-password imports
+      // (applyRestore auto-renames the clash); identical entries are skipped.
+      // Only "same password already saved under another name" needs review.
+      final needReview = <RestoreConflict>[];
+      for (final c in conflicts) {
+        switch (c.status) {
+          case ConflictStatus.fresh:
+          case ConflictStatus.sameNameDiffSecret:
+            c.resolution = ConflictResolution.keepBoth;
+            break;
+          case ConflictStatus.sameNameSameSecret:
+            c.resolution = ConflictResolution.skip;
+            break;
+          case ConflictStatus.sameSecretDiffName:
+            needReview.add(c);
+            break;
+        }
+      }
+      if (needReview.isNotEmpty) {
+        final reviewed = await Navigator.of(
+          context,
+        ).push<List<RestoreConflict>>(
+          MaterialPageRoute(
+            builder: (_) => RestoreConflictTable(conflicts: needReview),
+          ),
+        );
+        if (reviewed == null) return;
+      }
+      final n = await _backup.applyRestore(conflicts);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
