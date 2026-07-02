@@ -136,36 +136,60 @@ extension RestoreOps on PasswordBackupService {
     if (env['magic'] != 'PWDBAK') {
       throw const FormatException('Not a valid backup file');
     }
-    final kdf = env['kdf'] as Map<String, dynamic>;
+
+    // Parse the UNTRUSTED envelope defensively. deriveKeyFromPassword runs
+    // BEFORE the MAC check, so unbounded KDF params are a pre-auth OOM/hang DoS.
+    final int kMem, kIter, kPar;
+    final List<int> salt, nonce, mac, ct;
+    try {
+      final kdf = env['kdf'] as Map<String, dynamic>;
+      kMem = kdf['memory'] as int;
+      kIter = kdf['iterations'] as int;
+      kPar = kdf['parallelism'] as int;
+      salt = base64Decode(kdf['salt'] as String);
+      nonce = base64Decode(env['nonce'] as String);
+      mac = base64Decode(env['mac'] as String);
+      ct = base64Decode(env['ciphertext'] as String);
+    } catch (_) {
+      throw const FormatException('Not a valid backup file');
+    }
+    // Hard caps reject a hostile KDF cost before we derive anything.
+    if (kMem < 8 * 1024 ||
+        kMem > 256 * 1024 ||
+        kIter < 1 ||
+        kIter > 10 ||
+        kPar < 1 ||
+        kPar > 4 ||
+        salt.length < 8 ||
+        salt.length > 64) {
+      throw const FormatException('Not a valid backup file');
+    }
+
     final algorithm = Argon2id(
-      memory: kdf['memory'] as int,
-      iterations: kdf['iterations'] as int,
-      parallelism: kdf['parallelism'] as int,
-      hashLength: 32,
-    );
+        memory: kMem, iterations: kIter, parallelism: kPar, hashLength: 32);
     final secretKey = await algorithm.deriveKeyFromPassword(
-      password: passphrase,
-      nonce: base64Decode(kdf['salt'] as String),
-    );
+        password: passphrase, nonce: salt);
     final aead = AesGcm.with256bits();
     final List<int> clear;
     try {
       clear = await aead.decrypt(
-        SecretBox(
-          base64Decode(env['ciphertext'] as String),
-          nonce: base64Decode(env['nonce'] as String),
-          mac: Mac(base64Decode(env['mac'] as String)),
-        ),
+        SecretBox(ct, nonce: nonce, mac: Mac(mac)),
         secretKey: secretKey,
       );
     } on SecretBoxAuthenticationError {
       throw const FormatException('Wrong passphrase or corrupted backup');
     }
-    final decoded = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
-    final entries =
-        (decoded['entries'] as List)
-            .map((e) => (e as Map).cast<String, String>())
-            .toList();
+
+    final List<dynamic> rawEntries;
+    try {
+      final decoded = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
+      rawEntries = decoded['entries'] as List;
+    } catch (_) {
+      throw const FormatException('Corrupted backup contents');
+    }
+    final entries = rawEntries
+        .map((e) => (e as Map).map((k, v) => MapEntry('\$k', '\$v')))
+        .toList();
 
     final locals = await _storage.getAllPasswords();
     final localByName = {for (final p in locals) p.keyName: p};
@@ -183,10 +207,9 @@ extension RestoreOps on PasswordBackupService {
       String localName = '';
       if (localByName.containsKey(bName)) {
         localName = bName;
-        status =
-            localPlainByName[bName] == bSecret
-                ? ConflictStatus.sameNameSameSecret
-                : ConflictStatus.sameNameDiffSecret;
+        status = localPlainByName[bName] == bSecret
+            ? ConflictStatus.sameNameSameSecret
+            : ConflictStatus.sameNameDiffSecret;
       } else {
         final match = localPlainByName.entries
             .where((le) => le.value == bSecret)
@@ -200,14 +223,12 @@ extension RestoreOps on PasswordBackupService {
           status = ConflictStatus.fresh;
         }
       }
-      conflicts.add(
-        RestoreConflict(
-          backupName: bName,
-          localName: localName,
-          status: status,
-          entry: e,
-        ),
-      );
+      conflicts.add(RestoreConflict(
+        backupName: bName,
+        localName: localName,
+        status: status,
+        entry: e,
+      ));
     }
     return conflicts;
   }
