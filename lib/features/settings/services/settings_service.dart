@@ -2,6 +2,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter/material.dart';
 import '../../../services/logging_service.dart';
+import 'dart:convert';
+import 'dart:math';
+import 'package:cryptography/cryptography.dart';
 
 /// Authentication method options
 enum AuthMethod {
@@ -19,12 +22,10 @@ class SettingsService extends ChangeNotifier {
 
   SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(
-      encryptedSharedPreferences: true,
-    ),
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
   final LoggingService _log = LoggingService();
-  
+
   ThemeMode _themeMode = ThemeMode.light;
   AuthMethod _authMethod = AuthMethod.none;
   bool _hasPinSet = false;
@@ -42,8 +43,11 @@ class SettingsService extends ChangeNotifier {
   AuthMethod get authMethod => _authMethod;
   bool get hasPinSet => _hasPinSet;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
-  bool get biometricEnabled => _authMethod == AuthMethod.fingerprintOnly || _authMethod == AuthMethod.both;
-  bool get pinEnabled => _authMethod == AuthMethod.pinOnly || _authMethod == AuthMethod.both;
+  bool get biometricEnabled =>
+      _authMethod == AuthMethod.fingerprintOnly ||
+      _authMethod == AuthMethod.both;
+  bool get pinEnabled =>
+      _authMethod == AuthMethod.pinOnly || _authMethod == AuthMethod.both;
   Color get accentColor => _accentColor;
   int get fontSizeAdjustment => _fontSizeAdjustment;
   int get maxLogCount => _maxLogCount;
@@ -105,10 +109,10 @@ class SettingsService extends ChangeNotifier {
     // Check if PIN is set
     final pin = await _secureStorage.read(key: 'app_pin');
     _hasPinSet = pin != null && pin.isNotEmpty;
-    
+
     // Load developer mode
     _developerModeEnabled = _prefs!.getBool('developer_mode_enabled') ?? false;
-    
+
     // Load default screen index (0 = All Docs, 1 = Documents)
     _defaultScreenIndex = _prefs!.getInt('default_screen_index') ?? 0;
 
@@ -120,14 +124,17 @@ class SettingsService extends ChangeNotifier {
 
     // Load last viewed build number
     _lastViewedBuildNumber = _prefs!.getInt('last_viewed_build_number') ?? 0;
-    
+
     // Load auto-update check
     _autoCheckUpdates = _prefs!.getBool('auto_check_updates') ?? true;
 
-    _log.info('SettingsService', 'Settings loaded: autoCheckUpdates=$_autoCheckUpdates');
+    _log.info(
+      'SettingsService',
+      'Settings loaded: autoCheckUpdates=$_autoCheckUpdates',
+    );
     notifyListeners();
   }
-  
+
   // ... existing setters ...
 
   /// Set auto-update check preference
@@ -205,18 +212,24 @@ class SettingsService extends ChangeNotifier {
   /// Set PIN
   Future<bool> setPin(String pin) async {
     try {
-      // NOTE: never log `pin` (raw secret). Log only the action.
       _log.info('SettingsService', 'Setting new PIN...');
-      await _secureStorage.write(key: 'app_pin', value: pin);
+      final hashed = await _hashPin(pin, _randomSalt());
+      if (!await _verifyHashedBlob(hashed, pin)) {
+        _log.error(
+          'SettingsService',
+          'New PIN hash self-check failed; aborting',
+        );
+        return false; // verify-before-discard: never store an unverifiable hash
+      }
+      await _secureStorage.write(key: 'app_pin', value: hashed);
       _hasPinSet = true;
-      
-      // Update auth method
+
       if (_authMethod == AuthMethod.fingerprintOnly) {
         await setAuthMethod(AuthMethod.both);
       } else if (_authMethod == AuthMethod.none) {
         await setAuthMethod(AuthMethod.pinOnly);
       }
-      
+
       notifyListeners();
       _log.info('SettingsService', 'PIN set successfully');
       return true;
@@ -226,13 +239,93 @@ class SettingsService extends ChangeNotifier {
     }
   }
 
+  static const String _pinV2Tag = 'pin:v2:'; // <tag>base64(salt16):base64(hash)
+
+  Future<String> _hashPin(String pin, List<int> salt) async {
+    final algo = Argon2id(
+      memory: 19 * 1024, // ~19 MiB (KiB units)
+      parallelism: 1,
+      iterations: 2,
+      hashLength: 32,
+    );
+    final newKey = await algo.deriveKey(
+      secretKey: SecretKey(utf8.encode(pin)),
+      nonce: salt,
+    );
+    final bytes = await newKey.extractBytes();
+    return '$_pinV2Tag${base64Encode(salt)}:${base64Encode(bytes)}';
+  }
+
+  // Constant-time byte compare — no early return on first mismatch.
+  bool _constTimeEq(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a[i] ^ b[i];
+    }
+    return diff == 0;
+  }
+
+  List<int> _randomSalt() {
+    final r = Random.secure();
+    return List<int>.generate(16, (_) => r.nextInt(256));
+  }
+
+  // Re-derive from a freshly-built blob and confirm it matches the plaintext.
+  Future<bool> _verifyHashedBlob(String blob, String pin) async {
+    final body = blob.substring(_pinV2Tag.length);
+    final sep = body.indexOf(':');
+    final salt = base64Decode(body.substring(0, sep));
+    final expected = base64Decode(body.substring(sep + 1));
+    final candidate = await _hashPin(pin, salt);
+    final candBytes = base64Decode(
+      candidate.substring(candidate.lastIndexOf(':') + 1),
+    );
+    return _constTimeEq(candBytes, expected);
+  }
+
   /// Verify PIN
   Future<bool> verifyPin(String pin) async {
     try {
-      final storedPin = await _secureStorage.read(key: 'app_pin');
-      final match = storedPin == pin;
-      // NOTE: never log `pin` or `storedPin` (raw secrets). Log only the outcome.
-      _log.info('SettingsService', 'PIN verification: ${match ? 'success' : 'failed'}');
+      final stored = await _secureStorage.read(key: 'app_pin');
+      if (stored == null) {
+        _log.info('SettingsService', 'PIN verification: failed (none set)');
+        return false;
+      }
+
+      bool match;
+      if (stored.startsWith(_pinV2Tag)) {
+        final body = stored.substring(_pinV2Tag.length);
+        final sep = body.indexOf(':');
+        final salt = base64Decode(body.substring(0, sep));
+        final expected = base64Decode(body.substring(sep + 1));
+        final candidate = await _hashPin(pin, salt);
+        final candBytes = base64Decode(
+          candidate.substring(candidate.lastIndexOf(':') + 1),
+        );
+        match = _constTimeEq(candBytes, expected);
+      } else {
+        // legacy plaintext PIN
+        match = _constTimeEq(utf8.encode(stored), utf8.encode(pin));
+        if (match) {
+          // LAZY REHASH: build new hash, VERIFY it, then overwrite.
+          final salt = _randomSalt();
+          final newHash = await _hashPin(pin, salt);
+          if (await _verifyHashedBlob(newHash, pin)) {
+            await _secureStorage.write(key: 'app_pin', value: newHash);
+            _log.info('SettingsService', 'PIN rehashed to pin:v2');
+          } else {
+            _log.error(
+              'SettingsService',
+              'Rehash self-check failed; kept legacy',
+            );
+          }
+        }
+      }
+      _log.info(
+        'SettingsService',
+        'PIN verification: ${match ? 'success' : 'failed'}',
+      );
       return match;
     } catch (e) {
       _log.error('SettingsService', 'Failed to verify PIN', e);
@@ -246,14 +339,14 @@ class SettingsService extends ChangeNotifier {
       _log.info('SettingsService', 'Removing PIN...');
       await _secureStorage.delete(key: 'app_pin');
       _hasPinSet = false;
-      
+
       // Update auth method
       if (_authMethod == AuthMethod.both) {
         await setAuthMethod(AuthMethod.fingerprintOnly);
       } else if (_authMethod == AuthMethod.pinOnly) {
         await setAuthMethod(AuthMethod.none);
       }
-      
+
       notifyListeners();
       _log.info('SettingsService', 'PIN removed successfully');
       return true;
@@ -271,7 +364,9 @@ class SettingsService extends ChangeNotifier {
   }
 
   /// Get export path (defaults to Downloads/PDF Manager)
-  String get exportPath => _prefs?.getString('export_path') ?? '/storage/emulated/0/Download/PDF Manager';
+  String get exportPath =>
+      _prefs?.getString('export_path') ??
+      '/storage/emulated/0/Download/PDF Manager';
 
   /// Set export path
   Future<void> setExportPath(String path) async {
@@ -292,7 +387,10 @@ class SettingsService extends ChangeNotifier {
   Future<void> setDefaultScreenIndex(int index) async {
     _defaultScreenIndex = index.clamp(0, 1);
     await _prefs?.setInt('default_screen_index', _defaultScreenIndex);
-    _log.info('SettingsService', 'Default screen set to: ${_defaultScreenIndex == 0 ? 'All Docs' : 'Documents'}');
+    _log.info(
+      'SettingsService',
+      'Default screen set to: ${_defaultScreenIndex == 0 ? 'All Docs' : 'Documents'}',
+    );
     notifyListeners();
   }
 
@@ -300,7 +398,10 @@ class SettingsService extends ChangeNotifier {
   Future<void> setAutoLockTimeout(int minutes) async {
     _autoLockTimeout = minutes.clamp(3, 30);
     await _prefs?.setInt('auto_lock_timeout', _autoLockTimeout);
-    _log.info('SettingsService', 'Auto-lock timeout set to: $_autoLockTimeout minutes');
+    _log.info(
+      'SettingsService',
+      'Auto-lock timeout set to: $_autoLockTimeout minutes',
+    );
     notifyListeners();
   }
 
@@ -311,5 +412,4 @@ class SettingsService extends ChangeNotifier {
     // No notify needed strictly, but good practice
     notifyListeners();
   }
-
 }
