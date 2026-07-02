@@ -93,7 +93,7 @@ class LoggingService {
     }
     
     // Persist async
-    _storage.insertLog(entry.toMap(), retentionLimit: _maxLogLimit);
+    _storage.insertLog(entry.toMap(), retentionLimit: _maxLogLimit).catchError((_) {});
   }
 
   void info(String tag, String message) {

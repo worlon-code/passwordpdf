@@ -339,7 +339,7 @@ class PdfToolsService {
         if (content.contains('/Encrypt')) {
           final endRss = ProcessInfo.currentRss;
           logger.info('RAM', 'Pre-Check Found Encrypted (Trailer). End Process RAM: ${(endRss / 1024 / 1024).toStringAsFixed(2)} MB. Delta: ${((endRss - startRss) / 1024 / 1024).toStringAsFixed(2)} MB');
-          return true;
+          return await _isProtectedFallback(file);
         }
         
         // Let's check the first 2KB too just in case
@@ -349,7 +349,7 @@ class PdfToolsService {
         if (headContent.contains('/Encrypt')) {
            final endRss = ProcessInfo.currentRss;
            logger.info('RAM', 'Pre-Check Found Encrypted (Header). End Process RAM: ${(endRss / 1024 / 1024).toStringAsFixed(2)} MB');
-          return true;
+          return await _isProtectedFallback(file);
         }
         
         final endRss = ProcessInfo.currentRss;
