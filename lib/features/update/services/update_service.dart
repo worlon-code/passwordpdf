@@ -158,9 +158,13 @@ class UpdateService {
             'User-Agent': 'Mozilla/5.0 (Android; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0',
             'Accept': '*/*',
           },
-          // SECURITY: do NOT follow redirects. A redirect could bounce the
-          // download to an attacker-controlled host that bypasses the host check.
-          followRedirects: false,
+          // SECURITY: the initial downloadUrl host is validated against the allow-list
+          // (github.com) BEFORE this call. GitHub serves release/LFS assets via a 302
+          // to its own *.githubusercontent.com media host, so we MUST follow redirects
+          // to fetch the bytes. Integrity is still pinned by the mandatory sha256 check
+          // on the downloaded file below; maxRedirects caps against redirect loops.
+          followRedirects: true,
+          maxRedirects: 5,
           validateStatus: (status) => status != null && status < 500,
         ),
       );
