@@ -166,9 +166,15 @@ extension RestoreOps on PasswordBackupService {
     }
 
     final algorithm = Argon2id(
-        memory: kMem, iterations: kIter, parallelism: kPar, hashLength: 32);
+      memory: kMem,
+      iterations: kIter,
+      parallelism: kPar,
+      hashLength: 32,
+    );
     final secretKey = await algorithm.deriveKeyFromPassword(
-        password: passphrase, nonce: salt);
+      password: passphrase,
+      nonce: salt,
+    );
     final aead = AesGcm.with256bits();
     final List<int> clear;
     try {
@@ -187,9 +193,14 @@ extension RestoreOps on PasswordBackupService {
     } catch (_) {
       throw const FormatException('Corrupted backup contents');
     }
-    final entries = rawEntries
-        .map((e) => (e as Map).map((k, v) => MapEntry(k.toString(), v.toString())))
-        .toList();
+    final entries =
+        rawEntries
+            .map(
+              (e) => (e as Map).map(
+                (k, v) => MapEntry(k.toString(), v.toString()),
+              ),
+            )
+            .toList();
 
     final locals = await _storage.getAllPasswords();
     final localByName = {for (final p in locals) p.keyName: p};
@@ -207,9 +218,10 @@ extension RestoreOps on PasswordBackupService {
       String localName = '';
       if (localByName.containsKey(bName)) {
         localName = bName;
-        status = localPlainByName[bName] == bSecret
-            ? ConflictStatus.sameNameSameSecret
-            : ConflictStatus.sameNameDiffSecret;
+        status =
+            localPlainByName[bName] == bSecret
+                ? ConflictStatus.sameNameSameSecret
+                : ConflictStatus.sameNameDiffSecret;
       } else {
         final match = localPlainByName.entries
             .where((le) => le.value == bSecret)
@@ -223,12 +235,14 @@ extension RestoreOps on PasswordBackupService {
           status = ConflictStatus.fresh;
         }
       }
-      conflicts.add(RestoreConflict(
-        backupName: bName,
-        localName: localName,
-        status: status,
-        entry: e,
-      ));
+      conflicts.add(
+        RestoreConflict(
+          backupName: bName,
+          localName: localName,
+          status: status,
+          entry: e,
+        ),
+      );
     }
     return conflicts;
   }
