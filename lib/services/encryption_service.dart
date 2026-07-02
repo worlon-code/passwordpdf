@@ -20,9 +20,9 @@ class EncryptionService {
   // Dev gate: salted Argon2id digest of the developer password, computed
   // offline (tool/gen_devgate.dart). The plaintext is NOT in the binary.
   // To rotate, recompute both with a new password.
-  static const String _devGateSalt = 'Tkgvx7HiUuLsVKG5P7l5Ow==';
+  static const String _devGateSalt = 'W2ns6cidnjtLXZKNHegkow==';
   static const String _devGateHash =
-      'nlcaX2fCk6yrlFBWPxWNZUBwuyrvxUAXnZf39zcWlg0=';
+      'hJC9zPJE81CwYJOEftyoTISZAySVplRrhrKfUytA9E0=';
   String? _encryptionKey;
 
   // v2 AES key: Keystore-backed, minted once. Daily use, no master password.
