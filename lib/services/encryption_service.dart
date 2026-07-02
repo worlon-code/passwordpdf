@@ -22,6 +22,53 @@ class EncryptionService {
   // Developer password for accessing sensitive info
   static const String _developerPassword = 'Portal123!';
   String? _encryptionKey;
+
+  // v2 AES key: Keystore-backed, minted once. Daily use, no master password.
+  static const String _aesKeyStorageKey = 'aes_key_v2';
+  // Legacy XOR key: READ-ONLY forever for v1 reads. Never written again.
+  static const String _legacyKeyStorageKey = 'encryption_key';
+  // sha256(legacy key) recorded when health is known-good; gates all overwrites.
+  static const String _legacyKeyHealthToken = 'legacy_key_health_v1';
+
+  SecretKey? _aesKey;            // cached v2 key (decoded)
+  bool _legacyKeyHealthy = false; // true only after token matches
+
+  /// Call ONCE from single-threaded startup, before any encrypt/decrypt.
+  Future<void> initCrypto() async {
+    // 1) Ensure v2 key exists (mint once).
+    var b64 = await _secureStorage.read(key: _aesKeyStorageKey);
+    if (b64 == null || b64.isEmpty) {
+      final fresh = await AesGcm.with256bits().newSecretKey();
+      final bytes = await fresh.extractBytes();
+      b64 = base64Encode(bytes);
+      await _secureStorage.write(key: _aesKeyStorageKey, value: b64);
+      _log.info('EncryptionService', 'Minted aes_key_v2 (256-bit)');
+    }
+    _aesKey = SecretKey(base64Decode(b64));
+
+    // 2) Key-health gate on the LEGACY key.
+    final legacy = await _secureStorage.read(key: _legacyKeyStorageKey);
+    if (legacy != null && legacy.isNotEmpty) {
+      final tokenNow =
+          crypto.sha256.convert(utf8.encode(legacy)).toString();
+      final stored = await _secureStorage.read(key: _legacyKeyHealthToken);
+      if (stored == null) {
+        await _secureStorage.write(
+            key: _legacyKeyHealthToken, value: tokenNow);
+        _legacyKeyHealthy = true; // first-run trust-on-first-use
+      } else {
+        _legacyKeyHealthy = stored == tokenNow;
+        if (!_legacyKeyHealthy) {
+          _log.error('EncryptionService',
+              'Legacy key health MISMATCH — migration/overwrites DISABLED');
+        }
+      }
+    } else {
+      _legacyKeyHealthy = false; // no legacy key => nothing to read-migrate
+    }
+  }
+
+  bool get canOverwriteLegacy => _legacyKeyHealthy && _aesKey != null;
   
   // Callback to notify when key is set
   void Function()? onKeySet;
