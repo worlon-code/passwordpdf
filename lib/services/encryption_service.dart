@@ -93,11 +93,12 @@ class EncryptionService {
     // round-trip before trusting the key to WRITE v2 data.
     if (_v2KeyHealthy) {
       try {
-        final probe = utf8.encode('v2_selftest');
-        final algo = AesGcm.with256bits();
-        final box = await algo.encrypt(probe, secretKey: _aesKey!);
-        final back = await algo.decrypt(box, secretKey: _aesKey!);
-        if (utf8.decode(back) != 'v2_selftest') {
+        // Round-trip through the SAME envelope build + slice as real writes/reads,
+        // so a future package change to nonce/tag length flips health false
+        // (fail-safe) instead of silently writing unreadable v2.
+        final raw = await _buildV2Blob('v2_selftest');
+        final back = await _decryptAesGcm(base64Encode(raw));
+        if (back != 'v2_selftest') {
           _v2KeyHealthy = false;
           _log.error('EncryptionService',
               'v2 key self-test MISMATCH — v2 writes DISABLED');
@@ -141,6 +142,37 @@ class EncryptionService {
   /// Safe to WRITE new v2 ciphertext. The v2 writer + migration MUST gate on
   /// this so a wiped/re-minted key can never produce unreadable v2 data.
   bool get canWriteV2 => _v2KeyHealthy && _aesKey != null;
+
+  /// RESTORE-ONLY re-bless: adopt the current in-Keystore v2 key as healthy.
+  /// Functional self-test first; on success, persist the health mirror for the
+  /// current key and enable v2 writes. Returns false if the key can't round-trip
+  /// (caller MUST abort). Passphrase Restore calls this because it deliberately
+  /// re-establishes the password set under the CURRENT device key (e.g. a Keystore
+  /// wipe silently re-minted it). DO NOT call from initCrypto/encrypt/startup —
+  /// that would mask a real key wipe and defeat the fail-safe.
+  Future<bool> adoptCurrentV2KeyAsHealthy() async {
+    if (_aesKey == null) return false;
+    try {
+      final raw = await _buildV2Blob('v2_selftest');
+      final back = await _decryptAesGcm(base64Encode(raw));
+      if (back != 'v2_selftest') return false;
+    } catch (_) {
+      return false;
+    }
+    try {
+      final bytes = await _aesKey!.extractBytes();
+      final healthNow = crypto.sha256.convert(bytes).toString();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_v2KeyHealthPref, healthNow);
+      _v2KeyHealthy = true;
+      _log.info('EncryptionService',
+          'Adopted current v2 key as healthy (restore re-bless)');
+      return true;
+    } catch (e) {
+      _log.error('EncryptionService', 'adopt: failed to persist health', e);
+      return false;
+    }
+  }
 
   // Callback to notify when key is set
   void Function()? onKeySet;
@@ -251,27 +283,27 @@ class EncryptionService {
   }
 
   /// Encrypt a value using the stored key
+  /// Build a v2 AES-256-GCM envelope for [plainText]: [12B nonce][ciphertext][16B
+  /// GCM tag] — the exact layout _decryptAesGcm slices. Shared by encrypt() and
+  /// the key self-test. Requires _aesKey != null (callers ensure it).
+  Future<List<int>> _buildV2Blob(String plainText) async {
+    final algo = AesGcm.with256bits();
+    final box = await algo.encrypt(utf8.encode(plainText), secretKey: _aesKey!);
+    return <int>[...box.nonce, ...box.cipherText, ...box.mac.bytes];
+  }
+
+  /// Encrypt a value as v2 (AES-256-GCM, tagged 'v2:'). Refuses to write (returns
+  /// null) when the v2 key is unhealthy/unavailable — NEVER emits legacy XOR or
+  /// undecryptable data. Callers already treat null as a failure and surface it.
   Future<String?> encrypt(String plainText) async {
     try {
-      if (_encryptionKey == null) {
-        _encryptionKey = await _secureStorage.read(key: 'encryption_key');
-      }
-
-      if (_encryptionKey == null) {
-        _log.error('EncryptionService', 'No encryption key set');
+      if (!canWriteV2) {
+        _log.error('EncryptionService',
+            'encrypt blocked: v2 key not writable (unhealthy/uninitialised)');
         return null;
       }
-
-      // Simple XOR encryption for demo (use proper AES in production)
-      final keyBytes = utf8.encode(_encryptionKey!);
-      final plainBytes = utf8.encode(plainText);
-      final encryptedBytes = <int>[];
-
-      for (int i = 0; i < plainBytes.length; i++) {
-        encryptedBytes.add(plainBytes[i] ^ keyBytes[i % keyBytes.length]);
-      }
-
-      return base64Encode(encryptedBytes);
+      final raw = await _buildV2Blob(plainText);
+      return '$_v2Tag${base64Encode(raw)}';
     } catch (e) {
       _log.error('EncryptionService', 'Encryption failed', e);
       return null;
