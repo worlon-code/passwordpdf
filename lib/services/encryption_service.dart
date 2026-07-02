@@ -41,12 +41,15 @@ class EncryptionService {
   SecretKey? _aesKey; // cached v2 key (decoded)
   bool _legacyKeyHealthy = false; // true only after token matches
   bool _v2KeyHealthy = false; // true only when the v2 key matches its health mirror (or fresh)
+  bool _initialized = false; // set true only after initCrypto() fully completes
 
   /// Call ONCE from single-threaded startup, before any encrypt/decrypt.
   Future<void> initCrypto() async {
-    // Idempotency guard: re-entry within a process is a no-op so a second
-    // aes_key_v2 can never be minted (double-mint protection, code-level).
-    if (_aesKey != null) return;
+    // Idempotency guard: re-entry within a process is a no-op. Gated on a
+    // DEDICATED flag (not _aesKey) set only AFTER init fully completes, so a
+    // partial init (e.g. a prefs write throws) is re-runnable, not latched.
+    // (Minting stays double-safe via the `b64 == null` check below.)
+    if (_initialized) return;
        // 1) Ensure v2 key exists (mint once) + detect a Keystore wipe/re-mint.
     // Read the plain-prefs health mirror BEFORE minting: if a mirror exists but
     // the current v2 key is gone (or differs), the Keystore was wiped and any v2
@@ -61,8 +64,9 @@ class EncryptionService {
       await _secureStorage.write(key: _aesKeyStorageKey, value: b64);
       _log.info('EncryptionService', 'Minted aes_key_v2 (256-bit)');
     }
-    _aesKey = SecretKey(base64Decode(b64));
-    final healthNow = crypto.sha256.convert(base64Decode(b64)).toString();
+    final keyBytes = base64Decode(b64);
+    _aesKey = SecretKey(keyBytes);
+    final healthNow = crypto.sha256.convert(keyBytes).toString();
     if (priorHealth == null) {
       // First run of wipe-detection (fresh install, or upgrade from a build that
       // minted the key before detection existed). Trust-on-first-use: record the
@@ -103,6 +107,12 @@ class EncryptionService {
     } else {
       _legacyKeyHealthy = false; // no legacy key => nothing to read-migrate
     }
+
+    // NOTE: initCrypto() intentionally has NO internal try/catch — main.dart
+    // wraps this call in a swallowing try/catch, so if secure-storage read/write
+    // THROWS (corrupt Keystore) we leave _aesKey null + _v2KeyHealthy false =>
+    // canWriteV2 false (fail-safe). Do NOT remove that main.dart guard.
+    _initialized = true; // reached only on a fully successful init
   }
 
   bool get canOverwriteLegacy => _legacyKeyHealthy && _aesKey != null;
