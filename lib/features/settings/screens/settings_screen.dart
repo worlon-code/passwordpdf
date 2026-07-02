@@ -501,7 +501,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text(path),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
-                    AppEntry.ignoreNextPause = true; // Prevent auto-lock
+                    AppEntry.exemptNextPause(); // Prevent auto-lock during picker (time-boxed)
                     final dir = await FilePicker.platform.getDirectoryPath(
                       dialogTitle: 'Select Download Location',
                     );
@@ -882,9 +882,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (info != null) {
       showDialog(
         context: context,
+        barrierDismissible: !info.forceUpdate,
         builder: (ctx) => UpdateAvailableDialog(
           updateInfo: info,
-          onUpdate: () => _performUpdate(ctx, service, info),
+          onUpdate: () => performUpdate(ctx, info),
         ),
       );
     } else {
@@ -892,45 +893,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(content: Text('App is up to date based on Public Release Channel')),
       );
     }
-  }
-
-  Future<void> _performUpdate(BuildContext context, UpdateService service, UpdateInfo info) async {
-    bool started = false;
-    double progress = 0;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-           builder: (context, setDialogState) {
-              if (!started) {
-                  started = true;
-                  service.downloadUpdate(info.downloadUrl, (received, total) {
-                      if (total != -1) {
-                         setDialogState(() {
-                            progress = received / total;
-                         });
-                      }
-                  }).then((file) {
-                      if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
-                      
-                      if (file != null) {
-                         service.installUpdate(file);
-                      } else {
-                         if (context.mounted) {
-                           ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Download failed')),
-                           );
-                         }
-                      }
-                  });
-              }
-              return UpdateProgressDialog(progress: progress);
-           }
-        );
-      }
-    );
   }
 }
 

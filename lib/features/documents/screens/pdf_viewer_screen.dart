@@ -16,6 +16,8 @@ import 'package:path_provider/path_provider.dart';
 import '../widgets/folder_selection_dialog.dart';
 import '../widgets/duplicate_files_dialog.dart';
 import '../../../services/document_service.dart';
+import 'file_info_screen.dart';
+import '../../../models/document_item_model.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
@@ -166,12 +168,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       barrierDismissible: false,
       builder: (ctx) => const PasswordSelectionDialog(),
     );
-    
-    if (password != null && password.isNotEmpty) {
+
+    // Distinguish: null  = user cancelled/dismissed (pop the viewer),
+    //              ''    = user chose "No Password" -> attempt empty password,
+    //              other = a real password attempt.
+    if (password != null) {
       _currentPassword = password;
       return password;
     }
-    
+
     // User cancelled
     if (mounted) {
        Navigator.pop(context);
@@ -292,6 +297,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               else if (value == 'split') await _handleSplit(context);
               else if (value == 'merge') await _handleMerge(context);
               else if (value == 'go_to_page') await _handleGoToPage(context);
+              else if (value == 'file_info') await _handleFileInfo(context);
             },
             itemBuilder: (context) {
               final isProtected = _currentPassword.isNotEmpty;
@@ -299,6 +305,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 const PopupMenuItem(
                   value: 'go_to_page',
                   child: Row(children: [Icon(Icons.directions), SizedBox(width: 8), Text('Go to Page')]),
+                ),
+                const PopupMenuItem(
+                  value: 'file_info',
+                  child: Row(children: [Icon(Icons.info_outline), SizedBox(width: 8), Text('File info')]),
                 ),
                 const PopupMenuDivider(),
                 const PopupMenuItem(value: 'split', child: Row(children: [Icon(Icons.call_split), SizedBox(width: 8), Text('Split PDF')])),
@@ -532,10 +542,33 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
      );
      if (newOrder == null) return;
 
+     final tools = PdfToolsService();
+     bool confirmedFlatten = true;
+     if (await tools.willFlattenOnReorder(filePath: widget.filePath, password: _currentPassword)) {
+       if (context.mounted) {
+         confirmedFlatten = await showDialog<bool>(
+           context: context,
+           builder: (c) => AlertDialog(
+             title: const Text('Flatten Interactive Content?'),
+             content: const Text('Reordering pages will flatten form fields, annotations, and bookmarks. The document will look the same but will no longer be interactive. Do you want to continue?'),
+             actions: [
+               TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+               TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Continue')),
+             ],
+           ),
+         ) ?? false;
+       } else {
+         confirmedFlatten = false;
+       }
+     }
+     if (!confirmedFlatten) return;
+
+     if (!context.mounted) return;
      await _runToolOperation(context, (tools, savePath) => tools.reorderPages(
        filePath: widget.filePath,
        password: _currentPassword,
        pageOrder: newOrder,
+       confirmedFlatten: confirmedFlatten,
        savePath: savePath
      ), '_reordered');
   }
@@ -565,11 +598,39 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
     if (result == null || result.isEmpty) return;
     
+    final tools = PdfToolsService();
+    bool confirmedFlatten = true;
+    if (await tools.willFlattenOnMerge(
+      sourcePath: widget.filePath,
+      sourcePassword: _currentPassword,
+      otherPath: result.first,
+      otherPassword: '',
+    )) {
+      if (context.mounted) {
+        confirmedFlatten = await showDialog<bool>(
+          context: context,
+          builder: (c) => AlertDialog(
+            title: const Text('Flatten Interactive Content?'),
+            content: const Text('Merging PDFs will flatten form fields, annotations, and bookmarks. The merged file will look the same but will no longer be interactive. Do you want to continue?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+              TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Continue')),
+            ],
+          ),
+        ) ?? false;
+      } else {
+        confirmedFlatten = false;
+      }
+    }
+    if (!confirmedFlatten) return;
+
+    if (!context.mounted) return;
     await _runToolOperation(context, (tools, savePath) => tools.mergePdf(
        sourcePath: widget.filePath,
        sourcePassword: _currentPassword,
        otherPath: result.first,
        otherPassword: '', 
+       confirmedFlatten: confirmedFlatten,
        savePath: savePath
     ), '_merged');
   }
@@ -588,6 +649,40 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     if (result != null && mounted) {
       _pdfViewerController.goToPage(pageNumber: result);
     }
+  }
+
+  Future<void> _handleFileInfo(BuildContext context) async {
+    // Build a DocumentItem for the currently-open file.
+    // Prefer the library id if this file is already imported (findFileIdByPath),
+    // otherwise construct a temp item from the on-disk File stat.
+    final file = File(widget.filePath);
+    if (!file.existsSync()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File not found'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    final stat = file.statSync();
+    final existingId = DocumentService().findFileIdByPath(widget.filePath);
+
+    final item = DocumentItem(
+      id: existingId ?? 'temp_${DateTime.now().millisecondsSinceEpoch}',
+      name: widget.fileName,
+      type: DocumentItemType.file,
+      sourcePath: widget.filePath,
+      size: stat.size,
+      createdAt: stat.changed,
+      modifiedAt: stat.modified,
+    );
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => FileInfoScreen(file: item)),
+    );
   }
 
   Future<void> _handleShareFile() async {

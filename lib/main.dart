@@ -272,8 +272,20 @@ class MyApp extends StatelessWidget {
 class AppEntry extends StatefulWidget {
   const AppEntry({super.key});
 
-  // Flag to ignore valid user interactions that pause the app (e.g. File Picker)
-  static bool ignoreNextPause = false;
+  // Timestamp until which a single backgrounding is exempt from auto-lock
+  // (e.g. the OS file/directory picker briefly pauses the app). Expires fast
+  // so it can never permanently suppress the lock screen.
+  static DateTime? pauseExemptUntil;
+
+  // Duration of the picker exemption window.
+  static const Duration pauseExemptionWindow = Duration(seconds: 30);
+
+  /// Mark the next backgrounding (within [pauseExemptionWindow]) as exempt
+  /// from auto-lock timeout tracking. Call immediately before launching a
+  /// system picker / share sheet.
+  static void exemptNextPause() {
+    pauseExemptUntil = DateTime.now().add(pauseExemptionWindow);
+  }
 
   // Track when the app went into background (Static to allow forcing timeout from other screens)
   static DateTime? backgroundTime;
@@ -292,6 +304,8 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
+  // Deduplication tracking: last intent path successfully consumed
+  String? _lastConsumedIntentPath;
   int _selectedIndex = 0; // Added for default screen index
 
   @override
@@ -327,12 +341,15 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         final file = sharedFiles.first;
         if (file.path != null) {
            PendingFileOpen.filePath = file.path;
+           _lastConsumedIntentPath = file.path;
            // Fix for "Zombie Intent": Clear it so it doesn't reappear on resume
            ReceiveSharingIntent.instance.reset();
         }
       }
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
+    } finally {
+      _log.info('AppEntry', 'Initial intent check complete - last consumed: $_lastConsumedIntentPath');
     }
   }
 
@@ -359,6 +376,13 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     }
     
     _isProcessingIntent = true;
+    // Consume the native launch intent immediately so it cannot be re-read by
+    // getInitialMedia() on a later resume (root cause of "Open With" reopening
+    // the previous document).
+    if (files.isNotEmpty && files.first.path != null) {
+      _lastConsumedIntentPath = files.first.path;
+    }
+    ReceiveSharingIntent.instance.reset();
     _log.info('AppEntry', 'Received ${files.length} shared files');
     
     // Get exportService as singleton (context.read fails when app resumes from background)
@@ -641,12 +665,14 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
-      if (AppEntry.ignoreNextPause) {
-         _log.info('AppEntry', 'App paused but ignoreNextPause is true - Skipping timeout tracking');
-         AppEntry.ignoreNextPause = false; // Reset flag
+      final exemptUntil = AppEntry.pauseExemptUntil;
+      if (exemptUntil != null && DateTime.now().isBefore(exemptUntil)) {
+         _log.info('AppEntry', 'App paused but within picker exemption window - Skipping timeout tracking');
+         AppEntry.pauseExemptUntil = null; // One-shot: consume the exemption
          return;
       }
-      
+      AppEntry.pauseExemptUntil = null; // Expired/unused exemption never lingers
+
       AppEntry.backgroundTime = DateTime.now();
       _log.info('AppEntry', 'App paused - tracking background time: ${AppEntry.backgroundTime}');
     }
@@ -656,13 +682,15 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
        
        if (AppEntry.backgroundTime != null) {
          final diff = DateTime.now().difference(AppEntry.backgroundTime!);
-         _log.info('AppEntry', 'Background duration: ${diff.inMinutes} minutes');
+         _log.info('AppEntry', 'Background duration: ${diff.inSeconds} seconds');
          
-         // Auto-lock only after user-configured timeout (default 10m)
+         // Auto-lock only after user-configured timeout (default 10m).
+         // Compare in seconds against timeout*60 so sub-minute timeouts work
+         // and integer-minute truncation can never skip the lock.
          final settings = Provider.of<SettingsService>(context, listen: false);
          final timeoutMinutes = settings.autoLockTimeout;
          
-         if (diff.inMinutes >= timeoutMinutes) {
+         if (diff.inSeconds >= timeoutMinutes * 60) {
             // Only lock if security is enabled AND we are currently authenticated
             if ((settings.biometricEnabled || settings.pinEnabled) && _isAuthenticated) {
                _log.info('AppEntry', 'Timeout (>$timeoutMinutes m) - Pushing Lock Screen Route');
@@ -686,9 +714,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
                  ),
                );
             }
-         } else {
-            _log.info('AppEntry', 'Timeout not reached (<10m) - access granted');
-         }
+          } else {
+             _log.info('AppEntry', 'Timeout not reached (<$timeoutMinutes m) - access granted');
+          }
          
          AppEntry.backgroundTime = null; // Reset
        }
@@ -703,12 +731,13 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   Future<void> _checkForPendingIntent() async {
     try {
       final media = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (media.isNotEmpty) {
-        _log.info('AppEntry', 'Found ${media.length} pending files on resume');
-        _handleSharedFiles(media);
-        ReceiveSharingIntent.instance.reset(); // Clear initial intent
-        _log.info('AppEntry', 'Initial intent reset');
+      if (media.isEmpty) return;
+      if (media.first.path == _lastConsumedIntentPath) {
+        ReceiveSharingIntent.instance.reset();
+        return;
       }
+      _handleSharedFiles(media);
+      ReceiveSharingIntent.instance.reset();
     } catch (e) {
       _log.error('AppEntry', 'Error checking pending intent', e);
     }
@@ -877,51 +906,13 @@ class _MainScreenState extends State<MainScreen> {
       if (!mounted) return;
       await showDialog(
         context: context,
+        barrierDismissible: !updateInfo.forceUpdate,
         builder: (ctx) => UpdateAvailableDialog(
            updateInfo: updateInfo,
-           onUpdate: () => _performUpdate(ctx, updateService, updateInfo),
+           onUpdate: () => performUpdate(ctx, updateInfo),
         )
       );
     }
-  }
-
-  Future<void> _performUpdate(BuildContext context, UpdateService service, UpdateInfo info) async {
-    bool started = false;
-    double progress = 0;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-           builder: (context, setDialogState) {
-              if (!started) {
-                  started = true;
-                  service.downloadUpdate(info.downloadUrl, (received, total) {
-                      if (total != -1) {
-                         setDialogState(() {
-                            progress = received / total;
-                         });
-                      }
-                  }).then((file) {
-                      if (dialogContext.mounted) Navigator.pop(dialogContext); // Close progress
-                      
-                      if (file != null) {
-                         service.installUpdate(file);
-                      } else {
-                         if (context.mounted) {
-                           ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Download failed')),
-                           );
-                         }
-                      }
-                  });
-              }
-              return UpdateProgressDialog(progress: progress);
-           }
-        );
-      }
-    );
   }
 
   void _showDuplicateSelectionSheet() {
@@ -1069,7 +1060,7 @@ class _MainScreenState extends State<MainScreen> {
           
           if (shouldExit == true) {
             AppEntry.backgroundTime = DateTime(2000);
-            AppEntry.ignoreNextPause = true;
+            AppEntry.exemptNextPause();
             SystemNavigator.pop();
           }
         }

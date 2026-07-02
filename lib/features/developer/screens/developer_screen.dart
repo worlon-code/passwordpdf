@@ -129,6 +129,7 @@ class _DeveloperScreenState extends State<DeveloperScreen> with SingleTickerProv
           );
         }
       }
+      controller.dispose();
     }
   }
 
@@ -308,6 +309,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
         ],
       ),
     );
+    controller.dispose();
   }
 
   Future<void> _exportLogs() async {
@@ -706,6 +708,9 @@ class _DatabaseTabState extends State<_DatabaseTab> {
         _loadTableData();
       }
     }
+    for (final c in controllers.values) {
+      c.dispose();
+    }
   }
 
   Future<void> _deleteRecord(Map<String, dynamic> record) async {
@@ -806,6 +811,8 @@ class _DatabaseTabState extends State<_DatabaseTab> {
         },
       ),
     );
+
+    limitController.dispose();
 
     if (result == null || result['proceed'] != true) return;
     

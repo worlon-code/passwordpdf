@@ -205,6 +205,7 @@ class SettingsService extends ChangeNotifier {
   /// Set PIN
   Future<bool> setPin(String pin) async {
     try {
+      // NOTE: never log `pin` (raw secret). Log only the action.
       _log.info('SettingsService', 'Setting new PIN...');
       await _secureStorage.write(key: 'app_pin', value: pin);
       _hasPinSet = true;
@@ -230,6 +231,7 @@ class SettingsService extends ChangeNotifier {
     try {
       final storedPin = await _secureStorage.read(key: 'app_pin');
       final match = storedPin == pin;
+      // NOTE: never log `pin` or `storedPin` (raw secrets). Log only the outcome.
       _log.info('SettingsService', 'PIN verification: ${match ? 'success' : 'failed'}');
       return match;
     } catch (e) {

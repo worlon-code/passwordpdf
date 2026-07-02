@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
@@ -115,11 +116,32 @@ class UpdateService {
     return null;
   }
 
-  Future<File?> downloadUpdate(String url, Function(int, int) onProgress) async {
+  /// Host that release artifacts must be served from. The download URL host
+  /// must equal this (or be a subdomain of it); cross-origin URLs are rejected.
+  static const String _releaseHost = 'github.com';
+
+  bool _isAllowedHost(String host) {
+    final h = host.toLowerCase();
+    return h == _releaseHost || h.endsWith('.$_releaseHost');
+  }
+
+  Future<File?> downloadUpdate(
+    String url,
+    Function(int, int) onProgress, {
+    String? expectedSha256,
+  }) async {
     try {
+      // SECURITY: only allow downloads from the trusted release host. Reject
+      // anything pointing elsewhere before we ever make a request.
+      final parsed = Uri.tryParse(url);
+      if (parsed == null || !parsed.isAbsolute || !parsed.isScheme('https') || !_isAllowedHost(parsed.host)) {
+        _log.error('UpdateService', 'Refusing download: untrusted or non-https URL host ($url)', null);
+        return null;
+      }
+
       final dirs = await getExternalCacheDirectories();
       final dir = (dirs != null && dirs.isNotEmpty) ? dirs.first : await getTemporaryDirectory();
-      
+
       final fileName = 'update_${DateTime.now().millisecondsSinceEpoch}.apk';
       final savePath = '${dir.path}/$fileName';
 
@@ -136,7 +158,9 @@ class UpdateService {
             'User-Agent': 'Mozilla/5.0 (Android; Mobile; rv:100.0) Gecko/100.0 Firefox/100.0',
             'Accept': '*/*',
           },
-          followRedirects: true,
+          // SECURITY: do NOT follow redirects. A redirect could bounce the
+          // download to an attacker-controlled host that bypasses the host check.
+          followRedirects: false,
           validateStatus: (status) => status != null && status < 500,
         ),
       );
@@ -166,7 +190,25 @@ class UpdateService {
 
         if (head.length < 2 || head[0] != 0x50 || head[1] != 0x4B) {
            _log.error('UpdateService', 'Downloaded file is not a valid APK/ZIP (Magic: ${head.toList()})', null);
+           await file.delete().catchError((_) => file);
            return null;
+        }
+
+        // SECURITY: verify the SHA-256 supplied by the manifest, if present.
+        // (When the server always emits sha256, a follow-up task should make a
+        //  missing checksum a hard failure.)
+        if (expectedSha256 != null && expectedSha256.isNotEmpty) {
+          final fileBytes = await file.readAsBytes();
+          final actual = sha256.convert(fileBytes).toString().toLowerCase();
+          if (actual != expectedSha256.toLowerCase()) {
+            _log.error('UpdateService',
+                'APK checksum mismatch. expected=$expectedSha256 actual=$actual', null);
+            await file.delete().catchError((_) => file);
+            return null;
+          }
+          _log.info('UpdateService', 'APK checksum verified OK');
+        } else {
+          _log.info('UpdateService', 'No expected sha256 supplied; skipping checksum verification');
         }
 
         return file;
@@ -193,11 +235,27 @@ class UpdateService {
     try {
       final dirs = await getExternalCacheDirectories();
       final dir = (dirs != null && dirs.isNotEmpty) ? dirs.first : await getTemporaryDirectory();
-      final file = File('${dir.path}/update.apk');
-      
-      if (await file.exists()) {
-        await file.delete();
-        _log.info('UpdateService', 'Cleaned up install file');
+
+      // Downloads are named 'update_<timestamp>.apk' (see downloadUpdate), so
+      // delete every matching leftover, not a single literal 'update.apk'.
+      int deleted = 0;
+      await for (final entity in dir.list()) {
+        if (entity is File) {
+          final name = entity.uri.pathSegments.isNotEmpty
+              ? entity.uri.pathSegments.last
+              : '';
+          if (name.startsWith('update_') && name.endsWith('.apk')) {
+            try {
+              await entity.delete();
+              deleted++;
+            } catch (e, stack) {
+              _log.error('UpdateService', 'Failed to delete stale update file: ${entity.path}', e, stack);
+            }
+          }
+        }
+      }
+      if (deleted > 0) {
+        _log.info('UpdateService', 'Cleaned up $deleted stale update file(s)');
       }
     } catch (e, stack) {
       _log.error('UpdateService', 'Cleanup failed', e, stack);

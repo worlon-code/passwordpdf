@@ -5,8 +5,12 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 // import 'package:excel/excel.dart'; // BLOCKED: Conflicts with pdfrx v2
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'logging_service.dart';
 import 'storage_service.dart';
+import 'pdf_password_service.dart';
+import 'pdf_tools_service.dart';
 
 /// Status of an export job
 enum ExportStatus { queued, inProgress, completed, error }
@@ -28,6 +32,7 @@ class ExportJob {
   final String? exportDir;
   final ExportType type;
   final bool isDeveloper; // New field
+  final bool removePasswords;
   int progress;
   int processedItems;
   int totalItems;
@@ -38,6 +43,7 @@ class ExportJob {
     required this.items,
     this.type = ExportType.zip,
     this.isDeveloper = false, // Default false
+    this.removePasswords = false,
     this.exportDir,
     this.zipPassword,
     this.status = ExportStatus.queued,
@@ -79,6 +85,7 @@ class ExportJob {
       'total_items': totalItems,
       'type': type.name,
       'is_developer': isDeveloper ? 1 : 0, // Save flag
+      'remove_passwords': removePasswords ? 1 : 0,
     };
   }
 
@@ -93,6 +100,7 @@ class ExportJob {
           ? ExportType.values.firstWhere((e) => e.name == json['type'], orElse: () => ExportType.zip)
           : ExportType.zip,
       isDeveloper: json['is_developer'] == 1, // Load flag
+      removePasswords: json['remove_passwords'] == 1,
       status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
       progress: json['progress'] ?? 0,
       processedItems: json['processed_items'] ?? 0,
@@ -155,6 +163,8 @@ class ExportQueueService extends ChangeNotifier {
 
   final LoggingService _log = LoggingService();
   final List<ExportJob> _jobs = [];
+  final _pdfPasswordService = PdfPasswordService();
+  final _pdfToolsService = PdfToolsService();
   Timer? _workerTimer;
   static const int maxConcurrent = 2;
   static const Duration checkInterval = Duration(minutes: 2);
@@ -242,7 +252,15 @@ class ExportQueueService extends ChangeNotifier {
     if (_notificationsInitialized) return;
     
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
     
     await _notificationsPlugin.initialize(
       initSettings,
@@ -273,7 +291,8 @@ class ExportQueueService extends ChangeNotifier {
       onlyAlertOnce: progress != null, // Don't buzz for progress updates
     );
     
-    final details = NotificationDetails(android: androidDetails);
+    const iosDetails = DarwinNotificationDetails();
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(id, title, body, details, payload: payload ?? 'export_progress');
   }
 
@@ -289,12 +308,12 @@ class ExportQueueService extends ChangeNotifier {
       priority: Priority.high,
     );
     
-    final details = NotificationDetails(android: androidDetails);
+    const iosDetails = DarwinNotificationDetails();
+    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
     await _notificationsPlugin.show(1000, title, body, details, payload: payload);
   }
 
-  /// Add a new export job to queue
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false}) async {
+  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false, bool removePasswords = false}) async {
     // Cap history at 100 jobs
     if (_jobs.length >= 100) {
       // Remove oldest (completed/error) first, or just oldest
@@ -329,6 +348,7 @@ class ExportQueueService extends ChangeNotifier {
       totalItems: total,
       type: type,
       isDeveloper: isDeveloper,
+      removePasswords: removePasswords,
     );
     _jobs.add(job);
     _persistJob(job); // Save initial state
@@ -400,17 +420,64 @@ class ExportQueueService extends ChangeNotifier {
   }
 
   /// Add items to archive with progress tracking
-  Future<void> _addItemsToArchive(Archive archive, List<ExportItem> items, String pathPrefix, ExportJob job, int notificationId) async {
+  Future<void> _addItemsToArchive(
+      Archive archive,
+      List<ExportItem> items,
+      String pathPrefix,
+      ExportJob job,
+      int notificationId,
+      List<String> tempPaths,
+      List<String> skippedNoPassword) async {
     for (final item in items) {
       final archivePath = pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
 
       if (item.isFolder) {
         // Add children recursively
-        await _addItemsToArchive(archive, item.children, archivePath, job, notificationId);
+        await _addItemsToArchive(
+            archive,
+            item.children,
+            archivePath,
+            job,
+            notificationId,
+            tempPaths,
+            skippedNoPassword);
       } else if (item.filePath != null) {
         final file = File(item.filePath!);
         if (await file.exists()) {
-          final bytes = await file.readAsBytes();
+          Uint8List bytes;
+          final isPdf = item.filePath!.toLowerCase().endsWith('.pdf');
+
+          if (job.removePasswords && isPdf) {
+            // Main-isolate only: secure storage + Keystore key are single-threaded.
+            final pwd = await _pdfPasswordService.getPasswordForDocument(item.filePath!);
+            if (pwd == null || pwd.isEmpty) {
+              // No stored password (not protected / untracked / verified NO_PASSWORD):
+              // add the original as-is. NEVER drop the file from the ZIP.
+              bytes = await file.readAsBytes();
+            } else {
+              final tmpDir = await getTemporaryDirectory();
+              final tmpPath = path.join(tmpDir.path,
+                  'unlock_${DateTime.now().microsecondsSinceEpoch}_${item.name}');
+              try {
+                final outPath = await _pdfToolsService.removePassword(
+                  filePath: item.filePath!,
+                  password: pwd,
+                  savePath: tmpPath,
+                );
+                tempPaths.add(outPath);
+                bytes = await File(outPath).readAsBytes();
+              } catch (e) {
+                // Couldn't strip the password: include the ORIGINAL (still protected), do NOT drop it.
+                skippedNoPassword.add(item.name);
+                _log.warn('ExportQueueService',
+                    'Remove-password failed, including original (still protected) for ${item.name}: $e');
+                bytes = await file.readAsBytes();
+              }
+            }
+          } else {
+            bytes = await file.readAsBytes();
+          }
+
           archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
           
           // Update progress
@@ -478,44 +545,67 @@ class ExportQueueService extends ChangeNotifier {
   }
   Future<void> _processZipJob(ExportJob job, int notificationId) async {
     final archive = Archive();
+    final tempPaths = <String>[];
+    final skippedNoPassword = <String>[];
 
-    // Add all items to archive with progress tracking
-    await _addItemsToArchive(archive, job.items, '', job, notificationId);
+    try {
+      // Add all items to archive with progress tracking
+      await _addItemsToArchive(archive, job.items, '', job, notificationId, tempPaths, skippedNoPassword);
 
-    if (archive.files.isEmpty) {
-      throw Exception('No files to export');
-    }
-
-    await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
-
-    // Encode ZIP in isolate
-    final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
-    if (zipData == null) throw Exception('Failed to encode ZIP');
-
-    // Determine save path
-    String savePath;
-    if (job.exportDir != null) {
-      final dir = Directory(job.exportDir!);
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
+      if (archive.files.isEmpty) {
+        throw Exception('No files to export');
       }
-      final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
-      savePath = '${dir.path}/$fileName';
-    } else {
-      savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
+
+      await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
+
+      // Encode ZIP in isolate
+      final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
+      if (zipData == null) throw Exception('Failed to encode ZIP');
+
+      // Determine save path
+      String savePath;
+      if (job.exportDir != null) {
+        final dir = Directory(job.exportDir!);
+        if (!dir.existsSync()) {
+          dir.createSync(recursive: true);
+        }
+        final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
+        savePath = '${dir.path}/$fileName';
+      } else {
+        savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
+      }
+
+      // Save file
+      final file = File(savePath);
+      await file.writeAsBytes(zipData);
+
+      job.outputPath = file.path;
+      job.status = ExportStatus.completed;
+      job.completedAt = DateTime.now();
+      job.progress = 100;
+      _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
+      
+      await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
+    } finally {
+      // Always remove decrypted temp PDFs, even if the encode threw.
+      for (final p in tempPaths) {
+        try {
+          final f = File(p);
+          if (await f.exists()) await f.delete();
+        } catch (e) {
+          _log.warn('ExportQueueService', 'Temp cleanup failed: $p ($e)');
+        }
+      }
     }
 
-    // Save file
-    final file = File(savePath);
-    await file.writeAsBytes(zipData);
-
-    job.outputPath = file.path;
-    job.status = ExportStatus.completed;
-    job.completedAt = DateTime.now();
-    job.progress = 100;
-    _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
-    
-    await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
+    if (skippedNoPassword.isNotEmpty) {
+      // Surface via the job (and/or completion notification) so the user knows.
+      job.errorMessage =
+          'Exported, but ${skippedNoPassword.length} PDF(s) kept their '
+          'password (no stored password): ${skippedNoPassword.join(', ')}';
+      _log.info('ExportQueueService',
+          'Remove-password skipped: ${skippedNoPassword.join(', ')}');
+    }
   }
 
   Future<void> _processExcelJob(ExportJob job, int notificationId) async {
@@ -540,5 +630,16 @@ class ExportQueueService extends ChangeNotifier {
     } catch (e) {
       return null;
     }
+  }
+
+  @override
+  void dispose() {
+    _workerTimer?.cancel();
+    _workerTimer = null;
+    if (!_notificationTapController.isClosed) {
+      _notificationTapController.close();
+    }
+    _log.info('ExportQueueService', 'Disposed');
+    super.dispose();
   }
 }

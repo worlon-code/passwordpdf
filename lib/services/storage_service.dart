@@ -154,7 +154,7 @@ class StorageService {
     if (oldVersion < 2) {
       // Add export_jobs table
       await db.execute('''
-        CREATE TABLE ${AppConstants.exportJobsTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.exportJobsTable} (
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           status TEXT NOT NULL,
@@ -193,7 +193,7 @@ class StorageService {
     if (oldVersion < 5) {
       // Add logs table
       await db.execute('''
-        CREATE TABLE ${AppConstants.logsTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.logsTable} (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           timestamp TEXT NOT NULL,
           level TEXT NOT NULL,
@@ -207,7 +207,7 @@ class StorageService {
     if (oldVersion < 6) {
       // Add Files Index table
       await db.execute('''
-        CREATE TABLE ${AppConstants.filesIndexTable} (
+        CREATE TABLE IF NOT EXISTS ${AppConstants.filesIndexTable} (
           path TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           extension TEXT NOT NULL,
@@ -219,8 +219,8 @@ class StorageService {
         )
       ''');
       
-      await db.execute('CREATE INDEX idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
-      await db.execute('CREATE INDEX idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_parent ON ${AppConstants.filesIndexTable} (parent_path)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_files_ext ON ${AppConstants.filesIndexTable} (extension)');
     }
 
     if (oldVersion < 7) {
@@ -508,23 +508,57 @@ class StorageService {
         .toList();
   }
 
+  /// Tables that may be addressed through the generic operations below.
+  static const Set<String> _allowedTables = {
+    AppConstants.passwordsTable,
+    AppConstants.recentDocumentsTable,
+    AppConstants.settingsTable,
+    AppConstants.exportJobsTable,
+    AppConstants.logsTable,
+    AppConstants.filesIndexTable,
+  };
+
+  // A SQL identifier we are willing to interpolate: letters, digits, underscore only.
+  static final RegExp _safeIdentifier = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
+  /// Validate a table name against the whitelist. Throws on anything unexpected.
+  static String _safeTable(String table) {
+    if (!_allowedTables.contains(table)) {
+      throw ArgumentError('Disallowed table name: $table');
+    }
+    return table;
+  }
+
+  /// Validate an id column name (identifier-shaped only). Throws otherwise.
+  static String _safeColumn(String column) {
+    if (!_safeIdentifier.hasMatch(column)) {
+      throw ArgumentError('Disallowed column name: $column');
+    }
+    return column;
+  }
+
   /// Get generic table data
   /// Get generic table data with pagination
   Future<List<Map<String, dynamic>>> getTableData(String table, {int? limit, int? offset}) async {
+    final safeTable = _safeTable(table);
     final db = await database;
-    return await db.query(table, limit: limit, offset: offset);
+    return await db.query(safeTable, limit: limit, offset: offset);
   }
 
   /// Update generic record
   Future<int> updateRecord(String table, String idColumn, dynamic idValue, Map<String, dynamic> data) async {
+    final safeTable = _safeTable(table);
+    final safeColumn = _safeColumn(idColumn);
     final db = await database;
-    return await db.update(table, data, where: '$idColumn = ?', whereArgs: [idValue]);
+    return await db.update(safeTable, data, where: '$safeColumn = ?', whereArgs: [idValue]);
   }
 
   /// Delete generic record
   Future<int> deleteRecord(String table, String idColumn, dynamic idValue) async {
+    final safeTable = _safeTable(table);
+    final safeColumn = _safeColumn(idColumn);
     final db = await database;
-    return await db.delete(table, where: '$idColumn = ?', whereArgs: [idValue]);
+    return await db.delete(safeTable, where: '$safeColumn = ?', whereArgs: [idValue]);
   }
 
   /// Close database

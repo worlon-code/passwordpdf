@@ -211,24 +211,37 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       _isLoadingMore = true;
     });
 
-    await Future.delayed(const Duration(milliseconds: 100));
+    try {
+      await Future.delayed(const Duration(milliseconds: 100));
 
-    final moreFiles = await _deviceService.getDocuments(
-      offset: _currentOffset,
-      limit: _pageSize,
-      filterType: _selectedFilter,
-      searchQuery: _searchQuery,
-      parentPath: _isFolderView ? _currentFolderPath : null,
-      flatList: !_isFolderView,
-    );
+      final moreFiles = await _deviceService.getDocuments(
+        offset: _currentOffset,
+        limit: _pageSize,
+        filterType: _selectedFilter,
+        searchQuery: _searchQuery,
+        parentPath: _isFolderView ? _currentFolderPath : null,
+        flatList: !_isFolderView,
+      );
 
-    if (mounted) {
-      setState(() {
-        _displayedFiles.addAll(moreFiles);
-        _currentOffset += moreFiles.length;
-        _hasMore = moreFiles.length >= _pageSize;
+      if (mounted) {
+        setState(() {
+          _displayedFiles.addAll(moreFiles);
+          _currentOffset += moreFiles.length;
+          _hasMore = moreFiles.length >= _pageSize;
+        });
+      }
+    } catch (e) {
+      // Phase ?, Step 9: log but never leave the loading flag stuck.
+      _log.error('AllDocumentsScreen', 'Load more failed', e);
+    } finally {
+      // Always clear the flag, even on error, so pagination can retry.
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      } else {
         _isLoadingMore = false;
-      });
+      }
     }
   }
 
@@ -650,7 +663,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
           _log.info('AllDocumentsScreen', 'Skipping ${file.path}');
           continue;
         } else if (action.type == ConflictActionType.rename) {
-        } else if (action.type == ConflictActionType.rename) {
+
           // Auto-rename logic: Find next unique suffix (_1, _2, etc.)
           final fileName = file.path.split(Platform.pathSeparator).last;
           final dotIndex = fileName.lastIndexOf('.');
@@ -754,32 +767,41 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       String targetName = filesToRename[file.path] ?? fileName;
       
       try {
-        // Handle Overwrite: Delete existing file first
-        if (filesToOverwrite.contains(file.path)) {
-           final existingId = docService.getFileIdInFolder(fileName, folderId);
-           if (existingId != null) {
-             _log.info('AllDocumentsScreen', 'Overwriting: Deleting existing item $existingId');
-             await docService.deleteItem(existingId);
-           }
-        }
-        
-        // Import
-        // Note: importFile logic handles creating NEW file. 
-        // If we are overwriting, we just deleted the old one, so it's a new import.
+        // Phase ?, Step 4: Overwrite = temp-then-swap.
+        // Resolve the existing item id up front but DO NOT delete it yet.
+        // We import the new file first; only after it succeeds do we delete
+        // the old item. This guarantees a failed import can never leave the
+        // user with neither the old nor the new file.
+        final bool isOverwrite = filesToOverwrite.contains(file.path);
+        String? existingId = isOverwrite ? docService.getFileIdInFolder(fileName, folderId) : null;
+        String importName = (isOverwrite && existingId != null)
+            ? '__import_tmp_${DateTime.now().millisecondsSinceEpoch}_$targetName'
+            : targetName;
+
+        // Import (always allow duplicate when overwriting, since the original
+        // is intentionally still present at this point).
         final result = await docService.importFile(
           file.path, 
           fileName, 
-          targetName: targetName,
-          allowDuplicate: forceImport
+          targetName: importName,
+          allowDuplicate: forceImport || isOverwrite
         );
         
         if (result.success && result.importItem != null) {
+          // New file is safely imported. Now it is safe to remove the old one.
+          if (isOverwrite && existingId != null) {
+             _log.info('AllDocumentsScreen', 'Overwrite: import succeeded, deleting old item $existingId');
+             await docService.deleteItem(existingId);
+             // Rename the temp import to the intended final name.
+             await docService.renameItem(result.importItem!.id, targetName);
+          }
           successCount++;
           // If we imported into specific folder, move it there
           if (folderId != null) {
              await docService.addFileToFolder(result.importItem!.id, folderId);
           }
         } else {
+          // Import failed: original (if overwrite) is untouched. No data loss.
           failCount++;
           _log.warn('AllDocumentsScreen', 'Failed to import ${file.path}: ${result.errorMessage}');
         }

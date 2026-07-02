@@ -248,9 +248,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                      String newName = fileName;
                      int i = 1;
                      while (_docService.getFileIdInFolder(newName, _currentFolderId) != null) {
-                         final ext = newName.split('.').last;
-                         final nameNoExt = newName.substring(0, newName.length - ext.length - 1);
-                         newName = '${nameNoExt}_$i.$ext';
+                         final dotIndex = newName.lastIndexOf('.');
+                         // No dot, or leading-dot only (e.g. ".bashrc") => treat as no extension.
+                         final hasExt = dotIndex > 0;
+                         final ext = hasExt ? newName.substring(dotIndex + 1) : '';
+                         final nameNoExt = hasExt ? newName.substring(0, dotIndex) : newName;
+                         newName = hasExt ? '${nameNoExt}_$i.$ext' : '${nameNoExt}_$i';
                          i++;
                      }
                      // Import with new name
@@ -402,6 +405,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   Future<void> _exportSelectedItems() async {
     String? password;
     bool encrypt = false;
+    bool removePasswords = false;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -436,6 +440,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       obscureText: true,
                       onChanged: (val) => password = val,
                     ),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: removePasswords,
+                        onChanged: (val) => setState(() => removePasswords = val ?? false),
+                      ),
+                      const Expanded(
+                        child: Text('Remove password from PDFs in the ZIP'),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               actions: [
@@ -457,8 +472,11 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Use password only if encrypt checked
-    final zipPassword = encrypt ? password : null;
+    // Use password only if encrypt checked AND a non-empty password was entered.
+    // An empty-but-checked password must be treated as no password.
+    final zipPassword = (encrypt && password != null && password!.trim().isNotEmpty)
+        ? password
+        : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -518,7 +536,10 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       }
 
       // Add to queue
-      _exportQueue.addJob('Bulk Export', exportItems, exportDir: exportPath, zipPassword: zipPassword);
+      _exportQueue.addJob('Bulk Export', exportItems,
+          exportDir: exportPath,
+          zipPassword: zipPassword,
+          removePasswords: removePasswords);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1285,8 +1306,11 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
     if (confirm != true) return;
 
-    // Use password only if encrypt checked
-    final zipPassword = encrypt ? password : null;
+    // Use password only if encrypt checked AND a non-empty password was entered.
+    // An empty-but-checked password must be treated as no password.
+    final zipPassword = (encrypt && password != null && password!.trim().isNotEmpty)
+        ? password
+        : null;
 
     // Check configuration
     final settings = context.read<SettingsService>();
@@ -1386,9 +1410,13 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         destinationFiles = _docService.getUnorganizedFiles();
       }
 
-      final filesToMove = _selectedFileIds.map((id) => 
-        _docService.getAllItems().firstWhere((item) => item.id == id)
-      ).toList();
+      final filesToMove = _selectedFileIds
+          .map((id) => _docService.getAllItems().firstWhere(
+                (item) => item.id == id,
+                orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+              ))
+          .where((item) => item.id.isNotEmpty)
+          .toList();
       
       final conflictingItems = <ConflictItem>[];
       final Map<String, ConflictAction> resolutions = {};
@@ -1460,8 +1488,13 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             // currentFileId remains same, but name changed in DB
           } else if (action.type == ConflictActionType.overwrite) {
              // Delete Destination File
-             final destFile = destinationFiles.firstWhere((f) => f.name.toLowerCase() == file.name.toLowerCase());
-             await _docService.deleteItem(destFile.id); // This deletes the destination entry
+             final destFile = destinationFiles.firstWhere(
+               (f) => f.name.toLowerCase() == file.name.toLowerCase(),
+               orElse: () => DocumentItem(id: '', name: '', type: DocumentItemType.file),
+             );
+             if (destFile.id.isNotEmpty) {
+               await _docService.deleteItem(destFile.id); // This deletes the destination entry
+             }
           }
         }
 
@@ -1849,6 +1882,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     
     bool obscurePassword = true;
 
+    final saveNameController = TextEditingController(text: saveName);
+
     await showDialog(
       context: context,
       builder: (context) {
@@ -1898,7 +1933,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
                         child: TextField(
-                          controller: TextEditingController(text: saveName),
+                          controller: saveNameController,
                           decoration: const InputDecoration(
                             labelText: 'Password Name (e.g. Bank Statement)',
                             border: OutlineInputBorder(),
@@ -1956,6 +1991,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         );
       },
     ).then((result) async {
+      saveNameController.dispose();
       if (result == true) {
         // Password was valid (checked in dialog)
         await pdfService.saveDocumentPassword(filePath, password);
@@ -2383,11 +2419,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
       // Pre-populate folder count cache for smooth scrolling
       for (final folder in folders) {
-        if (!_folderCountCache.containsKey(folder.id)) {
+        final cacheKey = '$_filterType:${folder.id}';
+        if (!_folderCountCache.containsKey(cacheKey)) {
           final files = _docService.getFilesInFolder(folder.id);
           final fileCount = _applyFileFilter(files).length;
           final subfolderCount = _docService.getSubfolders(folder.id).length;
-          _folderCountCache[folder.id] = (fileCount, subfolderCount);
+          _folderCountCache[cacheKey] = (fileCount, subfolderCount);
         }
       }
 
@@ -2496,11 +2533,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       
       // Pre-populate folder count cache for smooth scrolling
       for (final folder in subfolders) {
-        if (!_folderCountCache.containsKey(folder.id)) {
+        final cacheKey = '$_filterType:${folder.id}';
+        if (!_folderCountCache.containsKey(cacheKey)) {
           final folderFiles = _docService.getFilesInFolder(folder.id);
           final fileCount = _applyFileFilter(folderFiles).length;
           final subCount = _docService.getSubfolders(folder.id).length;
-          _folderCountCache[folder.id] = (fileCount, subCount);
+          _folderCountCache[cacheKey] = (fileCount, subCount);
         }
       }
       
@@ -2597,7 +2635,10 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 label: Text(label),
                 selected: isSelected,
                 onSelected: (selected) {
-                  setState(() => _filterType = type);
+                  setState(() {
+                    _folderCountCache.clear();
+                    _filterType = type;
+                  });
                 },
                 selectedColor: Theme.of(context).colorScheme.primaryContainer,
               ),
@@ -2679,8 +2720,9 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
 
   /// Build subtitle showing file and folder counts (uses cache for performance)
   String _buildFolderSubtitle(String folderId) {
+    final cacheKey = '$_filterType:$folderId';
     // Check cache first to avoid expensive service calls during scroll
-    final cached = _folderCountCache[folderId];
+    final cached = _folderCountCache[cacheKey];
     if (cached != null) {
       final (fileCount, subfolderCount) = cached;
       final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
@@ -2692,7 +2734,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     final allFiles = _docService.getFilesInFolder(folderId);
     final fileCount = _applyFileFilter(allFiles).length;
     final subfolderCount = _docService.getSubfolders(folderId).length;
-    _folderCountCache[folderId] = (fileCount, subfolderCount);
+    _folderCountCache[cacheKey] = (fileCount, subfolderCount);
     
     final filePart = '$fileCount ${fileCount == 1 ? 'file' : 'files'}';
     final folderPart = '$subfolderCount ${subfolderCount == 1 ? 'folder' : 'folders'}';
@@ -3264,15 +3306,28 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     int deletedCount = 0;
     final ids = List<String>.from(_selectedFileIds);
     
-    for (final id in ids) {
-       await _docService.deleteItem(id, deleteFromDevice: deleteFromDevice);
-       deletedCount++;
+    try {
+      for (final id in ids) {
+         try {
+            await _docService.deleteItem(id, deleteFromDevice: deleteFromDevice);
+            deletedCount++;
+         } catch (e) {
+            // Phase ?, Step 9: skip the failing item, keep deleting the rest.
+            _log.error('DocumentDashboardScreen', 'Failed to delete item $id', e);
+         }
+      }
+    } finally {
+      // Always clear the loading flag and selection, even if the loop threw.
+      if (mounted) {
+        setState(() {
+          _selectedFileIds.clear();
+          _isLoading = false;
+        });
+      } else {
+        _selectedFileIds.clear();
+        _isLoading = false;
+      }
     }
-    
-    setState(() {
-      _selectedFileIds.clear();
-      _isLoading = false;
-    });
     
     if (mounted) {
        ScaffoldMessenger.of(context).showSnackBar(

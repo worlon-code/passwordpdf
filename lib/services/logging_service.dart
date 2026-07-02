@@ -55,13 +55,28 @@ class LoggingService {
     if (limit > 0) _maxLogLimit = limit;
   }
 
+  /// Mask secret/PII-shaped substrings before a message is stored or printed.
+  /// Defense-in-depth: call sites should already avoid logging raw secrets,
+  /// but this guarantees nothing sensitive lands in the persisted log table.
+  static String _redact(String input) {
+    var out = input;
+    // key: value / key= value where key looks sensitive (pin, password, secret, token, otp)
+    out = out.replaceAllMapped(
+      RegExp(r'\b(pin|password|passwd|pwd|secret|token|otp|api[_-]?key)\b\s*[:=]\s*\S+', caseSensitive: false),
+      (m) => '${m.group(1)}: [REDACTED]',
+    );
+    return out;
+  }
+
   void _addLog(String level, String tag, String message, [String? stackTrace]) {
+    final safeMessage = _redact(message);
+    final safeStack = stackTrace != null ? _redact(stackTrace) : null;
     final entry = LogEntry(
       timestamp: DateTime.now(),
       level: level,
       tag: tag,
-      message: message,
-      stackTrace: stackTrace,
+      message: safeMessage,
+      stackTrace: safeStack,
     );
     
     _logs.insert(0, entry); // Add at beginning for newest first
@@ -72,13 +87,13 @@ class LoggingService {
     }
     
     // Also print to debug console
-    debugPrint('[$level] $tag: $message');
-    if (stackTrace != null) {
-      debugPrint(stackTrace);
+    debugPrint('[$level] $tag: $safeMessage');
+    if (safeStack != null) {
+      debugPrint(safeStack);
     }
     
     // Persist async
-    _storage.insertLog(entry.toMap(), retentionLimit: _maxLogLimit);
+    _storage.insertLog(entry.toMap(), retentionLimit: _maxLogLimit).catchError((_) {});
   }
 
   void info(String tag, String message) {
