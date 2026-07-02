@@ -230,12 +230,10 @@ class PdfToolsService {
     required String sourcePassword,
     required String otherPath,
     required String otherPassword,
+    required bool confirmedFlatten,
     String? outputDir,
     String? savePath,
   }) async {
-    // We create a new document to hold the result
-    final newDocument = PdfDocument();
-
     // Load source
     final sourceFile = File(sourcePath);
     final sourceBytes = await sourceFile.readAsBytes();
@@ -247,31 +245,40 @@ class PdfToolsService {
     final otherDoc = PdfDocument(inputBytes: otherBytes, password: otherPassword);
 
     try {
-      // Import real pages from both docs (preserves text/links/form fields)
-      if (sourceDoc.pages.count > 0) {
-        newDocument.importPageRange(sourceDoc, 0, sourceDoc.pages.count - 1);
-      }
-      if (otherDoc.pages.count > 0) {
-        newDocument.importPageRange(otherDoc, 0, otherDoc.pages.count - 1);
+      if ((_hasInteractiveContent(sourceDoc) || _hasInteractiveContent(otherDoc)) && !confirmedFlatten) {
+        throw Exception('Operation will flatten interactive content (forms/bookmarks). Confirm to proceed.');
       }
 
-      String newPath;
-      if (savePath != null) {
-        newPath = savePath;
-      } else {
-        final dir = outputDir ?? path.dirname(sourcePath);
-        final filename = path.basenameWithoutExtension(sourcePath);
-        final ext = path.extension(sourcePath);
-        newPath = path.join(dir, '${filename}_merged$ext');
-      }
+      // We create a new document to hold the result
+      final newDocument = PdfDocument();
+      try {
+        // Import real pages from both docs (preserves text/links/form fields)
+        if (sourceDoc.pages.count > 0) {
+          newDocument.importPageRange(sourceDoc, 0, sourceDoc.pages.count - 1);
+        }
+        if (otherDoc.pages.count > 0) {
+          newDocument.importPageRange(otherDoc, 0, otherDoc.pages.count - 1);
+        }
 
-      final newBytes = await newDocument.save();
-      await File(newPath).writeAsBytes(newBytes);
-      return newPath;
+        String newPath;
+        if (savePath != null) {
+          newPath = savePath;
+        } else {
+          final dir = outputDir ?? path.dirname(sourcePath);
+          final filename = path.basenameWithoutExtension(sourcePath);
+          final ext = path.extension(sourcePath);
+          newPath = path.join(dir, '${filename}_merged$ext');
+        }
+
+        final newBytes = await newDocument.save();
+        await File(newPath).writeAsBytes(newBytes);
+        return newPath;
+      } finally {
+        newDocument.dispose();
+      }
     } finally {
       sourceDoc.dispose();
       otherDoc.dispose();
-      newDocument.dispose();
     }
   }
 

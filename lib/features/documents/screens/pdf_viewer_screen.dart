@@ -598,11 +598,39 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     );
     if (result == null || result.isEmpty) return;
     
+    final tools = PdfToolsService();
+    bool confirmedFlatten = true;
+    if (await tools.willFlattenOnMerge(
+      sourcePath: widget.filePath,
+      sourcePassword: _currentPassword,
+      otherPath: result.first,
+      otherPassword: '',
+    )) {
+      if (context.mounted) {
+        confirmedFlatten = await showDialog<bool>(
+          context: context,
+          builder: (c) => AlertDialog(
+            title: const Text('Flatten Interactive Content?'),
+            content: const Text('Merging PDFs will flatten form fields, annotations, and bookmarks. The merged file will look the same but will no longer be interactive. Do you want to continue?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+              TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Continue')),
+            ],
+          ),
+        ) ?? false;
+      } else {
+        confirmedFlatten = false;
+      }
+    }
+    if (!confirmedFlatten) return;
+
+    if (!context.mounted) return;
     await _runToolOperation(context, (tools, savePath) => tools.mergePdf(
        sourcePath: widget.filePath,
        sourcePassword: _currentPassword,
        otherPath: result.first,
        otherPassword: '', 
+       confirmedFlatten: confirmedFlatten,
        savePath: savePath
     ), '_merged');
   }
