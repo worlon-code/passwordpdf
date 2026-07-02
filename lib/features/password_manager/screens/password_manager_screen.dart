@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
+import 'dart:io';
 import '../../../models/password_model.dart';
 import '../../../services/encryption_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../services/password_backup_service.dart';
 import '../widgets/add_password_dialog.dart';
+import '../widgets/restore_conflict_table.dart';
 
 /// Password manager screen to view and manage saved passwords
 class PasswordManagerScreen extends StatefulWidget {
@@ -15,7 +22,150 @@ class PasswordManagerScreen extends StatefulWidget {
 class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   final StorageService _storageService = StorageService();
   final EncryptionService _encryptionService = EncryptionService();
-  
+
+  PasswordBackupService get _backup =>
+      PasswordBackupService(_storageService, _encryptionService);
+
+  Future<String?> _promptPassphrase({required bool confirm}) async {
+    final p1 = TextEditingController();
+    final p2 = TextEditingController();
+    String? error;
+    return showDialog<String>(
+      context: context,
+      builder:
+          (ctx) => StatefulBuilder(
+            builder:
+                (ctx, setLocal) => AlertDialog(
+                  title: Text(
+                    confirm ? 'Set backup passphrase' : 'Enter passphrase',
+                  ),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: p1,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Passphrase',
+                        ),
+                      ),
+                      if (confirm)
+                        TextField(
+                          controller: p2,
+                          obscureText: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Confirm passphrase',
+                          ),
+                        ),
+                      if (error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            error!,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () {
+                        final a = p1.text;
+                        if (a.trim().isEmpty) {
+                          setLocal(() => error = 'Passphrase required');
+                          return;
+                        }
+                        if (confirm && a != p2.text) {
+                          setLocal(() => error = 'Passphrases do not match');
+                          return;
+                        }
+                        Navigator.pop(ctx, a);
+                      },
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+          ),
+    );
+  }
+
+  Future<void> _onBackup() async {
+    final pass = await _promptPassphrase(confirm: true);
+    if (pass == null) return;
+    try {
+      final bytes = await _backup.createBackup(pass);
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        p.join(
+          dir.path,
+          'passwords-${DateTime.now().millisecondsSinceEpoch}.pwdbak',
+        ),
+      );
+      await file.writeAsBytes(bytes, flush: true);
+      await Share.shareXFiles([
+        XFile(file.path),
+      ], text: 'Password Manager backup');
+    } on FormatException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
+  Future<void> _onRestore() async {
+    // Guard: restore re-encrypts each entry under the LOCAL key. If no key is
+    // set, encrypt() returns null and the import would silently write nothing.
+    // Recovery must never fail silently, so require a key first.
+    if (!await _encryptionService.isKeySet()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Set an encryption key first, then restore your backup.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    final picked = await FilePicker.platform.pickFiles(withData: true);
+    if (picked == null || picked.files.single.bytes == null) return;
+    final pass = await _promptPassphrase(confirm: false);
+    if (pass == null) return;
+    try {
+      final conflicts = await _backup.restoreFromBytes(
+        picked.files.single.bytes!,
+        pass,
+      );
+      if (!mounted) return;
+      final resolved = await Navigator.of(context).push<List<RestoreConflict>>(
+        MaterialPageRoute(
+          builder: (_) => RestoreConflictTable(conflicts: conflicts),
+        ),
+      );
+      if (resolved == null) return;
+      final n = await _backup.applyRestore(resolved);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported $n password(s)')));
+        await _loadPasswords();
+      }
+    } on FormatException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
   List<PasswordModel> _passwords = [];
   bool _isLoading = true;
   String _searchQuery = '';
@@ -54,23 +204,24 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   Future<void> _deletePassword(PasswordModel password) async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Password'),
-        content: Text('Are you sure you want to delete "${password.keyName}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete Password'),
+            content: Text(
+              'Are you sure you want to delete "${password.keyName}"?',
             ),
-            child: const Text('Delete'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('Delete'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
 
     if (confirm == true && password.id != null) {
@@ -98,31 +249,33 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
 
   Future<void> _renamePassword(PasswordModel password) async {
     final controller = TextEditingController(text: password.keyName);
-    
+
     final newName = await showDialog<String>(
       context: context,
       barrierDismissible: true,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Rename Password Key'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'New Key Name',
-            hintText: 'e.g., Gmail Account',
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Rename Password Key'),
+            content: TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'New Key Name',
+                hintText: 'e.g., Gmail Account',
+              ),
+              autofocus: true,
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed:
+                    () => Navigator.pop(dialogContext, controller.text.trim()),
+                child: const Text('Rename'),
+              ),
+            ],
           ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('Rename'),
-          ),
-        ],
-      ),
     );
 
     // Handle rename after dialog closes
@@ -134,7 +287,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
           _showError('A password with this key name already exists');
           return;
         }
-        
+
         await _storageService.renamePassword(password.id!, newName);
         _loadPasswords();
         _showSuccess('Password key renamed');
@@ -156,6 +309,18 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Password Manager'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.backup_outlined),
+            tooltip: 'Backup',
+            onPressed: _onBackup,
+          ),
+          IconButton(
+            icon: const Icon(Icons.restore_outlined),
+            tooltip: 'Restore',
+            onPressed: _onRestore,
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -180,58 +345,64 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
               ),
             ),
           ),
-          
+
           // Passwords list
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredPasswords.isEmpty
+            child:
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _filteredPasswords.isEmpty
                     ? RefreshIndicator(
-                        onRefresh: _loadPasswords,
-                        child: LayoutBuilder(
-                          builder: (context, constraints) => SingleChildScrollView(
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            child: SizedBox(
-                              height: constraints.maxHeight,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.vpn_key_off,
-                                      size: 100,
-                                      color: Colors.grey.shade400,
-                                    ),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      _searchQuery.isEmpty 
-                                          ? 'No passwords saved yet'
-                                          : 'No passwords found',
-                                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                        color: Colors.grey.shade600,
+                      onRefresh: _loadPasswords,
+                      child: LayoutBuilder(
+                        builder:
+                            (context, constraints) => SingleChildScrollView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              child: SizedBox(
+                                height: constraints.maxHeight,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.vpn_key_off,
+                                        size: 100,
+                                        color: Colors.grey.shade400,
                                       ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (_searchQuery.isEmpty)
+                                      const SizedBox(height: 16),
                                       Text(
-                                        'Tap + to add a password',
-                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                          color: Colors.grey.shade500,
+                                        _searchQuery.isEmpty
+                                            ? 'No passwords saved yet'
+                                            : 'No passwords found',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleLarge?.copyWith(
+                                          color: Colors.grey.shade600,
                                         ),
                                       ),
-                                  ],
+                                      const SizedBox(height: 8),
+                                      if (_searchQuery.isEmpty)
+                                        Text(
+                                          'Tap + to add a password',
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium?.copyWith(
+                                            color: Colors.grey.shade500,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                      )
+                      ),
+                    )
                     : RefreshIndicator(
-                        onRefresh: _loadPasswords,
-                        child: ListView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          itemCount: _filteredPasswords.length,
+                      onRefresh: _loadPasswords,
+                      child: ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _filteredPasswords.length,
                         itemBuilder: (context, index) {
                           final password = _filteredPasswords[index];
                           return Card(
@@ -240,7 +411,9 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                               leading: Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Icon(
@@ -250,7 +423,9 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                               ),
                               title: Text(
                                 password.keyName,
-                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                               subtitle: Text(
                                 'Created: ${password.createdAt.toString().split(' ')[0]}',
@@ -263,28 +438,37 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                                     await _deletePassword(password);
                                   }
                                 },
-                                itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                    value: 'rename',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.edit),
-                                        SizedBox(width: 8),
-                                        Text('Rename'),
-                                      ],
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'delete',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete, color: Colors.red),
-                                        SizedBox(width: 8),
-                                        Text('Delete', style: TextStyle(color: Colors.red)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
+                                itemBuilder:
+                                    (context) => [
+                                      const PopupMenuItem(
+                                        value: 'rename',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit),
+                                            SizedBox(width: 8),
+                                            Text('Rename'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.delete,
+                                              color: Colors.red,
+                                            ),
+                                            SizedBox(width: 8),
+                                            Text(
+                                              'Delete',
+                                              style: TextStyle(
+                                                color: Colors.red,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                               ),
                             ),
                           );
