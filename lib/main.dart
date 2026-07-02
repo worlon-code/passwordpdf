@@ -74,6 +74,15 @@ void main() async {
     final log = LoggingService();
     log.info('App', '=== PDF Password Manager Starting ===');
     
+    // Crypto init (Step 15b): mint aes_key_v2 once + record legacy key-health.
+    // MUST run before any encrypt/decrypt. Non-fatal: legacy reads still work
+    // (legacy key read lazily) and v2 writes are gated off.
+    try {
+      await EncryptionService().initCrypto();
+    } catch (e) {
+      log.error('App', 'initCrypto failed at startup: $e');
+    }
+    
     // Global Flutter Error Handler (Layout errors, etc)
     FlutterError.onError = (FlutterErrorDetails details) {
       final errorMessage = '''

@@ -52,7 +52,7 @@ class ExportJob {
     this.totalItems = 0,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
-  
+
   String get statusText {
     switch (status) {
       case ExportStatus.queued:
@@ -68,6 +68,7 @@ class ExportJob {
         return 'Error';
     }
   }
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -79,7 +80,9 @@ class ExportJob {
       'error_message': errorMessage,
       'items': items.map((i) => i.toJson()).toList(),
       'export_dir': exportDir,
-      'zip_password': zipPassword,
+      // 'zip_password' intentionally NOT persisted (Option A): the export
+      // password lives only in memory for the live in-session job; restored
+      // jobs are marked error on restart (see init) and never re-export.
       'progress': progress,
       'processed_items': processedItems,
       'total_items': totalItems,
@@ -91,26 +94,34 @@ class ExportJob {
 
   factory ExportJob.fromJson(Map<String, dynamic> json) {
     return ExportJob(
-      id: json['id'],
-      name: json['name'],
-      items: (json['items'] as List).map((i) => ExportItem.fromJson(i)).toList(),
-      exportDir: json['export_dir'],
-      zipPassword: json['zip_password'],
-      type: json['type'] != null 
-          ? ExportType.values.firstWhere((e) => e.name == json['type'], orElse: () => ExportType.zip)
-          : ExportType.zip,
-      isDeveloper: json['is_developer'] == 1, // Load flag
-      removePasswords: json['remove_passwords'] == 1,
-      status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
-      progress: json['progress'] ?? 0,
-      processedItems: json['processed_items'] ?? 0,
-      totalItems: json['total_items'] ?? 0,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at']),
-    )..completedAt = json['completed_at'] != null 
-        ? DateTime.fromMillisecondsSinceEpoch(json['completed_at']) 
-        : null
-     ..outputPath = json['output_path']
-     ..errorMessage = json['error_message'];
+        id: json['id'],
+        name: json['name'],
+        items:
+            (json['items'] as List).map((i) => ExportItem.fromJson(i)).toList(),
+        exportDir: json['export_dir'],
+        zipPassword:
+            null, // never restored from disk (Option A); in-memory only
+        type:
+            json['type'] != null
+                ? ExportType.values.firstWhere(
+                  (e) => e.name == json['type'],
+                  orElse: () => ExportType.zip,
+                )
+                : ExportType.zip,
+        isDeveloper: json['is_developer'] == 1, // Load flag
+        removePasswords: json['remove_passwords'] == 1,
+        status: ExportStatus.values.firstWhere((e) => e.name == json['status']),
+        progress: json['progress'] ?? 0,
+        processedItems: json['processed_items'] ?? 0,
+        totalItems: json['total_items'] ?? 0,
+        createdAt: DateTime.fromMillisecondsSinceEpoch(json['created_at']),
+      )
+      ..completedAt =
+          json['completed_at'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(json['completed_at'])
+              : null
+      ..outputPath = json['output_path']
+      ..errorMessage = json['error_message'];
   }
 }
 
@@ -146,9 +157,12 @@ class ExportItem {
       name: json['name'],
       filePath: json['file_path'],
       isFolder: json['is_folder'] ?? false,
-      children: json['children'] != null
-          ? (json['children'] as List).map((i) => ExportItem.fromJson(i)).toList()
-          : [],
+      children:
+          json['children'] != null
+              ? (json['children'] as List)
+                  .map((i) => ExportItem.fromJson(i))
+                  .toList()
+              : [],
     );
   }
 }
@@ -168,29 +182,41 @@ class ExportQueueService extends ChangeNotifier {
   Timer? _workerTimer;
   static const int maxConcurrent = 2;
   static const Duration checkInterval = Duration(minutes: 2);
-  
+
   // Notifications
-  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
   bool _notificationsInitialized = false;
 
   /// Get all jobs
   List<ExportJob> get jobs => List.unmodifiable(_jobs);
 
   /// Get jobs by status (optionally filter developer jobs)
-  List<ExportJob> getJobsByStatus(ExportStatus status, {bool showDeveloper = false}) {
-    return _jobs.where((j) => j.status == status && j.isDeveloper == showDeveloper).toList();
+  List<ExportJob> getJobsByStatus(
+    ExportStatus status, {
+    bool showDeveloper = false,
+  }) {
+    return _jobs
+        .where((j) => j.status == status && j.isDeveloper == showDeveloper)
+        .toList();
   }
-  
+
   /// Get counts by status
   Map<ExportStatus, int> getStatusCounts({bool showDeveloper = false}) {
     return {
       for (var status in ExportStatus.values)
-        status: _jobs.where((j) => j.status == status && j.isDeveloper == showDeveloper).length,
+        status:
+            _jobs
+                .where(
+                  (j) => j.status == status && j.isDeveloper == showDeveloper,
+                )
+                .length,
     };
   }
-  
+
   /// Get in-progress count
-  int get inProgressCount => _jobs.where((j) => j.status == ExportStatus.inProgress).length;
+  int get inProgressCount =>
+      _jobs.where((j) => j.status == ExportStatus.inProgress).length;
 
   /// Start the background worker
   void startWorker() {
@@ -221,16 +247,17 @@ class ExportQueueService extends ChangeNotifier {
           if (modelMap['items_json'] != null) {
             modelMap['items'] = jsonDecode(modelMap['items_json'] as String);
           }
-           
+
           final job = ExportJob.fromJson(modelMap);
-          
+
           // Reset status if it was stuck in progress
-          if (job.status == ExportStatus.inProgress || job.status == ExportStatus.queued) {
-             job.status = ExportStatus.error;
-             job.errorMessage = 'Interrupted by app restart';
-             job.completedAt = DateTime.now();
+          if (job.status == ExportStatus.inProgress ||
+              job.status == ExportStatus.queued) {
+            job.status = ExportStatus.error;
+            job.errorMessage = 'Interrupted by app restart';
+            job.completedAt = DateTime.now();
           }
-          
+
           _jobs.add(job);
         } catch (e) {
           _log.error('ExportQueueService', 'Failed to load job', e);
@@ -238,20 +265,25 @@ class ExportQueueService extends ChangeNotifier {
       }
 
       notifyListeners();
-      _log.info('ExportQueueService', 'Loaded ${_jobs.length} jobs from history');
+      _log.info(
+        'ExportQueueService',
+        'Loaded ${_jobs.length} jobs from history',
+      );
     } catch (e) {
       _log.error('ExportQueueService', 'Failed to init history', e);
     }
   }
-  
+
   // Stream for notification taps
   final _notificationTapController = StreamController<String>.broadcast();
   Stream<String> get onNotificationTap => _notificationTapController.stream;
 
   Future<void> _initNotifications() async {
     if (_notificationsInitialized) return;
-    
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -261,24 +293,31 @@ class ExportQueueService extends ChangeNotifier {
       android: androidSettings,
       iOS: iosSettings,
     );
-    
+
     await _notificationsPlugin.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (details) {
-         if (details.payload != null) {
-           _notificationTapController.add(details.payload!);
-         } else {
-           _notificationTapController.add('');
-         }
+        if (details.payload != null) {
+          _notificationTapController.add(details.payload!);
+        } else {
+          _notificationTapController.add('');
+        }
       },
     );
     _notificationsInitialized = true;
     _log.info('ExportQueueService', 'Notifications initialized');
   }
-  
-  Future<void> _showNotification(int id, String title, String body, {int? progress, int? maxProgress, String? payload}) async {
+
+  Future<void> _showNotification(
+    int id,
+    String title,
+    String body, {
+    int? progress,
+    int? maxProgress,
+    String? payload,
+  }) async {
     if (!_notificationsInitialized) return;
-    
+
     final androidDetails = AndroidNotificationDetails(
       'export_channel',
       'Export Service',
@@ -290,16 +329,29 @@ class ExportQueueService extends ChangeNotifier {
       progress: progress ?? 0,
       onlyAlertOnce: progress != null, // Don't buzz for progress updates
     );
-    
+
     const iosDetails = DarwinNotificationDetails();
-    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-    await _notificationsPlugin.show(id, title, body, details, payload: payload ?? 'export_progress');
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    await _notificationsPlugin.show(
+      id,
+      title,
+      body,
+      details,
+      payload: payload ?? 'export_progress',
+    );
   }
 
   /// Public method for import notifications (duplicates, etc.)
-  Future<void> showImportNotification(String title, String body, {String? payload}) async {
+  Future<void> showImportNotification(
+    String title,
+    String body, {
+    String? payload,
+  }) async {
     if (!_notificationsInitialized) await _initNotifications();
-    
+
     const androidDetails = AndroidNotificationDetails(
       'import_channel',
       'File Import',
@@ -307,23 +359,42 @@ class ExportQueueService extends ChangeNotifier {
       importance: Importance.high,
       priority: Priority.high,
     );
-    
+
     const iosDetails = DarwinNotificationDetails();
-    final details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-    await _notificationsPlugin.show(1000, title, body, details, payload: payload);
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    await _notificationsPlugin.show(
+      1000,
+      title,
+      body,
+      details,
+      payload: payload,
+    );
   }
 
-  Future<String> addJob(String name, List<ExportItem> items, {String? exportDir, String? zipPassword, ExportType type = ExportType.zip, bool isDeveloper = false, bool removePasswords = false}) async {
+  Future<String> addJob(
+    String name,
+    List<ExportItem> items, {
+    String? exportDir,
+    String? zipPassword,
+    ExportType type = ExportType.zip,
+    bool isDeveloper = false,
+    bool removePasswords = false,
+  }) async {
     // Cap history at 100 jobs
     if (_jobs.length >= 100) {
       // Remove oldest (completed/error) first, or just oldest
       final oldest = _jobs.firstWhere(
-        (j) => j.status == ExportStatus.completed || j.status == ExportStatus.error, 
-        orElse: () => _jobs.first
+        (j) =>
+            j.status == ExportStatus.completed ||
+            j.status == ExportStatus.error,
+        orElse: () => _jobs.first,
       );
       await removeJob(oldest.id);
     }
-    
+
     // Count total files for progress tracking
     int countItems(List<ExportItem> items) {
       int count = 0;
@@ -336,9 +407,9 @@ class ExportQueueService extends ChangeNotifier {
       }
       return count;
     }
-    
+
     final total = countItems(items);
-    
+
     final job = ExportJob(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       name: name,
@@ -352,29 +423,33 @@ class ExportQueueService extends ChangeNotifier {
     );
     _jobs.add(job);
     _persistJob(job); // Save initial state
-    
+
     _log.info('ExportQueueService', 'Job added: ${job.name} with $total files');
     notifyListeners();
-    
+
     // Immediately try to process
     _processQueue();
-    
+
     return job.id;
   }
 
   /// Process the queue
   void _processQueue() {
-    final inProgress = _jobs.where((j) => j.status == ExportStatus.inProgress).length;
-    
+    final inProgress =
+        _jobs.where((j) => j.status == ExportStatus.inProgress).length;
+
     if (inProgress >= maxConcurrent) {
-      _log.debug('ExportQueueService', 'Max concurrent exports reached ($inProgress)');
+      _log.debug(
+        'ExportQueueService',
+        'Max concurrent exports reached ($inProgress)',
+      );
       return;
     }
-    
+
     final queued = _jobs.where((j) => j.status == ExportStatus.queued).toList();
-    
+
     if (queued.isEmpty) return;
-    
+
     // Process next queued jobs up to max concurrent
     final toProcess = queued.take(maxConcurrent - inProgress);
     for (final job in toProcess) {
@@ -390,10 +465,14 @@ class ExportQueueService extends ChangeNotifier {
     _persistJob(job); // Update status
     notifyListeners();
     _log.info('ExportQueueService', 'Processing job: ${job.name}');
-    
+
     // Notification ID: use last 4 chars of ID as int (hash)
     final notificationId = job.id.hashCode;
-    await _showNotification(notificationId, 'Export Started', 'Exporting ${job.name}...');
+    await _showNotification(
+      notificationId,
+      'Export Started',
+      'Exporting ${job.name}...',
+    );
 
     try {
       if (job.type == ExportType.excel) {
@@ -408,39 +487,46 @@ class ExportQueueService extends ChangeNotifier {
       job.errorMessage = e.toString();
       job.completedAt = DateTime.now();
       _log.error('ExportQueueService', 'Job failed: ${job.name}', e, stack);
-      
-      await _showNotification(notificationId, 'Export Failed', 'Error: ${job.name}');
+
+      await _showNotification(
+        notificationId,
+        'Export Failed',
+        'Error: ${job.name}',
+      );
     }
 
     _persistJob(job); // Final update
     notifyListeners();
-    
+
     // Process next in queue
     _processQueue();
   }
 
   /// Add items to archive with progress tracking
   Future<void> _addItemsToArchive(
-      Archive archive,
-      List<ExportItem> items,
-      String pathPrefix,
-      ExportJob job,
-      int notificationId,
-      List<String> tempPaths,
-      List<String> skippedNoPassword) async {
+    Archive archive,
+    List<ExportItem> items,
+    String pathPrefix,
+    ExportJob job,
+    int notificationId,
+    List<String> tempPaths,
+    List<String> skippedNoPassword,
+  ) async {
     for (final item in items) {
-      final archivePath = pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
+      final archivePath =
+          pathPrefix.isEmpty ? item.name : '$pathPrefix/${item.name}';
 
       if (item.isFolder) {
         // Add children recursively
         await _addItemsToArchive(
-            archive,
-            item.children,
-            archivePath,
-            job,
-            notificationId,
-            tempPaths,
-            skippedNoPassword);
+          archive,
+          item.children,
+          archivePath,
+          job,
+          notificationId,
+          tempPaths,
+          skippedNoPassword,
+        );
       } else if (item.filePath != null) {
         final file = File(item.filePath!);
         if (await file.exists()) {
@@ -449,15 +535,19 @@ class ExportQueueService extends ChangeNotifier {
 
           if (job.removePasswords && isPdf) {
             // Main-isolate only: secure storage + Keystore key are single-threaded.
-            final pwd = await _pdfPasswordService.getPasswordForDocument(item.filePath!);
+            final pwd = await _pdfPasswordService.getPasswordForDocument(
+              item.filePath!,
+            );
             if (pwd == null || pwd.isEmpty) {
               // No stored password (not protected / untracked / verified NO_PASSWORD):
               // add the original as-is. NEVER drop the file from the ZIP.
               bytes = await file.readAsBytes();
             } else {
               final tmpDir = await getTemporaryDirectory();
-              final tmpPath = path.join(tmpDir.path,
-                  'unlock_${DateTime.now().microsecondsSinceEpoch}_${item.name}');
+              final tmpPath = path.join(
+                tmpDir.path,
+                'unlock_${DateTime.now().microsecondsSinceEpoch}_${item.name}',
+              );
               try {
                 final outPath = await _pdfToolsService.removePassword(
                   filePath: item.filePath!,
@@ -469,8 +559,10 @@ class ExportQueueService extends ChangeNotifier {
               } catch (e) {
                 // Couldn't strip the password: include the ORIGINAL (still protected), do NOT drop it.
                 skippedNoPassword.add(item.name);
-                _log.warn('ExportQueueService',
-                    'Remove-password failed, including original (still protected) for ${item.name}: $e');
+                _log.warn(
+                  'ExportQueueService',
+                  'Remove-password failed, including original (still protected) for ${item.name}: $e',
+                );
                 bytes = await file.readAsBytes();
               }
             }
@@ -479,25 +571,26 @@ class ExportQueueService extends ChangeNotifier {
           }
 
           archive.addFile(ArchiveFile(archivePath, bytes.length, bytes));
-          
+
           // Update progress
           job.processedItems++;
           if (job.totalItems > 0) {
-            job.progress = ((job.processedItems / job.totalItems) * 100).round();
-            
+            job.progress =
+                ((job.processedItems / job.totalItems) * 100).round();
+
             // Throttle notifications (every 5 items or 10%)
             if (job.processedItems % 5 == 0 || job.progress % 10 == 0) {
-               await _showNotification(
-                 notificationId, 
-                 'Exporting ${job.name}', 
-                 '${job.progress}% complete', 
-                 progress: job.progress, 
-                 maxProgress: 100
-               );
-               notifyListeners();
+              await _showNotification(
+                notificationId,
+                'Exporting ${job.name}',
+                '${job.progress}% complete',
+                progress: job.progress,
+                maxProgress: 100,
+              );
+              notifyListeners();
             }
           }
-          
+
           // Yield to allow UI updates
           await Future.delayed(Duration.zero);
         }
@@ -522,20 +615,33 @@ class ExportQueueService extends ChangeNotifier {
 
   /// Clear completed/error jobs (isolation aware)
   Future<void> clearFinished({bool isDeveloper = false}) async {
-    final toRemove = _jobs.where((j) => (j.status == ExportStatus.completed || j.status == ExportStatus.error) && j.isDeveloper == isDeveloper).toList();
-    _jobs.removeWhere((j) => (j.status == ExportStatus.completed || j.status == ExportStatus.error) && j.isDeveloper == isDeveloper);
-    
+    final toRemove =
+        _jobs
+            .where(
+              (j) =>
+                  (j.status == ExportStatus.completed ||
+                      j.status == ExportStatus.error) &&
+                  j.isDeveloper == isDeveloper,
+            )
+            .toList();
+    _jobs.removeWhere(
+      (j) =>
+          (j.status == ExportStatus.completed ||
+              j.status == ExportStatus.error) &&
+          j.isDeveloper == isDeveloper,
+    );
+
     // Remove from DB
     await _storage.deleteFinishedExportJobs(isDeveloper);
-    
+
     // Cancel notifications for removed jobs
     for (final job in toRemove) {
       await _notificationsPlugin.cancel(job.id.hashCode);
     }
-    
+
     notifyListeners();
   }
-  
+
   /// Remove a specific job
   Future<void> removeJob(String jobId) async {
     _jobs.removeWhere((j) => j.id == jobId);
@@ -543,6 +649,7 @@ class ExportQueueService extends ChangeNotifier {
     await _notificationsPlugin.cancel(jobId.hashCode);
     notifyListeners();
   }
+
   Future<void> _processZipJob(ExportJob job, int notificationId) async {
     final archive = Archive();
     final tempPaths = <String>[];
@@ -550,16 +657,33 @@ class ExportQueueService extends ChangeNotifier {
 
     try {
       // Add all items to archive with progress tracking
-      await _addItemsToArchive(archive, job.items, '', job, notificationId, tempPaths, skippedNoPassword);
+      await _addItemsToArchive(
+        archive,
+        job.items,
+        '',
+        job,
+        notificationId,
+        tempPaths,
+        skippedNoPassword,
+      );
 
       if (archive.files.isEmpty) {
         throw Exception('No files to export');
       }
 
-      await _showNotification(notificationId, 'Exporting ${job.name}', 'Compressing...', progress: 99, maxProgress: 100);
+      await _showNotification(
+        notificationId,
+        'Exporting ${job.name}',
+        'Compressing...',
+        progress: 99,
+        maxProgress: 100,
+      );
 
       // Encode ZIP in isolate
-      final zipData = await compute(_encodeArchive, {'archive': archive, 'password': job.zipPassword});
+      final zipData = await compute(_encodeArchive, {
+        'archive': archive,
+        'password': job.zipPassword,
+      });
       if (zipData == null) throw Exception('Failed to encode ZIP');
 
       // Determine save path
@@ -569,7 +693,8 @@ class ExportQueueService extends ChangeNotifier {
         if (!dir.existsSync()) {
           dir.createSync(recursive: true);
         }
-        final fileName = '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
+        final fileName =
+            '${job.name.replaceAll(RegExp(r'[^\w]'), '_')}_${job.id}.zip';
         savePath = '${dir.path}/$fileName';
       } else {
         savePath = '${Directory.systemTemp.path}/${job.name}_${job.id}.zip';
@@ -583,9 +708,16 @@ class ExportQueueService extends ChangeNotifier {
       job.status = ExportStatus.completed;
       job.completedAt = DateTime.now();
       job.progress = 100;
-      _log.info('ExportQueueService', 'Job completed: ${job.name} -> ${file.path}');
-      
-      await _showNotification(notificationId, 'Export Complete', '${job.name} saved successfully.');
+      _log.info(
+        'ExportQueueService',
+        'Job completed: ${job.name} -> ${file.path}',
+      );
+
+      await _showNotification(
+        notificationId,
+        'Export Complete',
+        '${job.name} saved successfully.',
+      );
     } finally {
       // Always remove decrypted temp PDFs, even if the encode threw.
       for (final p in tempPaths) {
@@ -603,19 +735,25 @@ class ExportQueueService extends ChangeNotifier {
       job.errorMessage =
           'Exported, but ${skippedNoPassword.length} PDF(s) kept their '
           'password (no stored password): ${skippedNoPassword.join(', ')}';
-      _log.info('ExportQueueService',
-          'Remove-password skipped: ${skippedNoPassword.join(', ')}');
+      _log.info(
+        'ExportQueueService',
+        'Remove-password skipped: ${skippedNoPassword.join(', ')}',
+      );
     }
   }
 
   Future<void> _processExcelJob(ExportJob job, int notificationId) async {
     // TODO: Excel export disabled due to pdfrx v2 dependency conflict
-    throw Exception('Excel export temporarily unavailable due to package conflict. This feature will be restored in a future update.');
+    throw Exception(
+      'Excel export temporarily unavailable due to package conflict. This feature will be restored in a future update.',
+    );
   }
 
   Future<void> _processLogsJob(ExportJob job, int notificationId) async {
     // TODO: Logs export to Excel disabled due to pdfrx v2 dependency conflict
-    throw Exception('Logs export temporarily unavailable due to package conflict. This feature will be restored in a future update.');
+    throw Exception(
+      'Logs export temporarily unavailable due to package conflict. This feature will be restored in a future update.',
+    );
   }
 
   /// Isolate function to encode archive
@@ -624,7 +762,7 @@ class ExportQueueService extends ChangeNotifier {
     try {
       final archive = params['archive'] as Archive;
       final password = params['password'] as String?;
-      
+
       final encoder = ZipEncoder(password: password);
       return encoder.encode(archive);
     } catch (e) {
