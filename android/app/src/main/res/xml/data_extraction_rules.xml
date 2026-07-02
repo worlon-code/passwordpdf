@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Password manager: exclude ALL app data from Google cloud backup AND
+     device-to-device transfer. The Android Keystore key that decrypts our
+     data is device-bound and never transfers, so letting the encrypted DB /
+     prefs travel would orphan them on the new device. Cross-device recovery
+     is ONLY via the in-app passphrase Backup/Restore. (API 31+) -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
