@@ -17,8 +17,12 @@ class EncryptionService {
   );
   final LoggingService _log = LoggingService();
 
-  // Developer password for accessing sensitive info
-  static const String _developerPassword = 'Portal123!';
+  // Dev gate: salted Argon2id digest of the developer password, computed
+  // offline (tool/gen_devgate.dart). The plaintext is NOT in the binary.
+  // To rotate, recompute both with a new password.
+  static const String _devGateSalt = 'Tkgvx7HiUuLsVKG5P7l5Ow==';
+  static const String _devGateHash =
+      'nlcaX2fCk6yrlFBWPxWNZUBwuyrvxUAXnZf39zcWlg0=';
   String? _encryptionKey;
 
   // v2 AES key: Keystore-backed, minted once. Daily use, no master password.
@@ -104,15 +108,13 @@ class EncryptionService {
     }
   }
 
-  /// Get encryption key (requires developer password)
   Future<String?> getEncryptionKey(String password) async {
-    if (password != _developerPassword) {
+    if (!await verifyDeveloperPassword(password)) {
       _log.warn('EncryptionService', 'Invalid developer password');
       return null;
     }
-
     try {
-      _encryptionKey = await _secureStorage.read(key: 'encryption_key');
+      _encryptionKey = await _secureStorage.read(key: _legacyKeyStorageKey);
       _log.info('EncryptionService', 'Encryption key retrieved');
       return _encryptionKey;
     } catch (e) {
@@ -121,14 +123,51 @@ class EncryptionService {
     }
   }
 
-  /// Verify developer password
-  bool verifyDeveloperPassword(String password) {
-    final valid = password == _developerPassword;
-    _log.info(
-      'EncryptionService',
-      'Developer password verification: ${valid ? 'success' : 'failed'}',
-    );
-    return valid;
+  /// sha256 of the active v2 key, truncated to 8 bytes hex. Never the key itself.
+  Future<String?> keyFingerprint() async {
+    final b64 = await _secureStorage.read(key: _aesKeyStorageKey);
+    if (b64 == null || b64.isEmpty) return null;
+    final digest = crypto.sha256.convert(base64Decode(b64)).bytes;
+    return digest
+        .take(8)
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  /// Verify developer password (salted Argon2id, constant-time).
+  Future<bool> verifyDeveloperPassword(String password) async {
+    try {
+      final salt = base64Decode(_devGateSalt);
+      final algo = Argon2id(
+        memory: 19 * 1024,
+        parallelism: 1,
+        iterations: 2,
+        hashLength: 32,
+      );
+      final key = await algo.deriveKey(
+        secretKey: SecretKey(utf8.encode(password)),
+        nonce: salt,
+      );
+      final bytes = await key.extractBytes();
+      final expected = base64Decode(_devGateHash);
+      var diff = bytes.length ^ expected.length;
+      for (var i = 0; i < bytes.length && i < expected.length; i++) {
+        diff |= bytes[i] ^ expected[i];
+      }
+      final valid = diff == 0;
+      _log.info(
+        'EncryptionService',
+        'Developer password verification: ${valid ? 'success' : 'failed'}',
+      );
+      return valid;
+    } catch (e) {
+      _log.error(
+        'EncryptionService',
+        'Developer password verification error',
+        e,
+      );
+      return false;
+    }
   }
 
   /// Generate a random encryption key

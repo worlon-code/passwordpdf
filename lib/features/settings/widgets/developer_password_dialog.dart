@@ -5,7 +5,7 @@ import '../../../services/encryption_service.dart';
 class DeveloperPasswordDialog extends StatefulWidget {
   final String title;
   final String description;
-  
+
   const DeveloperPasswordDialog({
     super.key,
     this.title = 'Developer Access',
@@ -13,7 +13,8 @@ class DeveloperPasswordDialog extends StatefulWidget {
   });
 
   @override
-  State<DeveloperPasswordDialog> createState() => _DeveloperPasswordDialogState();
+  State<DeveloperPasswordDialog> createState() =>
+      _DeveloperPasswordDialogState();
 }
 
 class _DeveloperPasswordDialogState extends State<DeveloperPasswordDialog> {
@@ -22,15 +23,17 @@ class _DeveloperPasswordDialogState extends State<DeveloperPasswordDialog> {
   bool _obscurePassword = true;
   String? _errorMessage;
 
-  void _submit() {
+  Future<void> _submit() async {
     final password = _passwordController.text;
-    
-    if (_encryptionService.verifyDeveloperPassword(password)) {
-      Navigator.pop(context, true);
+
+    if (await _encryptionService.verifyDeveloperPassword(password)) {
+      if (mounted) Navigator.pop(context, true);
     } else {
-      setState(() {
-        _errorMessage = 'Invalid password';
-      });
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'Invalid password';
+        });
+      }
     }
   }
 
@@ -84,28 +87,25 @@ class _DeveloperPasswordDialogState extends State<DeveloperPasswordDialog> {
           onPressed: () => Navigator.pop(context, false),
           child: const Text('Cancel'),
         ),
-        ElevatedButton(
-          onPressed: _submit,
-          child: const Text('Verify'),
-        ),
+        ElevatedButton(onPressed: _submit, child: const Text('Verify')),
       ],
     );
   }
 }
 
 /// Show developer password dialog
-Future<bool> showDeveloperPasswordDialog(BuildContext context, {
+Future<bool> showDeveloperPasswordDialog(
+  BuildContext context, {
   String title = 'Developer Access',
   String description = 'Enter developer password to continue',
 }) async {
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (context) => DeveloperPasswordDialog(
-      title: title,
-      description: description,
-    ),
+    builder:
+        (context) =>
+            DeveloperPasswordDialog(title: title, description: description),
   );
-  
+
   return result ?? false;
 }

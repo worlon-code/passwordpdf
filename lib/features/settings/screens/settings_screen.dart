@@ -40,7 +40,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _appVersion = '';
   String _buildNumber = '';
 
-
   @override
   void initState() {
     super.initState();
@@ -48,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _checkBiometricSupport();
     _loadAppVersion();
   }
-  
+
   Future<void> _loadAppVersion() async {
     final info = await PackageInfo.fromPlatform();
     if (mounted) {
@@ -71,7 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final label = await _biometricService.getBiometricLabel();
     final shortLabel = label.replaceAll(' Unlock', '');
     final iconStr = await _biometricService.getBiometricIcon();
-    
+
     IconData icon = Icons.fingerprint;
     if (iconStr == 'face') icon = Icons.face;
     if (iconStr == 'remove_red_eye') icon = Icons.visibility;
@@ -86,19 +85,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-
-
   void _setupPin(BuildContext context) {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => PinEntryScreen(
-          isSetupMode: true,
-          onAuthenticated: () {
-            Navigator.pop(context);
-            setState(() {});
-          },
-        ),
+        builder:
+            (context) => PinEntryScreen(
+              isSetupMode: true,
+              onAuthenticated: () {
+                Navigator.pop(context);
+                setState(() {});
+              },
+            ),
       ),
     );
   }
@@ -106,24 +104,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _removePin(SettingsService settings) async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove PIN'),
-        content: const Text('Are you sure you want to remove your PIN?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Remove PIN'),
+            content: const Text('Are you sure you want to remove your PIN?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[400],
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Remove'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red[400], 
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
     );
 
     if (confirm == true) {
@@ -131,8 +130,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {});
     }
   }
-
-
 
   Future<void> _openDebugLogs() async {
     final authorized = await showDeveloperPasswordDialog(
@@ -144,50 +141,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (authorized && mounted) {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => const DeveloperScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const DeveloperScreen()),
       );
     }
   }
-  
+
   Future<void> _showDeveloperPasswordDialog(SettingsService settings) async {
     final controller = TextEditingController();
-    
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enable Developer Mode'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Enter developer password to unlock developer tools.'),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              obscureText: true,
-              decoration: const InputDecoration(
-                labelText: 'Developer Password',
-                border: OutlineInputBorder(),
-              ),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Enable Developer Mode'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Enter developer password to unlock developer tools.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: controller,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Developer Password',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Unlock'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Unlock'),
-          ),
-        ],
-      ),
     );
-    
+
     if (result == true) {
-      if (controller.text == 'Portal123!') {
+      if (await _encryptionService.verifyDeveloperPassword(controller.text)) {
         await settings.enableDeveloperMode();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -224,70 +222,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Choose Accent Color'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Choose Accent Color'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                ...colors.map((color) => GestureDetector(
-                  onTap: () {
-                    settings.setAccentColor(color);
-                    Navigator.pop(context);
-                  },
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: settings.accentColor == color 
-                          ? Border.all(color: Colors.white, width: 3)
-                          : null,
-                      boxShadow: settings.accentColor == color 
-                          ? [BoxShadow(color: color.withOpacity(0.5), blurRadius: 8)]
-                          : null,
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    ...colors.map(
+                      (color) => GestureDetector(
+                        onTap: () {
+                          settings.setAccentColor(color);
+                          Navigator.pop(context);
+                        },
+                        child: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: color,
+                            shape: BoxShape.circle,
+                            border:
+                                settings.accentColor == color
+                                    ? Border.all(color: Colors.white, width: 3)
+                                    : null,
+                            boxShadow:
+                                settings.accentColor == color
+                                    ? [
+                                      BoxShadow(
+                                        color: color.withOpacity(0.5),
+                                        blurRadius: 8,
+                                      ),
+                                    ]
+                                    : null,
+                          ),
+                          child:
+                              settings.accentColor == color
+                                  ? const Icon(Icons.check, color: Colors.white)
+                                  : null,
+                        ),
+                      ),
                     ),
-                    child: settings.accentColor == color 
-                        ? const Icon(Icons.check, color: Colors.white)
-                        : null,
-                  ),
-                )),
-                // More button for advanced picker
-                GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showAdvancedColorPicker(context, settings);
-                  },
-                  child: Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade200,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey.shade400),
+                    // More button for advanced picker
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showAdvancedColorPicker(context, settings);
+                      },
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.grey.shade400),
+                        ),
+                        child: const Icon(Icons.add, color: Colors.grey),
+                      ),
                     ),
-                    child: const Icon(Icons.add, color: Colors.grey),
-                  ),
+                  ],
                 ),
               ],
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+            ],
           ),
-        ],
-      ),
     );
   }
 
-  void _showAdvancedColorPicker(BuildContext context, SettingsService settings) {
+  void _showAdvancedColorPicker(
+    BuildContext context,
+    SettingsService settings,
+  ) {
     showDialog(
       context: context,
       builder: (context) => ColorPickerDialog(settings: settings),
@@ -296,87 +308,95 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _showHexColorInput(BuildContext context, SettingsService settings) {
     final controller = TextEditingController(
-      text: settings.accentColor.value.toRadixString(16).substring(2).toUpperCase(),
+      text:
+          settings.accentColor.value
+              .toRadixString(16)
+              .substring(2)
+              .toUpperCase(),
     );
-    
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enter Hex Color'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                prefixText: '#',
-                hintText: '6750A4',
-                labelText: 'Hex Color Code',
-                border: OutlineInputBorder(),
-              ),
-              maxLength: 6,
-              textCapitalization: TextCapitalization.characters,
-            ),
-            const SizedBox(height: 16),
-            StatefulBuilder(
-              builder: (context, setState) {
-                Color? previewColor;
-                try {
-                  if (controller.text.length == 6) {
-                    previewColor = Color(int.parse('FF${controller.text}', radix: 16));
-                  }
-                } catch (_) {}
-                
-                return Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    color: previewColor ?? Colors.grey.shade300,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.grey.shade400),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Enter Hex Color'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    prefixText: '#',
+                    hintText: '6750A4',
+                    labelText: 'Hex Color Code',
+                    border: OutlineInputBorder(),
                   ),
-                  child: previewColor == null 
-                      ? const Icon(Icons.help_outline, color: Colors.grey)
-                      : null,
-                );
-              },
+                  maxLength: 6,
+                  textCapitalization: TextCapitalization.characters,
+                ),
+                const SizedBox(height: 16),
+                StatefulBuilder(
+                  builder: (context, setState) {
+                    Color? previewColor;
+                    try {
+                      if (controller.text.length == 6) {
+                        previewColor = Color(
+                          int.parse('FF${controller.text}', radix: 16),
+                        );
+                      }
+                    } catch (_) {}
+
+                    return Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: previewColor ?? Colors.grey.shade300,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.grey.shade400),
+                      ),
+                      child:
+                          previewColor == null
+                              ? const Icon(
+                                Icons.help_outline,
+                                color: Colors.grey,
+                              )
+                              : null,
+                    );
+                  },
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  try {
+                    final hex = controller.text.replaceAll('#', '');
+                    if (hex.length == 6) {
+                      final color = Color(int.parse('FF$hex', radix: 16));
+                      settings.setAccentColor(color);
+                      Navigator.pop(context);
+                    }
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Invalid hex color')),
+                    );
+                  }
+                },
+                child: const Text('Apply'),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () {
-              try {
-                final hex = controller.text.replaceAll('#', '');
-                if (hex.length == 6) {
-                  final color = Color(int.parse('FF$hex', radix: 16));
-                  settings.setAccentColor(color);
-                  Navigator.pop(context);
-                }
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Invalid hex color')),
-                );
-              }
-            },
-            child: const Text('Apply'),
-          ),
-        ],
-      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('Settings'), centerTitle: true),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -398,9 +418,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           if (mode != null) settings.setThemeMode(mode);
                         },
                         items: const [
-                          DropdownMenuItem(value: ThemeMode.system, child: Text('System')),
-                          DropdownMenuItem(value: ThemeMode.light, child: Text('Light')),
-                          DropdownMenuItem(value: ThemeMode.dark, child: Text('Dark')),
+                          DropdownMenuItem(
+                            value: ThemeMode.system,
+                            child: Text('System'),
+                          ),
+                          DropdownMenuItem(
+                            value: ThemeMode.light,
+                            child: Text('Light'),
+                          ),
+                          DropdownMenuItem(
+                            value: ThemeMode.dark,
+                            child: Text('Dark'),
+                          ),
                         ],
                       ),
                     ),
@@ -425,7 +454,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Divider(height: 1),
                     // Font Size Slider
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -435,15 +467,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               const SizedBox(width: 16),
                               const Text('Font Size'),
                               const Spacer(),
-                              Text('${settings.fontSizeAdjustment}px', 
-                                style: Theme.of(context).textTheme.bodySmall),
+                              Text(
+                                '${settings.fontSizeAdjustment}px',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
                             ],
                           ),
                           SliderTheme(
                             data: SliderTheme.of(context).copyWith(
                               trackShape: const RoundedRectSliderTrackShape(),
-                              tickMarkShape: const RoundSliderTickMarkShape(tickMarkRadius: 2),
-                              activeTickMarkColor: Theme.of(context).colorScheme.primary,
+                              tickMarkShape: const RoundSliderTickMarkShape(
+                                tickMarkRadius: 2,
+                              ),
+                              activeTickMarkColor:
+                                  Theme.of(context).colorScheme.primary,
                               inactiveTickMarkColor: Colors.grey,
                             ),
                             child: Slider(
@@ -451,14 +488,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               max: 0,
                               divisions: 7,
                               value: settings.fontSizeAdjustment.toDouble(),
-                              onChanged: (val) => settings.setFontSizeAdjustment(val.toInt()),
+                              onChanged:
+                                  (val) => settings.setFontSizeAdjustment(
+                                    val.toInt(),
+                                  ),
                             ),
                           ),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Smaller', style: Theme.of(context).textTheme.bodySmall),
-                              Text('Default', style: Theme.of(context).textTheme.bodySmall),
+                              Text(
+                                'Smaller',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              Text(
+                                'Default',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
                             ],
                           ),
                         ],
@@ -473,7 +519,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         value: settings.defaultScreenIndex,
                         underline: const SizedBox(),
                         onChanged: (index) {
-                          if (index != null) settings.setDefaultScreenIndex(index);
+                          if (index != null)
+                            settings.setDefaultScreenIndex(index);
                         },
                         items: const [
                           DropdownMenuItem(value: 0, child: Text('All Docs')),
@@ -486,7 +533,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
           ),
-          
+
           const SizedBox(height: 24),
 
           // Downloads Section
@@ -513,9 +560,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               },
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Passwords Section
           _buildSectionHeader('Passwords'),
           Card(
@@ -524,15 +571,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: const Text('Password Manager'),
               subtitle: const Text('Manage saved PDF passwords'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PasswordManagerScreen()),
-              ),
+              onTap:
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const PasswordManagerScreen(),
+                    ),
+                  ),
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Security Section
           _buildSectionHeader('Security'),
           Card(
@@ -545,53 +595,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       title: Text(_biometricLabel),
                       subtitle: Text(
                         _biometricSupported
-                            ? settings.biometricEnabled ? 'Enabled' : 'Disabled'
+                            ? settings.biometricEnabled
+                                ? 'Enabled'
+                                : 'Disabled'
                             : 'Not supported',
                       ),
                       secondary: Icon(_biometricIcon),
                       value: settings.biometricEnabled,
-                      onChanged: _biometricSupported
-                          ? (value) async {
-                              if (value) {
-                                final authenticated = await _biometricService.authenticate(
-                                  localizedReason: 'Authenticate to enable $_biometricShortLabel access',
-                                );
-                                if (authenticated) {
-                                  settings.setBiometricEnabled(true);
+                      onChanged:
+                          _biometricSupported
+                              ? (value) async {
+                                if (value) {
+                                  final authenticated = await _biometricService
+                                      .authenticate(
+                                        localizedReason:
+                                            'Authenticate to enable $_biometricShortLabel access',
+                                      );
+                                  if (authenticated) {
+                                    settings.setBiometricEnabled(true);
+                                  }
+                                } else {
+                                  settings.setBiometricEnabled(false);
                                 }
-                              } else {
-                                settings.setBiometricEnabled(false);
                               }
-                            }
-                          : null,
+                              : null,
                     );
                   },
                 ),
-                
+
                 const Divider(height: 1),
-                
+
                 // PIN option
                 Consumer<SettingsService>(
                   builder: (context, settings, child) {
                     return ListTile(
                       leading: const Icon(Icons.pin),
                       title: const Text('PIN Lock'),
-                      subtitle: Text(settings.hasPinSet ? 'PIN is set' : 'No PIN set'),
-                      trailing: settings.hasPinSet
-                          ? TextButton(
-                              onPressed: () => _removePin(settings),
-                              child: const Text('Remove'),
-                            )
-                          : ElevatedButton(
-                              onPressed: () => _setupPin(context),
-                              child: const Text('Set PIN'),
-                            ),
+                      subtitle: Text(
+                        settings.hasPinSet ? 'PIN is set' : 'No PIN set',
+                      ),
+                      trailing:
+                          settings.hasPinSet
+                              ? TextButton(
+                                onPressed: () => _removePin(settings),
+                                child: const Text('Remove'),
+                              )
+                              : ElevatedButton(
+                                onPressed: () => _setupPin(context),
+                                child: const Text('Set PIN'),
+                              ),
                     );
                   },
                 ),
-                
+
                 const Divider(height: 1),
-                
+
                 // Current auth method
                 Consumer<SettingsService>(
                   builder: (context, settings, child) {
@@ -620,83 +678,109 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Auto-Lock Timer (Only visible if auth is enabled)
           Consumer<SettingsService>(
             builder: (context, settings, child) {
-               if (!settings.biometricEnabled && !settings.hasPinSet) return const SizedBox.shrink();
-               
-               return Column(
-                 crossAxisAlignment: CrossAxisAlignment.start,
-                 children: [
-                   _buildSectionHeader('Auto-Lock'),
-                   Card(
-                     child: ListTile(
-                       leading: const Icon(Icons.timer),
-                       title: const Text('Auto-Lock Timer'),
-                       subtitle: Text('${settings.autoLockTimeout} minutes'),
-                       trailing: const Icon(Icons.chevron_right),
-                       onTap: () {
-                         showDialog(
-                           context: context,
-                           builder: (context) => AlertDialog(
-                             title: const Text('Auto-Lock Timeout'),
-                             content: StatefulBuilder(
-                               builder: (context, setDialogState) {
-                                 return Column(
-                                   mainAxisSize: MainAxisSize.min,
-                                   children: [
-                                     Text('${settings.autoLockTimeout} minutes', 
-                                       style: Theme.of(context).textTheme.headlineMedium),
-                                     const SizedBox(height: 16),
-                                     Slider(
-                                       value: settings.autoLockTimeout.toDouble(),
-                                       min: 3,
-                                       max: 30,
-                                       divisions: 27, // 1 minute steps
-                                       label: '${settings.autoLockTimeout} min',
-                                       onChanged: (val) {
-                                         setDialogState(() {
-                                            settings.setAutoLockTimeout(val.toInt());
-                                         });
-                                       },
-                                     ),
-                                     Row(
-                                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                       children: [
-                                         Text('3 min', style: Theme.of(context).textTheme.bodySmall),
-                                         Text('30 min', style: Theme.of(context).textTheme.bodySmall),
-                                       ],
-                                     ),
-                                   ],
-                                 );
-                               },
-                             ),
-                             actions: [
-                               TextButton(
-                                 onPressed: () => Navigator.pop(context),
-                                 child: const Text('Done'),
-                               ),
-                             ],
-                           ),
-                         );
-                       },
-                     ),
-                   ),
-                   const SizedBox(height: 24),
-                 ],
-               );
+              if (!settings.biometricEnabled && !settings.hasPinSet)
+                return const SizedBox.shrink();
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSectionHeader('Auto-Lock'),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.timer),
+                      title: const Text('Auto-Lock Timer'),
+                      subtitle: Text('${settings.autoLockTimeout} minutes'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        showDialog(
+                          context: context,
+                          builder:
+                              (context) => AlertDialog(
+                                title: const Text('Auto-Lock Timeout'),
+                                content: StatefulBuilder(
+                                  builder: (context, setDialogState) {
+                                    return Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          '${settings.autoLockTimeout} minutes',
+                                          style:
+                                              Theme.of(
+                                                context,
+                                              ).textTheme.headlineMedium,
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Slider(
+                                          value:
+                                              settings.autoLockTimeout
+                                                  .toDouble(),
+                                          min: 3,
+                                          max: 30,
+                                          divisions: 27, // 1 minute steps
+                                          label:
+                                              '${settings.autoLockTimeout} min',
+                                          onChanged: (val) {
+                                            setDialogState(() {
+                                              settings.setAutoLockTimeout(
+                                                val.toInt(),
+                                              );
+                                            });
+                                          },
+                                        ),
+                                        Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                              '3 min',
+                                              style:
+                                                  Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                            ),
+                                            Text(
+                                              '30 min',
+                                              style:
+                                                  Theme.of(
+                                                    context,
+                                                  ).textTheme.bodySmall,
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Done'),
+                                  ),
+                                ],
+                              ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              );
             },
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Developer Section (Hidden until unlocked)
           Consumer<SettingsService>(
             builder: (context, settings, child) {
-               if (!settings.developerModeEnabled) return const SizedBox.shrink();
+              if (!settings.developerModeEnabled)
+                return const SizedBox.shrink();
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -712,7 +796,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (_) => const DeveloperScreen()),
+                              MaterialPageRoute(
+                                builder: (_) => const DeveloperScreen(),
+                              ),
                             );
                           },
                         ),
@@ -724,7 +810,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             },
           ),
-          
+
           // About Section
           _buildSectionHeader('About'),
           Card(
@@ -735,21 +821,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     return ListTile(
                       leading: const Icon(Icons.info),
                       title: const Text('App Version'),
-                      subtitle: Text(settings.developerModeEnabled 
-                          ? '$_appVersion+$_buildNumber (Dev)' 
-                          : '$_appVersion'),
+                      subtitle: Text(
+                        settings.developerModeEnabled
+                            ? '$_appVersion+$_buildNumber (Dev)'
+                            : '$_appVersion',
+                      ),
                       onTap: () {
                         if (settings.developerModeEnabled) return;
-                        
+
                         setState(() => _versionTapCount++);
-                        
+
                         if (_versionTapCount >= 5) {
                           _versionTapCount = 0;
                           _showDeveloperPasswordDialog(settings);
                         } else if (_versionTapCount >= 3) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('${5 - _versionTapCount} taps to unlock developer mode'),
+                              content: Text(
+                                '${5 - _versionTapCount} taps to unlock developer mode',
+                              ),
                               duration: const Duration(milliseconds: 800),
                             ),
                           );
@@ -765,7 +855,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   builder: (context, settings, child) {
                     return SwitchListTile(
                       title: const Text('Check for updates on startup'),
-                      subtitle: const Text('Automatically check using GitHub Releases'),
+                      subtitle: const Text(
+                        'Automatically check using GitHub Releases',
+                      ),
                       secondary: const Icon(Icons.update),
                       value: settings.autoCheckUpdates,
                       onChanged: (value) => settings.setAutoCheckUpdates(value),
@@ -773,7 +865,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
                 const Divider(height: 1),
-                
+
                 // Manual Check Tile with Red Dot
                 ListTile(
                   leading: const Icon(Icons.system_update),
@@ -783,7 +875,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 8),
                       // Red Dot Indicator
                       ValueListenableBuilder<bool>(
-                        valueListenable: Provider.of<UpdateService>(context, listen: false).updateAvailableNotifier,
+                        valueListenable:
+                            Provider.of<UpdateService>(
+                              context,
+                              listen: false,
+                            ).updateAvailableNotifier,
                         builder: (context, hasUpdate, child) {
                           if (!hasUpdate) return const SizedBox.shrink();
                           return Container(
@@ -810,9 +906,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           // Security Info
           Container(
             padding: const EdgeInsets.all(16),
@@ -844,15 +940,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Text(
                   'Your data is encrypted and stored locally. Nothing is sent to external servers.',
                   style: TextStyle(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.8),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onPrimaryContainer.withOpacity(0.8),
                   ),
                 ),
               ],
             ),
           ),
         ],
-      ),  // Close ListView
-    );  // Close Scaffold
+      ), // Close ListView
+    ); // Close Scaffold
   }
 
   Widget _buildSectionHeader(String title) {
@@ -869,9 +967,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _checkForUpdates(BuildContext context) async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Checking for updates...')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Checking for updates...')));
 
     final service = UpdateService();
     final info = await service.checkForUpdate(force: true);
@@ -883,16 +981,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       showDialog(
         context: context,
         barrierDismissible: !info.forceUpdate,
-        builder: (ctx) => UpdateAvailableDialog(
-          updateInfo: info,
-          onUpdate: () => performUpdate(ctx, info),
-        ),
+        builder:
+            (ctx) => UpdateAvailableDialog(
+              updateInfo: info,
+              onUpdate: () => performUpdate(ctx, info),
+            ),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('App is up to date based on Public Release Channel')),
+        const SnackBar(
+          content: Text('App is up to date based on Public Release Channel'),
+        ),
       );
     }
   }
 }
-
