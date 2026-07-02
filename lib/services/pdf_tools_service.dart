@@ -18,10 +18,10 @@ class PdfToolsService {
 
     final bytes = await file.readAsBytes();
     final document = PdfDocument(inputBytes: bytes, password: password);
-    final newDocument = PdfDocument();
     try {
-      // Real page import preserves text/links/form fields (no visual flatten)
-      newDocument.importPageRange(document, 0, document.pages.count - 1);
+      // Clear security on the loaded document (lossless)
+      document.security.userPassword = '';
+      document.security.ownerPassword = '';
 
       String newPath;
       if (savePath != null) {
@@ -33,12 +33,11 @@ class PdfToolsService {
         newPath = path.join(dir, '${filename}_unlocked$ext');
       }
 
-      final newBytes = await newDocument.save();
+      final newBytes = await document.save();
       await File(newPath).writeAsBytes(newBytes);
       return newPath;
     } finally {
       document.dispose();
-      newDocument.dispose();
     }
   }
 
