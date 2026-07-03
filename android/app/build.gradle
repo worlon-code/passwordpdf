@@ -34,12 +34,10 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled true
-        // Ship arm64-v8a only: drops the armeabi-v7a + x86_64 native libs (incl.
-        // pdfrx's pdfium) that tripled the APK. arm64 covers ~all devices since
-        // ~2017. NOTE: 32-bit / very old devices can no longer install.
-        ndk {
-            abiFilters 'arm64-v8a'
-        }
+        // arm64-v8a only is applied at BUILD TIME via release_build.ps1's
+        // `assembleRelease -Ptarget-platform=android-arm64` (Flutter's own ABI
+        // selection). ndk.abiFilters does NOT filter Flutter's native libs when
+        // building via gradle, so do not add an abiFilters block here.
     }
 
     buildTypes {
