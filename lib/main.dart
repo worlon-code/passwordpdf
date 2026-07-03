@@ -751,18 +751,13 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
   
   Future<void> _checkForPendingIntent() async {
-    try {
-      final media = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (media.isEmpty) return;
-      if (media.first.path == _lastConsumedIntentPath) {
-        ReceiveSharingIntent.instance.reset();
-        return;
-      }
-      _handleSharedFiles(media);
-      ReceiveSharingIntent.instance.reset();
-    } catch (e) {
-      _log.error('AppEntry', 'Error checking pending intent', e);
-    }
+    // BUG FIX (stale "Open With" reopening the previous file): do NOT re-read
+    // getInitialMedia() on resume. receive_sharing_intent caches `initialMedia`
+    // ONCE at launch and never updates it on onNewIntent, so re-reading it here
+    // replayed the ORIGINAL file. New "Open With"/share intents while the app is
+    // alive are delivered via the getMediaStream() listener registered in
+    // initState -> _handleSharedFiles. Nothing to do on resume.
+    return;
   }
 
   void _onAuthenticated() {
