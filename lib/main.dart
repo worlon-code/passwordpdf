@@ -328,6 +328,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isProcessingIntent = false;
   // Deduplication tracking: last intent path successfully consumed
   String? _lastConsumedIntentPath;
+  // Bug-1 fix: stash the cold-start initial intent + its future so the file is
+  // processed + opened AFTER auth (deterministic), never raced by the dashboard.
+  List<SharedMediaFile>? _pendingInitialMedia;
+  Future<void>? _initialIntentFuture;
   int _selectedIndex = 0; // Added for default screen index
 
   @override
@@ -339,7 +343,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     _selectedIndex = settings.defaultScreenIndex;
     
     // Check for startup intents (Cold Start)
-    _checkInitialIntents();
+    _initialIntentFuture = _checkInitialIntents();
     
     // Perform other startup checks
     // Initialize app (Settings, Auth, Permissions)
@@ -359,14 +363,14 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   Future<void> _checkInitialIntents() async {
     try {
       final sharedFiles = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (sharedFiles.isNotEmpty) {
-        final file = sharedFiles.first;
-        if (file.path != null) {
-           PendingFileOpen.filePath = file.path;
-           _lastConsumedIntentPath = file.path;
-           // Fix for "Zombie Intent": Clear it so it doesn't reappear on resume
-           ReceiveSharingIntent.instance.reset();
-        }
+      if (sharedFiles.isNotEmpty && sharedFiles.first.path != null) {
+        // Bug-1 fix: STASH the raw cold-start intent only. The full copy/normalize
+        // (content:// -> temp) + navigation happen POST-AUTH via _handleSharedFiles
+        // (see _openInitialIntentAfterAuth), so a Gmail content:// path is copied
+        // and the open can't be raced by the dashboard's one-shot consumer.
+        _pendingInitialMedia = sharedFiles;
+        _lastConsumedIntentPath = sharedFiles.first.path;
+        ReceiveSharingIntent.instance.reset(); // clear so it can't replay on resume
       }
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
@@ -668,6 +672,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         _isAuthenticated = true;
         _isLoading = false;
       });
+      _openInitialIntentAfterAuth();
     } else {
       _log.info('AppEntry', 'Authentication IS required - showing lock screen');
       setState(() {
@@ -765,6 +770,22 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     setState(() {
       _isAuthenticated = true;
     });
+    _openInitialIntentAfterAuth();
+  }
+
+  /// Bug-1 fix: after INITIAL auth, wait for the cold-start intent read, then run
+  /// it through the SAME path as warm intents (copies content:// files, sets
+  /// PendingFileOpen, navigates to the docs tab so the dashboard opens it).
+  /// Runs once at startup only (NOT on resume) so it can never replay a stale file.
+  Future<void> _openInitialIntentAfterAuth() async {
+    try {
+      await _initialIntentFuture;
+    } catch (_) {}
+    final media = _pendingInitialMedia;
+    _pendingInitialMedia = null; // consume once
+    if (media != null && media.isNotEmpty) {
+      await _handleSharedFiles(media);
+    }
   }
 
   @override
