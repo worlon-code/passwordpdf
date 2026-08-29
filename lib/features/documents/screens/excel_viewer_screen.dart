@@ -40,6 +40,7 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   bool _loading = true;
   String? _error;
   List<_SheetData> _sheets = const [];
+  final Map<String, String> _dirty = {}; // sheet!r,c -> newValue
 
   @override
   void initState() {
@@ -62,6 +63,13 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   int _maxCols(_SheetData s) =>
       s.rows.fold(0, (m, r) => r.length > m ? r.length : m);
 
+  void _saveCopy() {
+    // Handled in Step B2 with ExcelEditService
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Unsaved edits:  cells modified')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final tabs = _sheets;
@@ -71,6 +79,11 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
         appBar: AppBar(
           title: Text(widget.fileName, overflow: TextOverflow.ellipsis),
           actions: [
+            IconButton(
+              tooltip: 'Save a copy',
+              icon: const Icon(Icons.save_outlined),
+              onPressed: _dirty.isNotEmpty ? _saveCopy : null,
+            ),
             IconButton(
               tooltip: 'Open with another app',
               icon: const Icon(Icons.open_in_new),
@@ -95,18 +108,27 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
     final columns = [
       for (var c = 0; c < cols; c++)
         PlutoColumn(
-          title: _colLabel(c), field: 'c',
-          type: PlutoColumnType.text(), readOnly: true, // read-only in Part A
+          title: _colLabel(c),
+          field: 'c$c',
+          type: PlutoColumnType.text(),
+          readOnly: false, // Editable in Part B
         ),
     ];
     final rows = [
       for (final r in s.rows)
         PlutoRow(cells: {
           for (var c = 0; c < cols; c++)
-            'c': PlutoCell(value: c < r.length ? r[c] : ''),
+            'c$c': PlutoCell(value: c < r.length ? r[c] : ''),
         }),
     ];
-    return PlutoGrid(columns: columns, rows: rows);
+    return PlutoGrid(
+      columns: columns,
+      rows: rows,
+      onChanged: (PlutoGridOnChangedEvent e) {
+        _dirty['${s.name}!${e.rowIdx},${e.column.field}'] = e.value?.toString() ?? '';
+        setState(() {});
+      },
+    );
   }
 
   static String _colLabel(int i) {
