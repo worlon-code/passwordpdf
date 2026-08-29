@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../services/logging_service.dart';
-import '../../../core/theme/app_theme.dart';
 
 /// PIN entry screen for PIN authentication
 class PinEntryScreen extends StatefulWidget {
@@ -137,8 +136,8 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              AppTheme.primaryLight,
-              AppTheme.secondaryLight,
+              Theme.of(context).colorScheme.primary,
+              Theme.of(context).colorScheme.secondary,
             ],
           ),
         ),

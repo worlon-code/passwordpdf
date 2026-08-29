@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../features/authentication/widgets/animated_splash_logo.dart';
 

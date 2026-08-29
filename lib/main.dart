@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'services/cleanup_service.dart';
 import 'package:provider/provider.dart';
-import 'core/theme/app_theme.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
