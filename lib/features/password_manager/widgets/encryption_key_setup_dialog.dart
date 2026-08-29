@@ -96,6 +96,7 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = fa
                 if (success) {
                   Navigator.pop(context, true);
                 } else {
+                  keyController.clear();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Failed to set encryption key')),
                   );
