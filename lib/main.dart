@@ -327,8 +327,6 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
-  // Deduplication tracking: last intent path successfully consumed
-  String? _lastConsumedIntentPath;
   // Bug-1 fix: stash the cold-start initial intent + its future so the file is
   // processed + opened AFTER auth (deterministic), never raced by the dashboard.
   List<SharedMediaFile>? _pendingInitialMedia;
@@ -370,13 +368,12 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         // (see _openInitialIntentAfterAuth), so a Gmail content:// path is copied
         // and the open can't be raced by the dashboard's one-shot consumer.
         _pendingInitialMedia = sharedFiles;
-        _lastConsumedIntentPath = sharedFiles.first.path;
         ReceiveSharingIntent.instance.reset(); // clear so it can't replay on resume
       }
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
     } finally {
-      _log.info('AppEntry', 'Initial intent check complete - last consumed: $_lastConsumedIntentPath');
+      _log.info('AppEntry', 'Initial intent check complete');
     }
   }
 
@@ -391,9 +388,6 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     // Consume the native launch intent immediately so it cannot be re-read by
     // getInitialMedia() on a later resume (root cause of "Open With" reopening
     // the previous document).
-    if (files.isNotEmpty && files.first.path != null) {
-      _lastConsumedIntentPath = files.first.path;
-    }
     ReceiveSharingIntent.instance.reset();
     _log.info('AppEntry', 'Received ${files.length} shared files');
     
