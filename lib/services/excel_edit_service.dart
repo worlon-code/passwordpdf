@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:archive/archive.dart';
 import 'package:excel_plus/excel_plus.dart';
 import 'package:path/path.dart' as p;
 import '../features/settings/services/settings_service.dart';
@@ -17,6 +18,23 @@ class ExcelEditService {
       String sourcePath, Map<String, String> dirty) async {
     final bytes = await File(sourcePath).readAsBytes();
     final excel = Excel.decodeBytes(bytes);
+
+    // Detect potential dropped features (invariant 4)
+    final notes = <String>[];
+    try {
+      final zip = ZipDecoder().decodeBytes(bytes);
+      for (final file in zip.files) {
+        if (file.name.contains('xl/charts/') && !notes.contains('Charts may not be preserved in edited copy.')) {
+          notes.add('Charts may not be preserved in edited copy.');
+        }
+        if (file.name.contains('xl/drawings/') && !notes.contains('Images/drawings may not be preserved in edited copy.')) {
+          notes.add('Images/drawings may not be preserved in edited copy.');
+        }
+        if (file.name.contains('vbaProject.bin') && !notes.contains('VBA Macros are not preserved in edited copy.')) {
+          notes.add('VBA Macros are not preserved in edited copy.');
+        }
+      }
+    } catch (_) {}
 
     dirty.forEach((k, v) {
       final bang = k.indexOf('!');
@@ -41,7 +59,7 @@ class ExcelEditService {
 
     // Invariant 3: verify the copy round-trips the edits before reporting success.
     final verified = await _verify(copyPath, dirty);
-    return ExcelSaveResult(copyPath, verified, const []);
+    return ExcelSaveResult(copyPath, verified, notes);
   }
 
   Future<bool> _verify(String copyPath, Map<String, String> dirty) async {

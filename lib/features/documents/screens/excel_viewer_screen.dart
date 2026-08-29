@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:pluto_grid/pluto_grid.dart';
 import 'package:excel_plus/excel_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/excel_edit_service.dart';
 
 /// Plain, isolate-safe representation of a parsed workbook.
@@ -64,6 +65,31 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   int _maxCols(_SheetData s) =>
       s.rows.fold(0, (m, r) => r.length > m ? r.length : m);
 
+  Future<void> _checkEditingNotice() async {
+    final prefs = await SharedPreferences.getInstance();
+    final shown = prefs.getBool('office_editing_notice_shown') ?? false;
+    if (!shown && mounted) {
+      await prefs.setBool('office_editing_notice_shown', true);
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(Icons.info_outline, size: 36),
+          title: const Text('Office Document Editing'),
+          content: const Text(
+            'In-app editing creates a safe copy and preserves cell values. Complex features (charts, macros, embedded drawings) may not be retained. Your original file remains untouched.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Got it'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   Future<void> _saveCopy() async {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(const SnackBar(content: Text('Saving copy with edits…')));
@@ -74,6 +100,39 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
       );
       final savedName = result.savedPath.split(Platform.pathSeparator).last;
       if (result.verified) {
+        if (result.notes.isNotEmpty && mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Save Notice'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Your edits were verified and saved to a copy. Note:'),
+                  const SizedBox(height: 8),
+                  for (final note in result.notes)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2.0),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+                          const SizedBox(width: 6),
+                          Expanded(child: Text(note, style: const TextStyle(fontSize: 13))),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Dismiss'),
+                ),
+              ],
+            ),
+          );
+        }
         messenger.showSnackBar(
           SnackBar(
             content: Text('Saved a copy: $savedName'),
@@ -200,6 +259,7 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
       rows: rows,
       onChanged: (PlutoGridOnChangedEvent e) {
         _dirty['${s.name}!${e.rowIdx},${e.column.field}'] = e.value?.toString() ?? '';
+        _checkEditingNotice();
         setState(() {});
       },
     );
