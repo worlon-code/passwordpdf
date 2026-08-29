@@ -503,6 +503,106 @@ class DocumentService {
   /// Get all items
   List<DocumentItem> getAllItems() => List.unmodifiable(_items);
 
+  /// Merge document items from a backup into the current library. Id-preserving,
+  /// relationship-repairing: NEVER overwrites or orphans an existing item.
+  ///  - dedup: files by sourcePath, folders by (name + parentId);
+  ///  - added items get FRESH unique ids;
+  ///  - folder membership (fileIds) reconstructed from resolved parentId,
+  ///    unioned with existing children;
+  ///  - refs that resolve to nothing are dropped (dangling parent -> unorganized).
+  /// Returns the number of items added.
+  Future<int> mergeFromBackup(List<DocumentItem> incoming) async {
+    await initialize();
+
+    final existingIds = _items.map((e) => e.id).toSet();
+    final existingFileByPath = <String, DocumentItem>{};
+    final existingFolderByKey = <String, DocumentItem>{};
+    for (final e in _items) {
+      if (e.isFolder) {
+        existingFolderByKey['${e.name}|${e.parentId ?? ''}'] = e;
+      } else if (e.sourcePath != null && e.sourcePath!.isNotEmpty) {
+        existingFileByPath[e.sourcePath!] = e;
+      }
+    }
+
+    final usedIds = {...existingIds};
+    final idMap = <String, String>{};
+    final additions = <String, DocumentItem>{};
+    var seq = DateTime.now().microsecondsSinceEpoch;
+    String freshId() {
+      var c = (seq++).toString();
+      while (usedIds.contains(c)) {
+        c = (seq++).toString();
+      }
+      usedIds.add(c);
+      return c;
+    }
+
+    for (final item in incoming) {
+      DocumentItem? dup;
+      if (item.isFolder) {
+        dup = existingFolderByKey['${item.name}|${item.parentId ?? ''}'];
+      } else if (item.sourcePath != null && item.sourcePath!.isNotEmpty) {
+        dup = existingFileByPath[item.sourcePath!];
+      }
+      if (dup != null) {
+        idMap[item.id] = dup.id;
+        continue;
+      }
+      final fid = freshId();
+      idMap[item.id] = fid;
+      additions[fid] = item;
+    }
+    if (additions.isEmpty) return 0;
+
+    String? resolveRef(String? ref) {
+      if (ref == null) return null;
+      final m = idMap[ref];
+      if (m != null) return m;
+      if (existingIds.contains(ref)) return ref;
+      return null;
+    }
+
+    final built = <DocumentItem>[];
+    additions.forEach((fid, item) {
+      built.add(DocumentItem(
+        id: fid,
+        name: item.name,
+        type: item.type,
+        sourcePath: item.sourcePath,
+        parentId: resolveRef(item.parentId),
+        fileIds: const [],
+        size: item.size,
+        createdAt: item.createdAt,
+        modifiedAt: item.modifiedAt,
+        isImported: item.isImported,
+        isImportedFile: item.isImportedFile,
+        isNew: item.isNew,
+        missingOnDevice: item.missingOnDevice,
+        addedAt: item.addedAt,
+        lastSynced: item.lastSynced,
+      ));
+    });
+    _items.addAll(built);
+
+    final touched = <String>{};
+    for (final f in built) {
+      if (f.isFile && f.parentId != null) touched.add(f.parentId!);
+    }
+    for (final folderId in touched) {
+      final idx = _items.indexWhere((e) => e.id == folderId && e.isFolder);
+      if (idx == -1) continue;
+      final kids = <String>{..._items[idx].fileIds};
+      for (final e in _items) {
+        if (e.isFile && e.parentId == folderId) kids.add(e.id);
+      }
+      _items[idx] = _items[idx].copyWith(fileIds: kids.toList());
+    }
+
+    await _saveDocuments();
+    return built.length;
+  }
+
   /// Get all folders
   List<DocumentItem> getFolders() {
     return _items.where((item) => item.isFolder).toList();
