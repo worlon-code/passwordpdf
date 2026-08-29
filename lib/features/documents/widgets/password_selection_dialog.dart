@@ -227,6 +227,7 @@ class _PasswordSelectionDialogState extends State<PasswordSelectionDialog> {
             else ...[
               TextField(
                 controller: _passwordController,
+                autofocus: true,
                 obscureText: _obscurePassword,
                 decoration: InputDecoration(
                   labelText: 'Password',
