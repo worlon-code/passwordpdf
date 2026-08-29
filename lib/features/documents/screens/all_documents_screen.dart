@@ -1078,7 +1078,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
           if (_isFolderView)
             Container(
                width: double.infinity,
-               color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+               color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                child: Row(
                  children: [
@@ -1218,7 +1218,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.blue.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.folder, color: Colors.blue, size: 28),
@@ -1256,7 +1256,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: _getFileColor(name).withOpacity(0.1),
+                  color: _getFileColor(name).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(_getFileIcon(name), color: _getFileColor(name), size: 28),
@@ -1271,7 +1271,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text('$date • $size'),
-        tileColor: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+        tileColor: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.1) : null,
         onTap: () => _handleFileTap(file),
         onLongPress: () => _toggleSelection(file.path),
         trailing: _isSelectionMode 

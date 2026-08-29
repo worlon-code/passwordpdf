@@ -206,7 +206,7 @@ class _FolderSelectionDialogState extends State<FolderSelectionDialog> {
           title: Row(
             children: [
               Icon(Icons.folder, 
-                color: depth == 0 ? Colors.blue : Colors.blue.withOpacity(0.7),
+                color: depth == 0 ? Colors.blue : Colors.blue.withValues(alpha: 0.7),
                 size: 20,
               ),
               const SizedBox(width: 8),

@@ -264,7 +264,7 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
                             },
                             selectedColor: level == 'ALL' 
                                 ? Theme.of(context).colorScheme.primaryContainer
-                                : _getLevelColor(level).withOpacity(0.3),
+                                : _getLevelColor(level).withValues(alpha: 0.3),
                           ),
                         ),
                     ],
@@ -329,7 +329,7 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -382,7 +382,7 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(16),
-          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+          color: Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.5),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

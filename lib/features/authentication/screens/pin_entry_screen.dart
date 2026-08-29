@@ -162,7 +162,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -190,7 +190,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
               Text(
                 _message,
                 style: TextStyle(
-                  color: _hasError ? Colors.red.shade200 : Colors.white.withOpacity(0.8),
+                  color: _hasError ? Colors.red.shade200 : Colors.white.withValues(alpha: 0.8),
                   fontSize: 16,
                 ),
                 textAlign: TextAlign.center,
@@ -292,7 +292,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             border: Border.all(
-              color: Colors.white.withOpacity(0.3),
+              color: Colors.white.withValues(alpha: 0.3),
               width: 1,
             ),
           ),

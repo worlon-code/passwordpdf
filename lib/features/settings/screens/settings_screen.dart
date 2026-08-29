@@ -250,7 +250,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 settings.accentColor == color
                                     ? [
                                       BoxShadow(
-                                        color: color.withOpacity(0.5),
+                                        color: color.withValues(alpha: 0.5),
                                         blurRadius: 8,
                                       ),
                                     ]
@@ -940,7 +940,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(
                     color: Theme.of(
                       context,
-                    ).colorScheme.onPrimaryContainer.withOpacity(0.8),
+                    ).colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
                   ),
                 ),
               ],

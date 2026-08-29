@@ -2559,7 +2559,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                         Icon(
                           Icons.folder_open,
                           size: 80,
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
                         ),
                         const SizedBox(height: 16),
                         Text(_filterType == 'All' ? 'Folder is empty' : 'No $_filterType files found'),
@@ -2617,7 +2617,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+      color: Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.3),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -2751,7 +2751,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           Icon(
             Icons.folder_outlined,
             size: 120,
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 24),
           Text(
@@ -2782,7 +2782,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     return RepaintBoundary(
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
-      color: isSelected ? Colors.blue.withOpacity(0.1) : null,
+      color: isSelected ? Colors.blue.withValues(alpha: 0.1) : null,
       child: InkWell(
         onLongPress: () {
           setState(() {
@@ -2818,7 +2818,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
+                  color: Colors.blue.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Icon(Icons.folder, color: Colors.blue, size: 28),
@@ -2972,7 +2972,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         color: isSelected 
             ? Theme.of(context).colorScheme.primaryContainer 
-            : (isMissing ? Colors.red.withOpacity(0.05) : null),
+            : (isMissing ? Colors.red.withValues(alpha: 0.05) : null),
         child: InkWell(
           onLongPress: () {
             _toggleFileSelection(file.id);
@@ -3001,8 +3001,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: isMissing 
-                        ? Colors.red.withOpacity(0.1) 
-                        : fileColor.withOpacity(0.1),
+                        ? Colors.red.withValues(alpha: 0.1) 
+                        : fileColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(
