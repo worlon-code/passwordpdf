@@ -373,21 +373,6 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _performStartupChecks() async {
-     // NOTE: We do not delay encryption setup here because we want to allow the UI to load first.
-     // However, we can perform non-blocking checks or just rely on MainScreen's checks.
-     // The original design had checks here, but we moved them to MainScreen for better context access.
-     // But since we call it in initState, we'll keep a minimal version or empty if MainScreen handles it.
-     // Actually, looking at previous steps, we moved logic to MainScreen. 
-     // So we can make this empty or just remove the call in initState if it's redundant.
-     // But to fix the build error without extensive refactoring, we define it.
-     
-     // Wait for layout
-     await Future.delayed(Duration.zero);
-  }
-
-
-
   Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
     if (_isProcessingIntent) {
