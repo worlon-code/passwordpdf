@@ -11,6 +11,7 @@ import '../../../services/document_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/docs_settings_backup_service.dart';
 import '../../documents/screens/file_system_browser.dart';
+import '../../documents/screens/document_dashboard_screen.dart';
 import '../services/settings_service.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
