@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
@@ -200,12 +201,19 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
             ),
           );
 
-    return Scaffold(
-      backgroundColor: widget.isOverlay ? Colors.transparent : null,
-      body: Container(
-        decoration: decoration,
-        child: SafeArea(
-          child: _showPinEntry ? _buildPinEntry() : _buildBiometricAuth(),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+        backgroundColor: widget.isOverlay ? Colors.transparent : null,
+        body: Container(
+          decoration: decoration,
+          child: SafeArea(
+            child: _showPinEntry ? _buildPinEntry() : _buildBiometricAuth(),
+          ),
         ),
       ),
     );
