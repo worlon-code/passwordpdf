@@ -533,9 +533,14 @@ class DocumentService {
     final existingIds = _items.map((e) => e.id).toSet();
     final existingFileByPath = <String, DocumentItem>{};
     final existingFolderByKey = <String, DocumentItem>{};
+    final existingFolderByPath = <String, DocumentItem>{};
+    
     for (final e in _items) {
       if (e.isFolder) {
-        existingFolderByKey['${e.name}|${e.parentId ?? ''}'] = e;
+        existingFolderByKey['${e.name.toLowerCase()}|${e.parentId ?? ''}'] = e;
+        if (e.sourcePath != null && e.sourcePath!.isNotEmpty) {
+          existingFolderByPath[e.sourcePath!] = e;
+        }
       } else if (e.sourcePath != null && e.sourcePath!.isNotEmpty) {
         existingFileByPath[e.sourcePath!] = e;
       }
@@ -554,22 +559,37 @@ class DocumentService {
       return c;
     }
 
+    // Pass 1: Match duplicates & allocate fresh IDs for additions
     for (final item in incoming) {
       DocumentItem? dup;
       if (item.isFolder) {
-        dup = existingFolderByKey['${item.name}|${item.parentId ?? ''}'];
+        if (item.sourcePath != null && item.sourcePath!.isNotEmpty) {
+          dup = existingFolderByPath[item.sourcePath!];
+        }
+        dup ??= existingFolderByKey['${item.name.toLowerCase()}|${item.parentId ?? ''}'];
       } else if (item.sourcePath != null && item.sourcePath!.isNotEmpty) {
         dup = existingFileByPath[item.sourcePath!];
       }
+
       if (dup != null) {
         idMap[item.id] = dup.id;
-        continue;
+        // If the backup item is an imported folder with sync, ensure isImported & sourcePath are preserved
+        if (item.isFolder && item.isImported && item.sourcePath != null) {
+          final dupIdx = _items.indexWhere((e) => e.id == dup!.id);
+          if (dupIdx != -1) {
+            _items[dupIdx] = _items[dupIdx].copyWith(
+              isImported: true,
+              sourcePath: item.sourcePath,
+              lastSynced: item.lastSynced ?? _items[dupIdx].lastSynced,
+            );
+          }
+        }
+      } else {
+        final fid = freshId();
+        idMap[item.id] = fid;
+        additions[fid] = item;
       }
-      final fid = freshId();
-      idMap[item.id] = fid;
-      additions[fid] = item;
     }
-    if (additions.isEmpty) return 0;
 
     String? resolveRef(String? ref) {
       if (ref == null) return null;
@@ -579,6 +599,21 @@ class DocumentService {
       return null;
     }
 
+    // Pass 2: If existing files were unorganized but backup specifies a parent folder, update parent
+    for (final item in incoming) {
+      if (item.parentId != null) {
+        final resolvedParent = resolveRef(item.parentId);
+        final mappedId = idMap[item.id];
+        if (mappedId != null && resolvedParent != null) {
+          final idx = _items.indexWhere((e) => e.id == mappedId);
+          if (idx != -1 && _items[idx].parentId == null) {
+            _items[idx] = _items[idx].copyWith(parentId: resolvedParent);
+          }
+        }
+      }
+    }
+
+    // Pass 3: Build and append new items with fully resolved parent references
     final built = <DocumentItem>[];
     additions.forEach((fid, item) {
       built.add(DocumentItem(
@@ -601,18 +636,16 @@ class DocumentService {
     });
     _items.addAll(built);
 
-    final touched = <String>{};
-    for (final f in built) {
-      if (f.isFile && f.parentId != null) touched.add(f.parentId!);
-    }
-    for (final folderId in touched) {
-      final idx = _items.indexWhere((e) => e.id == folderId && e.isFolder);
-      if (idx == -1) continue;
-      final kids = <String>{..._items[idx].fileIds};
-      for (final e in _items) {
-        if (e.isFile && e.parentId == folderId) kids.add(e.id);
+    // Pass 4: Reconstruct fileIds for all folders in _items
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].isFolder) {
+        final folderId = _items[i].id;
+        final kids = _items
+            .where((e) => e.isFile && e.parentId == folderId)
+            .map((e) => e.id)
+            .toList();
+        _items[i] = _items[i].copyWith(fileIds: kids);
       }
-      _items[idx] = _items[idx].copyWith(fileIds: kids.toList());
     }
 
     await _saveDocuments();

@@ -35,8 +35,11 @@ class DocsSettingsBackupService {
       throw const FormatException('Passphrase required');
     }
     await _docs.initialize();
+    final allItems = _docs.getAllItems();
     final documentsJson =
-        _docs.getAllItems().map((d) => d.toJson()).toList(growable: false);
+        allItems.map((d) => d.toJson()).toList(growable: false);
+    _log.info('DocsSettingsBackupService',
+        'Creating backup with ${documentsJson.length} items (${allItems.where((i) => i.isFolder).length} folders, ${allItems.where((i) => i.isFile).length} files)');
 
     final recents = await _storage.getRecentDocuments();
     final recentsJson = recents.map((r) {
@@ -186,6 +189,12 @@ class DocsSettingsBackupService {
     await _settings.importBackupMap(settingsMap);
     final docsAdded = await _docs.mergeFromBackup(docItems);
     final recentsAdded = await _mergeRecents(recentMaps);
+    await _docs.initialize();
+    try {
+      await _docs.syncAllFolders();
+    } catch (e) {
+      _log.error('DocsSettingsBackupService', 'Post-restore sync failed', e);
+    }
 
     return DocsRestoreResult(
       settingsApplied: true,
