@@ -1,7 +1,4 @@
 import 'dart:async';
-import 'package:flutter/services.dart';
-import 'package:passwordpdf_manager/services/pdf_password_service.dart';
-import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
 import 'package:passwordpdf_manager/features/documents/services/office_open_router.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -448,19 +445,9 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       if (result.success && result.importItem != null) {
         _log.info('AllDocumentsScreen', 'Imported: $fileName');
         
-        // 3. Open the imported file with password
-        final passwordService = PdfPasswordService();
-        final storedPassword = await passwordService.getPasswordForDocument(result.importItem!.sourcePath!);
-        
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => PdfViewerScreen(
-              filePath: result.importItem!.sourcePath!,
-              fileName: result.importItem!.name,
-              password: storedPassword,
-            ),
-          ),
-        );
+        // 3. Open the imported file via central router
+        if (!mounted) return;
+        await openDocument(context, result.importItem!.sourcePath!);
       } else if (result.isDuplicate) {
         // Bug Fix: Check for multiple duplicates
         final duplicates = result.duplicates ?? [];

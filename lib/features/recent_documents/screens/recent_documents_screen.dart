@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../../models/recent_document_model.dart';
 import '../services/recent_service.dart';
-import 'dart:io';
 import 'package:intl/intl.dart';
-import '../../documents/screens/pdf_viewer_screen.dart';
+import '../../documents/services/office_open_router.dart';
 
 /// Recent documents screen
 class RecentDocumentsScreen extends StatefulWidget {
@@ -64,16 +63,7 @@ class _RecentDocumentsScreenState extends State<RecentDocumentsScreen> {
   }
 
   Future<void> _openDocument(RecentDocumentModel document) async {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => PdfViewerScreen(
-          filePath: document.filePath,
-          fileName: document.fileName,
-          password: '',
-        ),
-      ),
-    );
+    await openDocument(context, document.filePath);
   }
 
   String _formatFileSize(int bytes) {
