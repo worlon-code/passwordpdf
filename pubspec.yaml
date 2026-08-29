@@ -43,6 +43,12 @@ dependencies:
   receive_sharing_intent: ^1.8.1
   open_filex: ^4.3.2
   shimmer: ^3.0.0
+
+  # Office (Word/Excel) view + edit — MIT/Apache/BSD, fully offline. VERIFY latest majors on pub.dev.
+  excel_plus: ^0.0.3         # .xlsx parse+write; reuses untouched parts on save (safer round-trip)
+  pluto_grid: ^8.0.0         # native editable grid UI (MIT)
+  docx_file_viewer: ^1.0.2   # pure-Flutter .docx viewer widget `DocxView` (Apache-2.0)
+  docx_creator: ^1.2.7       # .docx read (DocxReader) + PDF export (PdfExporter) + edit; pure Dart (MIT)
   
   # Update System
   dio: ^5.7.0
