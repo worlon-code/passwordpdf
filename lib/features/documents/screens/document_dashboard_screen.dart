@@ -69,6 +69,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
+  StreamSubscription? _folderSub;
   
   // Performance cache for folder counts (avoid repeated service calls during scroll)
   final Map<String, (int fileCount, int folderCount)> _folderCountCache = {};
@@ -153,6 +154,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   @override
   void dispose() {
     DocumentDashboardScreen.currentState = null; // Deregister
+    _folderSub?.cancel();
     _syncTimer?.cancel();
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
