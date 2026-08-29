@@ -17,6 +17,7 @@ class DocumentSearchDelegate extends SearchDelegate<DocumentItem?> {
           icon: const Icon(Icons.clear),
           onPressed: () {
             query = '';
+            FocusScope.of(context).unfocus();
             showSuggestions(context);
           },
         ),
