@@ -13,7 +13,6 @@ import '../../settings/services/settings_service.dart';
 import '../../documents/screens/file_system_browser.dart';
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
-import '../widgets/restore_file_picker.dart';
 
 /// Password manager screen to view and manage saved passwords
 class PasswordManagerScreen extends StatefulWidget {

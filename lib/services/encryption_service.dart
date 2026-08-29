@@ -4,7 +4,6 @@ import 'package:crypto/crypto.dart' as crypto; // sha256 key-health token
 import 'package:shared_preferences/shared_preferences.dart'; // v2 key-health mirror (survives Keystore wipe)
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'logging_service.dart';
 
 /// Service for encryption key management
