@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docx_creator/docx_creator.dart';
 import 'package:passwordpdf_manager/services/word_edit_service.dart';
@@ -11,7 +11,7 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('word_edit_test_');
-    testFilePath = '/sample.docx';
+    testFilePath = '${tempDir.path}/sample.docx';
 
     final doc = docx()
         .p('First initial paragraph')
