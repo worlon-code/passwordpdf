@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
@@ -377,6 +378,18 @@ class _DebugLogsScreenState extends State<DebugLogsScreen> {
           fontSize: 12,
           color: Colors.grey.shade600,
         ),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.copy, size: 18),
+        tooltip: 'Copy log',
+        onPressed: () {
+          Clipboard.setData(ClipboardData(
+            text: '[${log.timestamp.toIso8601String()}] [${log.level}] ${log.tag}: ${log.message}',
+          ));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Log copied'), duration: Duration(seconds: 1)),
+          );
+        },
       ),
       children: [
         Container(
