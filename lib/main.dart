@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
+import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
 import 'services/permission_service.dart';
