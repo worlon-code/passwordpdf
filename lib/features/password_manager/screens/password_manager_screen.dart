@@ -238,11 +238,18 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   List<PasswordModel> _passwords = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  final FocusNode _searchFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _loadPasswords();
+  }
+
+  @override
+  void dispose() {
+    _searchFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPasswords() async {
@@ -380,6 +387,11 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         title: const Text('Password Manager'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'Search',
+            onPressed: () => _searchFocusNode.requestFocus(),
+          ),
+          IconButton(
             icon: const Icon(Icons.backup_outlined),
             tooltip: 'Backup',
             onPressed: _onBackup,
@@ -397,6 +409,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: TextField(
+              focusNode: _searchFocusNode,
               onChanged: (value) {
                 setState(() {
                   _searchQuery = value;
