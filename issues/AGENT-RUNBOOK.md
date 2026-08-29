@@ -41,14 +41,14 @@ Perform the "Manual" steps listed in the cards of that phase and confirm the exp
 13. Task 11 — share action  ·  14. Task 12 — file-info menu  ·  15. Task 13 — No-Password empty attempt
 16. Task 13 — empty-zip-pw + folder cache  ·  17. Task 8 — orElse move/select firstWhere  ·  18. Task 9 — rename-import substring guard
 19. Task 20 — biometricOnly  ·  20. Task 21 — auto-lock timing  ·  21. Task 23 — SQL whitelist
-22. Task 24 — redact logs  ·  23. Task 25 — scope storage perms  ·  24. Task 26 — PDF-tools fidelity
+22. Task 24 — redact logs  ·  24. Task 26 — PDF-tools fidelity
 25. Task 28 — delete dead viewer stub  ·  26. Task 28a — double _saveDocuments  ·  27. Task 28b — dead prefetch
 28. Task 28c — export dispose()  ·  29. Task 28d — dispose dev-screen controllers  ·  30. Task 28e — leaking inline controller
 
 **Phase boundaries for smoke-tests:** after Prompt 9 (Phase 0 done), after Prompt 18 (Phase 1 done), after Prompt 23 (Phase 3 done), after Prompt 24 (Phase 4), after Prompt 30 (Phase 5).
 
 ## DO NOT ATTEMPT — senior-review only (skip; never edit)
-Tasks **15, 16, 17, 18, 19** (the AES crypto migration), **27** (export remove-password — cross-file dependency), **30 & 31** (store refactor brief). These are excluded from the worklist on purpose.
+Tasks **15, 16, 17, 18, 19** (the AES crypto migration), **25** (scope storage permissions / drop MANAGE_EXTERNAL_STORAGE — mandatory for sideloaded scanner), **27** (export remove-password — cross-file dependency), **30 & 31** (store refactor brief). These are excluded from the worklist on purpose.
 
 ## STOP conditions (halt and report; do not improvise)
 - A "Locate" block is not found verbatim. - `fvm flutter analyze` fails or a test fails (revert first). - A card is flagged `Low-model-safe: No`. - A device smoke-test check fails, or no device is connected when one is due. - Any ambiguity, missing API/method, or a change that would touch stored user data outside the card's own verification step.
@@ -2936,100 +2936,18 @@ Do not touch anything outside this card.
 
 ## Prompt 23 — Task 25 — Scope storage permissions / drop MANAGE_EXTERNAL_STORAGE
 
-````text
-Apply ONE task card now, following all the standing rules. Find the Locate block by EXACT
-string match; if it is not present verbatim, STOP and say "anchor not found". After applying,
-run vm flutter analyze on the touched file(s) and any test the card gives, then report.
-Do not touch anything outside this card.
+### Prompt 23 / Task 25 — MOVED TO "DO NOT ATTEMPT"
 
-### Task 25 — Scope storage permissions / drop MANAGE_EXTERNAL_STORAGE
+This card previously proposed scoping storage permissions by dropping
+`MANAGE_EXTERNAL_STORAGE`. That is a LANDMINE for this app:
 
-- **Roadmap:** Phase (security), step 25 (from fix-order.md)
-- **Type:** Security · **Effort:** M · **Risk if done wrong:** high · **Low-model-safe:** With-care (behavioral)
-- **File(s):** `lib/services/permission_service.dart` (~lines 14–100 as of writing — VERIFY before editing; line numbers shift after earlier edits)
-- **Goal:** Stop requesting the all-files `MANAGE_EXTERNAL_STORAGE` permission and use scoped, version-appropriate media/storage permissions instead (Android 13+ `READ_MEDIA_*`, legacy `READ_EXTERNAL_STORAGE`), so the app stays within Google Play policy.
+- Sideloaded (not on Play), so scoped-storage policy does not apply here.
+- The device-file scanner (`lib/services/device_document_service.dart`)
+  requires all-files access to find PDFs / docs / xlsx in arbitrary paths.
+- Dropping the permission bricks the primary scan feature with no user recourse.
 
-**Step 1 — Locate.** In `lib/services/permission_service.dart`, find this EXACT block (the Android branch of `requestAllPermissions`):
-```dart
-    if (Platform.isAndroid) {
-      permissions.addAll([
-        Permission.storage,
-        Permission.manageExternalStorage,
-        Permission.notification,
-      ]);
-    } else if (Platform.isIOS) {
-```
+**Do NOT apply. See `MEMORY.md` "MANAGE_EXTERNAL_STORAGE mandatory".**
 
-**Step 2 — Change.** Replace it with:
-```dart
-    if (Platform.isAndroid) {
-      // Scoped permissions only. On Android 13+ (API 33) READ_EXTERNAL_STORAGE
-      // is ignored and the granular READ_MEDIA_* permissions apply instead;
-      // requesting all of them is safe (the OS grants only what's relevant).
-      // We intentionally DO NOT request MANAGE_EXTERNAL_STORAGE (all-files
-      // access) — it triggers a Google Play sensitive-permission policy review
-      // and is unnecessary for this app's use of the file picker / scoped dirs.
-      permissions.addAll([
-        Permission.storage,        // legacy READ/WRITE_EXTERNAL_STORAGE (<= API 32)
-        Permission.photos,         // READ_MEDIA_IMAGES (API 33+)
-        Permission.notification,
-      ]);
-    } else if (Platform.isIOS) {
-```
-
-**Step 3 — Locate.** In `lib/services/permission_service.dart`, find this EXACT block (the Android check in `areAllPermissionsGranted`):
-```dart
-    final storage = await Permission.storage.isGranted;
-    _log.debug(_tag, 'Storage permission: $storage');
-    
-    // For Android 11+, check manage external storage
-    final manageStorage = await Permission.manageExternalStorage.isGranted;
-    _log.debug(_tag, 'Manage external storage permission: $manageStorage');
-    
-    return storage || manageStorage;
-```
-
-**Step 4 — Change.** Replace it with:
-```dart
-    final storage = await Permission.storage.isGranted;
-    _log.debug(_tag, 'Storage permission (legacy): $storage');
-    
-    // Android 13+ uses granular media permissions instead of storage.
-    final media = await Permission.photos.isGranted;
-    _log.debug(_tag, 'Media (photos) permission: $media');
-    
-    return storage || media;
-```
-
-**Step 5 — Locate.** In `lib/services/permission_service.dart`, find this EXACT block (inside `getPermissionStatus`):
-```dart
-    status['storage'] = (await Permission.storage.status).toString();
-    status['manageExternalStorage'] = (await Permission.manageExternalStorage.status).toString();
-    
-    _log.info(_tag, 'Permission status: $status');
-```
-
-**Step 6 — Change.** Replace it with:
-```dart
-    status['storage'] = (await Permission.storage.status).toString();
-    status['photos'] = (await Permission.photos.status).toString();
-    
-    _log.info(_tag, 'Permission status: $status');
-```
-
-**Why:** `MANAGE_EXTERNAL_STORAGE` (all-files access) is a Google Play sensitive permission that requires a special declaration/review and is disallowed unless the app's core function is file management; scoped permissions (`READ_EXTERNAL_STORAGE` pre-33, `READ_MEDIA_*` on 33+) cover the picker-based workflow and keep the app policy-compliant. There must be NO remaining reference to `manageExternalStorage` in Dart after this change.
-
-**How to test:**
-- *Static:* `fvm flutter analyze` must be clean for `lib/services/permission_service.dart`. Grep `lib/` for `manageExternalStorage` → expect ZERO matches.
-- *Manual:*
-  1. Fresh-install on an Android 13+ device → on first launch expect the media/notification permission prompts, and expect NO "Allow access to manage all files" full-screen settings page.
-  2. Open a PDF via the in-app file picker and save/export to the chosen download location → expect it to still work (file picker grants per-file access regardless of these permissions).
-  3. On an Android 12 (or lower) device → expect the legacy storage prompt and the same picker/export flow to work.
-
-**Done when:** The app no longer requests all-files access, fresh installs on Android 13+ only see scoped media + notification prompts, and the open/save/export flows still function on both Android 12 and 13+.
-
-**⚠️ Cautions:** This is behavioral and policy-sensitive — also remove the matching `<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>` from `android/app/src/main/AndroidManifest.xml` (out of scope for these Dart cards but REQUIRED for the policy fix to take effect) and have a senior reviewer confirm no feature relies on browsing arbitrary directories outside the picker before shipping. Do not batch with Task 21 even though both touch picker-adjacent behavior. `Permission.photos` maps to `READ_MEDIA_IMAGES`; if the app must also open audio/video, add `Permission.audios`/`Permission.videos` accordingly.
-````
 
 ---
 
