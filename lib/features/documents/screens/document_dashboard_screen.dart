@@ -1027,32 +1027,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     int processedFiles = 0;
     
     try {
-        // Create Root Folder (with sourcePath for Sync!)
-        // Note: createFolder doesn't support sourcePath param yet, we might need to update it or update item after creation.
-        // DocumentService.createFolder returns DocumentItem.
-        
+        // Create root folder, import files, then persist sourcePath on the root for Sync.
         var rootFolder = await _docService.createFolder(
            finalFolderName,
            parentId: _currentFolderId,
         );
-        
-        // Update root folder with sourcePath (Manual update via service private access workaround or update API)
-        // Since we can't easily change service signature right now, we can update the item in memory and save.
-        // Actually, let's check DocumentService.createFolder.
-        // It likely doesn't have sourcePath. We should add it or use updateItem? 
-        // Let's assume we can update it later. Wait, we need it.
-        // Quick Hack: Modify local item and call _saveDocuments() logic? No, too risky.
-        // Better: We will rely on "Zero Copy" where files have sourcePath. 
-        // But for "Sync" feature, we need *Folder* to have sourcePath.
-        // I will add a method `_docService.updateFolderSourcePath(id, path)` or just handle it if possible.
-        // For now, let's just proceed with import logic. If I can't save sourcePath, Phase 3 (Sync) will fail.
-        // Actually, I can use `_docService.updateItem` if exposed? No.
-        
-        // Let's instantiate a modified item and inject it? No.
-        // Let's modify DocumentService.createFolder later?
-        // Okay, I will try to call `_docService.updateItem(rootFolder.copyWith(sourcePath: sourceDir.path))` if it exists.
-        // If not, I'll add `updateItem` to DocumentService in next step.
-        
+
         // Map: Source Dir Path -> App Folder ID
         final folderMap = <String, String>{sourceDir.path: rootFolder.id};
         
