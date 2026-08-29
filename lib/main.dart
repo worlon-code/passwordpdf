@@ -223,7 +223,7 @@ Context: ${details.context?.toDescription() ?? 'none'}
           ChangeNotifierProvider.value(value: settingsService),
           ChangeNotifierProvider.value(value: exportService), // Added for Notifications
           Provider<EncryptionService>.value(value: EncryptionService()),
-          Provider<DocumentService>.value(value: DocumentService()),
+          ChangeNotifierProvider<DocumentService>.value(value: DocumentService()),
           Provider<UpdateService>(create: (_) => UpdateService()), // Add UpdateService
         ],
         child: const MyApp(),
