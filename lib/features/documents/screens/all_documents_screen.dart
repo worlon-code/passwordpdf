@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:passwordpdf_manager/services/pdf_password_service.dart';
 import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
+import 'package:passwordpdf_manager/features/documents/services/office_open_router.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
@@ -551,23 +552,10 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
 
   Future<void> _openFile(FileSystemEntity file, bool isPdf) async {
-    if (isPdf) {
-      // Retrieve stored password before opening
-      final passwordService = PdfPasswordService();
-      final storedPassword = await passwordService.getPasswordForDocument(file.path);
-      
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PdfViewerScreen(
-            filePath: file.path,
-            fileName: file.path.split(Platform.pathSeparator).last,
-            password: storedPassword,
-          ),
-        ),
-      );
-    } else {
-      await OpenFilex.open(file.path);
-    }
+    // Route by extension/size: PDF + docx + xlsx open in-app; .doc/.xls/oversized
+    // hand off to an external app. (isPdf kept for callers; router re-derives type.)
+    if (!mounted) return;
+    await openDocument(context, file.path);
   }
 
   void _importSelected([List<String>? explicitPaths]) {
