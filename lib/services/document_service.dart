@@ -409,14 +409,6 @@ class DocumentService {
     }
   }
 
-  /// @deprecated Use addReference instead for Zero Copy architecture
-  /// Import a file (Copy to App Storage + DB) - LEGACY
-  Future<ImportResult> importFile(String sourcePath, String sourceName, {String? targetName, bool allowDuplicate = false}) async {
-    // Redirect to Zero Copy addReference
-    _log.info('DocumentService', '[LEGACY] importFile called, redirecting to addReference');
-    return addReference(sourcePath, targetName ?? sourceName, allowDuplicate: allowDuplicate);
-  }
-
   /// Get folder path string for an item
   String? _getFolderPathForItem(String itemId) {
     // Find which folder contains this file

@@ -436,8 +436,8 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       }
       
       // 2. Import file
-      _log.info('AllDocumentsScreen', 'Calling docService.importFile...');
-      final result = await docService.importFile(file.path, fileName);
+      _log.info('AllDocumentsScreen', 'Calling docService.addReference...');
+      final result = await docService.addReference(file.path, fileName, allowDuplicate: false);
       _log.info('AllDocumentsScreen', 'Import result: success=${result.success}, isDuplicate=${result.isDuplicate}, error=${result.errorMessage}');
       
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
@@ -777,10 +777,9 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
         // Import (always allow duplicate when overwriting, since the original
         // is intentionally still present at this point).
-        final result = await docService.importFile(
+        final result = await docService.addReference(
           file.path, 
-          fileName, 
-          targetName: importName,
+          importName, 
           allowDuplicate: forceImport || isOverwrite
         );
         
