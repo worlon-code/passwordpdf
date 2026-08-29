@@ -17,14 +17,14 @@ class PdfPasswordService {
   static const String _documentsPasswordsKey = 'document_passwords';
   static const String _migrationCompleteKey = 'password_paths_migrated_v2';
   
-  /// Map of file path -> encrypted password
   Map<String, String> _documentPasswords = {};
   bool _isInitialized = false;
+  bool _loadFailed = false;
 
   /// Initialize the service
   Future<void> initialize() async {
     if (_isInitialized) return;
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getString(_documentsPasswordsKey);
@@ -34,6 +34,17 @@ class PdfPasswordService {
       }
       _isInitialized = true;
     } catch (e) {
+      // Preserve the raw (possibly corrupt but still recoverable) blob so we
+      // don't overwrite it with '{}' on the next _save(). Gate writes off.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final raw = prefs.getString(_documentsPasswordsKey);
+        if (raw != null && raw.isNotEmpty) {
+          final ts = DateTime.now().millisecondsSinceEpoch;
+          await prefs.setString('${_documentsPasswordsKey}_corrupt_$ts', raw);
+        }
+      } catch (_) {}
+      _loadFailed = true;
       _documentPasswords = {};
       _isInitialized = true;
     }
@@ -41,6 +52,7 @@ class PdfPasswordService {
 
   /// Save document password mappings
   Future<void> _save() async {
+    if (_loadFailed) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_documentsPasswordsKey, jsonEncode(_documentPasswords));
   }
