@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import '../models/document_item_model.dart';
@@ -67,6 +68,7 @@ class DocumentService {
   
   static const String _documentsKey = 'documents_items';
   final List<DocumentItem> _items = [];
+  final Map<String, Completer<bool>> _folderSyncLocks = {};
 
   // Need path provider to persist copies
   // We assume main.dart/UI passes us valid paths, but we need to import: 
@@ -171,28 +173,38 @@ class DocumentService {
   /// Sync specific folder with its source path
   /// Returns true if sync successful, false if failed
   Future<bool> syncFolder(String folderId) async {
-    final folderIndex = _items.indexWhere((i) => i.id == folderId);
-    if (folderIndex == -1) {
-      _log.error('DocumentService', 'Sync failed: Folder not found with ID $folderId');
-      return false;
+    if (_folderSyncLocks.containsKey(folderId)) {
+      _log.info('DocumentService', 'Sync already in progress for folder ID $folderId, awaiting lock');
+      return await _folderSyncLocks[folderId]!.future;
     }
-    final folder = _items[folderIndex];
-    
-    if (folder.sourcePath == null) {
-      _log.error('DocumentService', 'Sync failed: Folder ${folder.name} has no sourcePath');
-      return false;
-    }
-    
-    final dir = Directory(folder.sourcePath!);
-    if (!await dir.exists()) {
-      _log.error('DocumentService', 'Sync failed: Source directory not found: ${folder.sourcePath}');
-      return false; // Source folder deleted?
-    }
-    
-    _log.info('DocumentService', 'Syncing folder: ${folder.name}');
-    
+    final lock = Completer<bool>();
+    _folderSyncLocks[folderId] = lock;
+
     try {
-        final entities = await dir.list(recursive: false, followLinks: false).toList();
+      final folderIndex = _items.indexWhere((i) => i.id == folderId);
+      if (folderIndex == -1) {
+        _log.error('DocumentService', 'Sync failed: Folder not found with ID $folderId');
+        lock.complete(false);
+        return false;
+      }
+      final folder = _items[folderIndex];
+      
+      if (folder.sourcePath == null) {
+        _log.error('DocumentService', 'Sync failed: Folder ${folder.name} has no sourcePath');
+        lock.complete(false);
+        return false;
+      }
+      
+      final dir = Directory(folder.sourcePath!);
+      if (!await dir.exists()) {
+        _log.error('DocumentService', 'Sync failed: Source directory not found: ${folder.sourcePath}');
+        lock.complete(false);
+        return false; // Source folder deleted?
+      }
+      
+      _log.info('DocumentService', 'Syncing folder: ${folder.name}');
+      
+      final entities = await dir.list(recursive: false, followLinks: false).toList();
         
         // 1. Sync Files/Folders from Disk to App
         // Special case: Download folder should only sync files, not subfolders
@@ -402,10 +414,14 @@ class DocumentService {
         }
 
         _log.info('DocumentService', '[Sync] SUCCESS - ${folder.name}');
+        lock.complete(true);
         return true;
     } catch (e, stackTrace) {
-        _log.error('DocumentService', '[Sync] FAILED for ${folder.name}: $e\nStack trace:\n$stackTrace', e);
+        _log.error('DocumentService', '[Sync] FAILED: $e\nStack trace:\n$stackTrace', e);
+        lock.complete(false);
         return false;
+    } finally {
+        _folderSyncLocks.remove(folderId);
     }
   }
 
