@@ -191,12 +191,11 @@ class PdfPasswordService {
       final newPath = oldToNewPathMap[oldPath];
       
       if (newPath != null && newPath != oldPath) {
-        // Map old path to new path
         newPasswords[newPath] = entry.value;
+        // MUST NOT also copy oldPath (was leaving both around, bloating the map)
         migratedCount++;
         _log.info('PdfPasswordService', 'Migrated: $oldPath -> $newPath');
       } else {
-        // Keep as-is
         newPasswords[oldPath] = entry.value;
       }
     }
