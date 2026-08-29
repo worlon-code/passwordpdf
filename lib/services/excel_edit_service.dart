@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:archive/archive.dart';
 import 'package:excel_plus/excel_plus.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../features/settings/services/settings_service.dart';
 
 class ExcelSaveResult {
@@ -51,8 +52,7 @@ class ExcelEditService {
     final out = excel.save();
     if (out == null) throw StateError('excel.save() returned null');
 
-    final dir = SettingsService().exportPath;
-    await Directory(dir).create(recursive: true);
+    final dir = await _resolveWritableExportDir();
     final base = p.basenameWithoutExtension(sourcePath);
     final copyPath = _uniquePath(p.join(dir, '$base (edited).xlsx'));
     await File(copyPath).writeAsBytes(out, flush: true);
@@ -91,5 +91,26 @@ class ExcelEditService {
       i++;
     }
     return p.join(dir, '$name ($i)$ext');
+  }
+
+  Future<String> _resolveWritableExportDir() async {
+    try {
+      final preferred = SettingsService().exportPath;
+      final dir = Directory(preferred);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final testFile = File(p.join(dir.path, '.test_write_${DateTime.now().millisecondsSinceEpoch}'));
+      await testFile.writeAsString('test', flush: true);
+      await testFile.delete();
+      return dir.path;
+    } catch (_) {
+      final appDocDir = await getApplicationDocumentsDirectory();
+      final fallbackDir = Directory(p.join(appDocDir.path, 'PDF Manager'));
+      if (!await fallbackDir.exists()) {
+        await fallbackDir.create(recursive: true);
+      }
+      return fallbackDir.path;
+    }
   }
 }
