@@ -17,6 +17,8 @@ class PasswordMigrationService {
   PasswordMigrationService(this._enc, this._storage);
 
   static const String _sweepDoneKey = 'pw_v2_sweep_done_v1';
+  static const String _poisonKey = 'pw_v2_poison_ids_v1';
+  static const String _failCountPrefix = 'pw_v2_fail_count_';
   static bool _sweeping = false; // re-entrancy guard: one sweep at a time
 
   /// Returns the number of rows migrated this run.
@@ -30,48 +32,74 @@ class PasswordMigrationService {
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool(_sweepDoneKey) == true) return 0;
 
+      final poisonIds = (prefs.getStringList(_poisonKey) ?? [])
+          .map((s) => int.tryParse(s))
+          .whereType<int>()
+          .toSet();
+
       final all = await _storage.getAllPasswords();
       var migrated = 0;
       var v1remaining = 0;
       for (final p in all) {
+        final id = p.id;
+        if (id != null && poisonIds.contains(id)) continue;
+
+        Future<void> recordFailure() async {
+          if (id == null) {
+            v1remaining++;
+            return;
+          }
+          final failCount = (prefs.getInt('$_failCountPrefix$id') ?? 0) + 1;
+          await prefs.setInt('$_failCountPrefix$id', failCount);
+          if (failCount >= 3) {
+            poisonIds.add(id);
+            await prefs.setStringList(
+              _poisonKey,
+              poisonIds.map((e) => e.toString()).toList(),
+            );
+          } else {
+            v1remaining++;
+          }
+        }
+
         try {
           final ct = p.encryptedValue;
           if (ct.startsWith('v2:')) continue; // already v2
-          final id = p.id;
           if (id == null) {
-            v1remaining++;
+            await recordFailure();
             continue;
           }
           final plain = await _enc.decrypt(ct); // v1 decrypt (read-both)
           if (plain == null) {
-            v1remaining++;
+            await recordFailure();
             continue;
           }
           // Prove the v1 side: legacy re-encrypt must reproduce ct exactly.
           if (_enc.xorEncryptLegacy(plain) != ct) {
-            v1remaining++;
+            await recordFailure();
             continue;
           }
           final v2 = await _enc.encrypt(plain);
           if (v2 == null || !v2.startsWith('v2:')) {
-            v1remaining++;
+            await recordFailure();
             continue;
           }
           // Prove the v2 side round-trips BEFORE the destructive replace.
           final back = await _enc.decrypt(v2);
           if (back != plain) {
-            v1remaining++;
+            await recordFailure();
             continue;
           }
           // Compare-and-swap: only replace if the row still holds the old ct.
           final n = await _storage.migratePasswordCiphertext(id, ct, v2);
           if (n == 1) {
+            await prefs.remove('$_failCountPrefix$id');
             migrated++;
           } else {
-            v1remaining++;
+            await recordFailure();
           }
         } catch (_) {
-          v1remaining++; // one bad row never aborts the sweep
+          await recordFailure(); // one bad row never aborts the sweep
         }
       }
       if (v1remaining == 0) await prefs.setBool(_sweepDoneKey, true);
