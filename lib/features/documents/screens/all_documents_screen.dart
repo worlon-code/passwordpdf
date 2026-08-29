@@ -995,6 +995,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                    _stopSearch();
                  } else {
                    _searchController.clear();
+                   FocusScope.of(context).unfocus();
                    _onSearchChanged('');
                  }
               }
