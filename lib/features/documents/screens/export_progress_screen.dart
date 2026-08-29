@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:io';
 import 'package:share_plus/share_plus.dart';
 import 'package:cross_file/cross_file.dart';
@@ -17,6 +18,7 @@ class ExportProgressScreen extends StatefulWidget {
 
 class _ExportProgressScreenState extends State<ExportProgressScreen> {
   final ExportQueueService _exportQueue = ExportQueueService();
+  StreamSubscription? _sub;
   ExportStatus? _filterStatus; // null = all
   final Set<String> _selectedJobIds = {};
   
@@ -32,6 +34,7 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
 
   @override
   void dispose() {
+    _sub?.cancel();
     _exportQueue.removeListener(_updateUI);
     super.dispose();
   }
