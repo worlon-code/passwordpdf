@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:pluto_grid/pluto_grid.dart';
 import 'package:excel_plus/excel_plus.dart';
+import '../../../services/excel_edit_service.dart';
 
 /// Plain, isolate-safe representation of a parsed workbook.
 class _SheetData {
@@ -63,11 +64,84 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   int _maxCols(_SheetData s) =>
       s.rows.fold(0, (m, r) => r.length > m ? r.length : m);
 
-  void _saveCopy() {
-    // Handled in Step B2 with ExcelEditService
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Unsaved edits:  cells modified')),
+  Future<void> _saveCopy() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(content: Text('Saving copy with edits…')));
+    try {
+      final result = await ExcelEditService().saveCopyWithEdits(
+        widget.filePath,
+        _dirty,
+      );
+      final savedName = result.savedPath.split(Platform.pathSeparator).last;
+      if (result.verified) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Saved a copy: $savedName'),
+            action: SnackBarAction(
+              label: 'Replace Original',
+              onPressed: () => _confirmReplaceOriginal(result.savedPath),
+            ),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        setState(() {
+          _dirty.clear();
+        });
+      } else {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Saved a copy ($savedName) but verification failed. Original is untouched.'),
+            backgroundColor: Colors.orange.shade800,
+            duration: const Duration(seconds: 6),
+          ),
+        );
+      }
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Save failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmReplaceOriginal(String copyPath) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Replace Original File?'),
+        content: const Text(
+          'This will overwrite your original file with the edited copy. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Replace'),
+          ),
+        ],
+      ),
     );
+
+    if (confirmed == true && mounted) {
+      try {
+        await File(copyPath).copy(widget.filePath);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Original file updated successfully')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Replace failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
