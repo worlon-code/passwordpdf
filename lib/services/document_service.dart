@@ -1031,14 +1031,20 @@ class DocumentService {
   }
 
   /// Save documents to storage
-  Future<void> _saveDocuments() async {
+  Future<bool> _saveDocuments() async {
     try {
+      final current = _prefs?.getString(_documentsKey);
+      if (current != null && current.isNotEmpty) {
+        await _prefs?.setString('${_documentsKey}_bak', current);
+      }
       final jsonList = _items.map((item) => item.toJson()).toList();
       final jsonString = json.encode(jsonList);
-      await _prefs?.setString(_documentsKey, jsonString);
+      final ok = await _prefs?.setString(_documentsKey, jsonString) ?? false;
       _log.debug('DocumentService', 'Saved ${_items.length} items');
+      return ok;
     } catch (e) {
       _log.error('DocumentService', 'Failed to save documents', e);
+      return false;
     }
   }
 
