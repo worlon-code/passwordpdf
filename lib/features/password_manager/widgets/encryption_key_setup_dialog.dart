@@ -92,6 +92,7 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = fa
                 }
                 
                 final success = await encryptionService.setEncryptionKey(key);
+                if (!context.mounted) return;
                 if (success) {
                   Navigator.pop(context, true);
                 } else {

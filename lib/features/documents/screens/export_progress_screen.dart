@@ -134,6 +134,7 @@ class _ExportProgressScreenState extends State<ExportProgressScreen> {
       await Share.shareXFiles(filesToShare, text: 'Attached exports');
       setState(() => _selectedJobIds.clear());
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Share failed: $e')),
       );
