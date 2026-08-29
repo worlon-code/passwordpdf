@@ -1,4 +1,4 @@
-$root = 'D:\Repos\passwordpdf'
+$root = $PSScriptRoot
 $logDir = Join-Path $root 'logs'
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 $log = Join-Path $logDir ('release_{0}.txt' -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
