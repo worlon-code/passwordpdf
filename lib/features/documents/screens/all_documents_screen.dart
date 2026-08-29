@@ -85,6 +85,8 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
   }
   
   // Public accessors for MainScreen back navigation
+  bool get isSearching => _isSearching;
+  void stopSearch() => _stopSearch();
   bool get isSelectionMode => _isSelectionMode;
   bool get isFolderView => _isFolderView;
   String get currentFolderPath => _currentFolderPath;

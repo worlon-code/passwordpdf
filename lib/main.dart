@@ -999,11 +999,19 @@ class _MainScreenState extends State<MainScreen> {
     final state = _allDocsKey.currentState;
     if (state == null) return false;
     
+    // 1. Search active
+    if (state.isSearching) {
+      state.stopSearch();
+      return true;
+    }
+
+    // 2. Multi-select active
     if (state.isSelectionMode) {
       state.clearSelection();
       return true;
     }
     
+    // 3. Subfolder open
     if (state.isFolderView && state.currentFolderPath != '/storage/emulated/0') {
       state.navigateUp();
       return true;
@@ -1017,11 +1025,13 @@ class _MainScreenState extends State<MainScreen> {
     final state = _dashboardKey.currentState;
     if (state == null) return false;
     
+    // 2. Multi-select active
     if (state.selectedFileIds.isNotEmpty) {
       state.clearSelection();
       return true;
     }
     
+    // 3. Subfolder open
     if (state.currentFolderId != null) {
       state.navigateUp();
       return true;
@@ -1042,7 +1052,7 @@ class _MainScreenState extends State<MainScreen> {
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         
-        // Delegate to active screen's back handler
+        // Steps 1-3: Delegate to active screen (search, multi-select, subfolder)
         bool handled = false;
         switch (_currentIndex) {
           case 0:
@@ -1055,32 +1065,38 @@ class _MainScreenState extends State<MainScreen> {
             handled = await _handleSettingsBack();
             break;
         }
+        if (handled) return;
+
+        // Step 4: If not on default tab, switch to default tab
+        final defaultIndex = Provider.of<SettingsService>(context, listen: false).defaultScreenIndex;
+        if (_currentIndex != defaultIndex) {
+          setState(() => _currentIndex = defaultIndex);
+          return;
+        }
         
-        // If not handled by screen, show Exit dialog
-        if (!handled) {
-          final shouldExit = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Exit App'),
-              content: const Text('Do you want to close the application?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Leave'),
-                ),
-              ],
-            ),
-          );
-          
-          if (shouldExit == true) {
-            AppEntry.backgroundTime = DateTime(2000);
-            AppEntry.exemptNextPause();
-            SystemNavigator.pop();
-          }
+        // Step 5: Already at root default -> show exit dialog / SystemNavigator.pop()
+        final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Exit App'),
+            content: const Text('Do you want to close the application?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Leave'),
+              ),
+            ],
+          ),
+        );
+        
+        if (shouldExit == true) {
+          AppEntry.backgroundTime = DateTime(2000);
+          AppEntry.exemptNextPause();
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
