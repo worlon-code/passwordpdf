@@ -598,8 +598,12 @@ class ExportQueueService extends ChangeNotifier {
     }
   }
 
+  bool _savingHistory = false;
+
   /// Persist job to database
   Future<void> _persistJob(ExportJob job) async {
+    if (_savingHistory) return;
+    _savingHistory = true;
     try {
       final json = job.toJson();
       // Handle items serialization for DB
@@ -610,6 +614,8 @@ class ExportQueueService extends ChangeNotifier {
       await _storage.saveExportJob(job.id, json);
     } catch (e) {
       _log.error('ExportQueueService', 'Persist error', e);
+    } finally {
+      _savingHistory = false;
     }
   }
 
