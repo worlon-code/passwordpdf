@@ -8,7 +8,6 @@ import '../services/settings_service.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/encryption_service.dart';
-import '../../debug/screens/debug_logs_screen.dart';
 import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
@@ -16,7 +15,6 @@ import '../../developer/screens/developer_screen.dart';
 import '../../password_manager/screens/password_manager_screen.dart';
 import '../../../main.dart';
 import '../../update/services/update_service.dart';
-import '../../update/models/update_info.dart';
 import '../../update/widgets/update_dialogs.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
