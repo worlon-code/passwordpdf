@@ -1115,6 +1115,9 @@ class _MainScreenState extends State<MainScreen> {
             setState(() {
               _currentIndex = index;
             });
+            if (index == 1) {
+              DocumentDashboardScreen.currentState?.reload();
+            }
           },
           destinations: const [
              NavigationDestination(

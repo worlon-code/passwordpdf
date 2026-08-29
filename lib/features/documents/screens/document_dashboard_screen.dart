@@ -88,11 +88,20 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _navigateUp();
   }
 
+  Future<void> reload() async {
+    _folderCountCache.clear();
+    await _docService.initialize();
+    await _docService.syncAllFolders();
+    _updateFolderBadges();
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     DocumentDashboardScreen.currentState = this; // Register for back handling
     _exportQueue.addListener(_updateUI);
+    _docService.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
     _initialize().then((_) => _startAutoSync());
@@ -168,12 +177,14 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _folderSub?.cancel();
     _syncTimer?.cancel();
     _debounceSyncTimer?.cancel();
+    _docService.removeListener(_updateUI);
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
     super.dispose();
   }
 
   void _updateUI() {
+    _folderCountCache.clear();
     _updateFolderBadges();
     if (mounted) setState(() {});
   }

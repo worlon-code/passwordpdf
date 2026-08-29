@@ -560,6 +560,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final svc = DocsSettingsBackupService(
           SettingsService(), DocumentService(), StorageService());
       final result = await svc.restoreFromBytes(bytes, pass);
+      await DocumentDashboardScreen.currentState?.reload();
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(
         content: Text(

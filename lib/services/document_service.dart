@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'dart:async';
@@ -58,7 +59,7 @@ class DuplicateInfo {
 }
 
 /// Service for managing document folders and files
-class DocumentService {
+class DocumentService extends ChangeNotifier {
   static final DocumentService _instance = DocumentService._internal();
   factory DocumentService() => _instance;
   DocumentService._internal();
@@ -1073,6 +1074,7 @@ class DocumentService {
         _items.clear();
         _items.addAll(parsed);
         _log.info('DocumentService', 'Loaded ${_items.length} items (skipped $skipped corrupt)');
+        notifyListeners();
       }
     } catch (e) {
       _log.error('DocumentService', 'Failed to load documents', e);
@@ -1090,6 +1092,7 @@ class DocumentService {
       final jsonString = json.encode(jsonList);
       final ok = await _prefs?.setString(_documentsKey, jsonString) ?? false;
       _log.debug('DocumentService', 'Saved ${_items.length} items');
+      notifyListeners();
       return ok;
     } catch (e) {
       _log.error('DocumentService', 'Failed to save documents', e);
