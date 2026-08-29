@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:docx_creator/docx_creator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../services/word_edit_service.dart';
+import '../../../services/word_to_pdf_service.dart';
+import '../services/office_open_router.dart';
 
 class WordEditorScreen extends StatefulWidget {
   final String filePath;
@@ -179,12 +181,44 @@ class _WordEditorScreenState extends State<WordEditorScreen> {
     }
   }
 
+  Future<void> _exportToPdf() async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(content: Text('Exporting to PDF…')));
+    try {
+      final pdfPath = await WordToPdfService().convertDocxToPdf(widget.filePath);
+      final pdfName = pdfPath.split(Platform.pathSeparator).last;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Exported to PDF: $pdfName'),
+          action: SnackBarAction(
+            label: 'Open',
+            onPressed: () {
+              if (mounted) {
+                openDocument(context, pdfPath);
+              }
+            },
+          ),
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.fileName, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            tooltip: 'Export to PDF',
+            icon: const Icon(Icons.picture_as_pdf_outlined),
+            onPressed: _exportToPdf,
+          ),
           IconButton(
             tooltip: 'Save a copy',
             icon: const Icon(Icons.save_outlined),
