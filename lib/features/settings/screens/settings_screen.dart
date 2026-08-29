@@ -496,6 +496,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final svc = DocsSettingsBackupService(
           SettingsService(), DocumentService(), StorageService());
       final bytes = await svc.createBackup(pass);
+      final allItems = DocumentService().getAllItems();
+      final folderCount = allItems.where((i) => i.isFolder).length;
+      final fileCount = allItems.where((i) => i.isFile).length;
       final ts = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
       final fname = 'docs-settings-backup-$ts.pwdbak';
 
@@ -504,7 +507,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Save your backup'),
-          content: const Text(
+          content: Text(
+              'Backup prepared with $folderCount folder(s), $fileCount document(s), and app settings.\n\n'
               'The file is encrypted with your passphrase. Anyone with BOTH the file and the passphrase can restore your data.'),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, 'save'), child: const Text('Save to device')),

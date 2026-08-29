@@ -97,24 +97,51 @@ class DocumentItem {
   factory DocumentItem.fromJson(Map<String, dynamic> json) {
     final path = json['sourcePath'] as String? ?? json['filePath'] as String?;
     
+    DocumentItemType itemType = DocumentItemType.file;
+    final rawType = json['type']?.toString().toLowerCase();
+    if (rawType != null) {
+      if (rawType.contains('folder')) {
+        itemType = DocumentItemType.folder;
+      } else {
+        itemType = DocumentItemType.file;
+      }
+    }
+
+    DateTime parseDate(dynamic val) {
+      if (val is String) {
+        return DateTime.tryParse(val) ?? DateTime.now();
+      } else if (val is int) {
+        return DateTime.fromMillisecondsSinceEpoch(val);
+      }
+      return DateTime.now();
+    }
+
+    DateTime? parseNullableDate(dynamic val) {
+      if (val == null) return null;
+      if (val is String) {
+        return DateTime.tryParse(val);
+      } else if (val is int) {
+        return DateTime.fromMillisecondsSinceEpoch(val);
+      }
+      return null;
+    }
+    
     return DocumentItem(
-      id: json['id'] as String,
-      name: json['name'] as String,
-      type: DocumentItemType.values.firstWhere(
-        (e) => e.toString() == json['type'],
-      ),
+      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      name: json['name'] as String? ?? 'Untitled',
+      type: itemType,
       sourcePath: path,
       parentId: json['parentId'] as String?,
-      fileIds: (json['fileIds'] as List<dynamic>?)?.cast<String>() ?? [],
-      size: json['size'] as int? ?? 0,
-      createdAt: DateTime.parse(json['createdAt'] as String),
-      modifiedAt: DateTime.parse(json['modifiedAt'] as String),
+      fileIds: (json['fileIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      size: (json['size'] is num) ? (json['size'] as num).toInt() : 0,
+      createdAt: parseDate(json['createdAt']),
+      modifiedAt: parseDate(json['modifiedAt']),
       isImported: json['isImported'] as bool? ?? false,
       isImportedFile: json['isImportedFile'] as bool? ?? false,
       isNew: json['isNew'] as bool? ?? false,
       missingOnDevice: json['missingOnDevice'] as bool? ?? false,
-      addedAt: json['addedAt'] != null ? DateTime.parse(json['addedAt']) : null,
-      lastSynced: json['lastSynced'] != null ? DateTime.parse(json['lastSynced']) : null,
+      addedAt: parseNullableDate(json['addedAt']),
+      lastSynced: parseNullableDate(json['lastSynced']),
     );
   }
 }
