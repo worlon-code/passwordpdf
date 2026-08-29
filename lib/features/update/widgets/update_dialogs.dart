@@ -106,10 +106,11 @@ class InvocationDialog extends StatelessWidget {
 }
 
 // Global Helper Functions
-Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
+Future<void> showUpdateDialog(BuildContext context, UpdateInfo info, {bool isMandatory = false}) async {
+    final mandatory = isMandatory || info.forceUpdate;
     showDialog(
       context: context,
-      barrierDismissible: !info.forceUpdate,
+      barrierDismissible: !mandatory,
       builder: (ctx) => UpdateAvailableDialog(
         updateInfo: info,
         onUpdate: () => performUpdate(ctx, info),
