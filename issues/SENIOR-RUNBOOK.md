@@ -26,12 +26,12 @@
 6. **Backup before sweep:** the passphrase Backup (1B) ships before the one-time migration sweep (1C).
 
 ## Order of work
-1. **Part 1A** — Crypto core (read-both dispatcher, AES-GCM, Keystore key, PIN/dev-gate hardening, zip-pw)
-2. **Part 1B** — Passphrase Backup/Restore (Feature 5) — *must precede the sweep*
-3. **Part 1C** — Migration (lazy migrate-on-read + key-health-gated sweep)
-4. **Part 2** — PDF tools real fidelity (Task 26)
-5. **Part 3** — Export "Remove password" (Task 27)
-6. **Part 4** — Store refactor onto SQLite (Tasks 30 & 31) — design plan, multi-PR
+1. [x] **Part 1A** — Crypto core (read-both dispatcher, AES-GCM, Keystore key, PIN/dev-gate hardening, zip-pw) — COMPLETED
+2. [x] **Part 1B** — Passphrase Backup/Restore (Feature 5) — COMPLETED
+3. [x] **Part 1C** — Migration (lazy migrate-on-read + key-health-gated sweep) — COMPLETED
+4. [x] **Part 2** — PDF tools real fidelity (Task 26) — COMPLETED (documented Syncfusion template limits)
+5. [x] **Part 3** — Export "Remove password" (Task 27) — COMPLETED
+6. [x] **Part 4** — Store refactor onto SQLite (Tasks 30 & 31) — COMPLETED
 
 ---
 ## Part 1A - Crypto core: read-both dispatcher + AES-GCM + Keystore key (Tasks 15 and 19)
