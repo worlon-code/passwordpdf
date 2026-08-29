@@ -224,6 +224,10 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   String _tagFilter = 'All';
   List<String> _availableTags = ['All'];
 
+  // Pagination
+  int _currentPage = 0;
+  final int _itemsPerPage = 25;
+
   @override
   void initState() {
     super.initState();
@@ -231,7 +235,8 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   }
 
   Future<void> _loadLogs() async {
-    final allLogs = await _log.getAllLogs(limit: 300);
+    final settings = Provider.of<SettingsService>(context, listen: false);
+    final allLogs = await _log.getAllLogs(limit: settings.maxLogCount);
     if (!mounted) return;
 
     // Extract unique tags
@@ -289,6 +294,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
       _logCounts = counts;
       _logs = filtered;
       _availableTags = tags.toList()..sort();
+      _currentPage = 0; // Reset page on filter/reload
     });
   }
 
@@ -306,7 +312,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Max Log Retention (1000 - 50000)'),
+                const Text('Max Log Retention (50 - 5000)'),
                 const SizedBox(height: 8),
                 TextField(
                   controller: controller,
@@ -314,6 +320,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
                     suffixText: 'entries',
+                    helperText: 'Default: 300, Max: 5000',
                   ),
                 ),
               ],
@@ -337,6 +344,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
                         ),
                       );
                       Navigator.pop(context);
+                      _loadLogs();
                     }
                   }
                 },
@@ -380,6 +388,10 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final totalPages = (_logs.isEmpty ? 1 : (_logs.length / _itemsPerPage).ceil());
+    final start = _currentPage * _itemsPerPage;
+    final pageLogs = _logs.skip(start).take(_itemsPerPage).toList();
+
     return Column(
       children: [
         Padding(
@@ -463,6 +475,28 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              // Pagination controls
+              if (_logs.isNotEmpty) ...[
+                Text(
+                  'Page ${_currentPage + 1} of $totalPages',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left, size: 20),
+                  onPressed:
+                      _currentPage > 0
+                          ? () => setState(() => _currentPage--)
+                          : null,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right, size: 20),
+                  onPressed:
+                      _currentPage < totalPages - 1
+                          ? () => setState(() => _currentPage++)
+                          : null,
+                ),
+                const SizedBox(width: 8),
+              ],
               // Sort toggle
               IconButton(
                 icon: Icon(
@@ -499,14 +533,13 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
         Expanded(
           child: RefreshIndicator(
             onRefresh: _loadLogs,
-            child: ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                final log =
-                    _logs[_logs.length -
-                        1 -
-                        index]; // Reverse order (latest first)
+            child: pageLogs.isEmpty
+                ? const Center(child: Text('No logs found'))
+                : ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: pageLogs.length,
+                    itemBuilder: (context, index) {
+                      final log = pageLogs[index];
                 return Card(
                   margin: const EdgeInsets.symmetric(
                     horizontal: 8,

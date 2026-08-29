@@ -31,7 +31,7 @@ class SettingsService extends ChangeNotifier {
   bool _hasPinSet = false;
   Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
   int _fontSizeAdjustment = -4; // -7 to 0, default -4
-  int _maxLogCount = 8000;
+  int _maxLogCount = 300;
   bool _developerModeEnabled = false;
   int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
   int _autoLockTimeout = 10; // Default 10 minutes
@@ -139,7 +139,7 @@ class SettingsService extends ChangeNotifier {
     // Load max log count
     final maxLog = _prefs!.getInt('max_log_count');
     if (maxLog != null) {
-      _maxLogCount = maxLog.clamp(1000, 50000);
+      _maxLogCount = maxLog.clamp(50, 5000);
     }
     _log.setMaxLogLimit(_maxLogCount);
 
@@ -212,9 +212,9 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set max log count (1000 to 50000)
+  /// Set max log count (50 to 5000)
   Future<void> setMaxLogCount(int count) async {
-    _maxLogCount = count.clamp(1000, 50000);
+    _maxLogCount = count.clamp(50, 5000);
     await _prefs?.setInt('max_log_count', _maxLogCount);
     _log.setMaxLogLimit(_maxLogCount);
     notifyListeners();
