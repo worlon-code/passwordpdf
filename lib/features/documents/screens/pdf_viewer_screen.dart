@@ -168,6 +168,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     }
 
     // 4. If all candidates fail, Prompt User
+    if (_isLoading && mounted) {
+      setState(() => _isLoading = false);
+    }
+
     final password = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -179,6 +183,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     //              other = a real password attempt.
     if (password != null) {
       _currentPassword = password;
+      if (mounted) setState(() => _isLoading = true);
       return password;
     }
 
@@ -441,6 +446,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               ] : [],
               // Error Handling
               errorBannerBuilder: (context, error, stackTrace, documentRef) {
+                if (_isLoading) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _isLoading) setState(() => _isLoading = false);
+                  });
+                }
                 if (error.toString().contains('No password supplied')) {
                    return Center(
                      child: Column(

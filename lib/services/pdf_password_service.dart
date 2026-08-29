@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'encryption_service.dart';
 import 'logging_service.dart';
+import 'storage_service.dart';
 
 /// Service for managing PDF document passwords
 /// Tracks which documents have been opened successfully with which passwords
@@ -13,6 +14,7 @@ class PdfPasswordService {
 
   final EncryptionService _encryptionService = EncryptionService();
   final LoggingService _log = LoggingService();
+  final StorageService _storageService = StorageService();
   
   static const String _documentsPasswordsKey = 'document_passwords';
   static const String _migrationCompleteKey = 'password_paths_migrated_v2';
@@ -161,6 +163,7 @@ class PdfPasswordService {
     await initialize();
     final passwords = <String>{};
     
+    // 1. From document history
     for (final encrypted in _documentPasswords.values) {
       if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
       
@@ -168,6 +171,19 @@ class PdfPasswordService {
       if (decrypted != null && decrypted.isNotEmpty) {
         passwords.add(decrypted);
       }
+    }
+    
+    // 2. From Password Manager
+    try {
+      final managerPasswords = await _storageService.getAllPasswords();
+      for (final model in managerPasswords) {
+        final decrypted = await _encryptionService.decrypt(model.encryptedValue);
+        if (decrypted != null && decrypted.isNotEmpty) {
+          passwords.add(decrypted);
+        }
+      }
+    } catch (e) {
+      _log.error('PdfPasswordService', 'Failed to load passwords from Password Manager', e);
     }
     
     return passwords.toList();

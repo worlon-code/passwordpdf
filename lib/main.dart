@@ -1112,10 +1112,11 @@ class _MainScreenState extends State<MainScreen> {
         bottomNavigationBar: NavigationBar(
           selectedIndex: _currentIndex,
           onDestinationSelected: (index) {
+            final prevIndex = _currentIndex;
             setState(() {
               _currentIndex = index;
             });
-            if (index == 1) {
+            if (index == 1 && prevIndex != 1) {
               DocumentDashboardScreen.currentState?.reload();
             }
           },

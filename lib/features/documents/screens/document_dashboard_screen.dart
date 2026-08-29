@@ -2376,7 +2376,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           comparison = a.modifiedAt.compareTo(b.modifiedAt);
           break;
       }
-      return _sortAscending ? comparison : -comparison;
+      
+      int result = _sortAscending ? comparison : -comparison;
+      
+      // Deterministic tie-breaker to prevent unstable quicksort shuffling
+      if (result == 0) {
+        result = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+      if (result == 0) {
+        result = a.id.compareTo(b.id);
+      }
+      return result;
     });
     return items;
   }

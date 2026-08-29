@@ -231,7 +231,7 @@ class _DebugLogsTabState extends State<_DebugLogsTab> {
   }
 
   Future<void> _loadLogs() async {
-    final allLogs = await _log.getAllLogs();
+    final allLogs = await _log.getAllLogs(limit: 300);
     if (!mounted) return;
 
     // Extract unique tags
@@ -663,7 +663,11 @@ class _DatabaseTabState extends State<_DatabaseTab> {
     setState(() {
       _tables = tables;
       if (_tables.isNotEmpty && _selectedTable == null) {
-        _selectedTable = _tables.first;
+        if (_tables.contains('passwords')) {
+          _selectedTable = 'passwords';
+        } else {
+          _selectedTable = _tables.firstWhere((t) => t != 'logs', orElse: () => _tables.first);
+        }
         _loadTableData();
       }
     });
