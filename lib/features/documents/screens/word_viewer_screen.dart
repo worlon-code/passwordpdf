@@ -1,7 +1,9 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:docx_file_viewer/docx_file_viewer.dart';
+
+import 'word_editor_screen.dart';
 
 class WordViewerScreen extends StatelessWidget {
   final String filePath;
@@ -14,6 +16,21 @@ class WordViewerScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(fileName, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            tooltip: 'Edit Document',
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => WordEditorScreen(
+                    filePath: filePath,
+                    fileName: fileName,
+                  ),
+                ),
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Open with another app',
             icon: const Icon(Icons.open_in_new),
