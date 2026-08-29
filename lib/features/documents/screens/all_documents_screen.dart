@@ -477,7 +477,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'File "${fileName}" already exists',
+                    'File "$fileName" already exists',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),

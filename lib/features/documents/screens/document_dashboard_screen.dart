@@ -950,7 +950,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                  context: context,
                  builder: (context) => AlertDialog(
                      title: const Text('Multiple Conflicts Found'),
-                     content: Text('Multiple folders named "${folderName}" already exist.\n\nAutomtically rename existing folders to "${folderName}_1", "${folderName}_2", etc. to proceed?'),
+                     content: Text('Multiple folders named "$folderName" already exist.\n\nAutomatically rename existing folders to "${folderName}_1", "${folderName}_2", etc. to proceed?'),
                      actions: [
                         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                         ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Auto Rename')),
