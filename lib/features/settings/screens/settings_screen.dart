@@ -402,14 +402,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<String?> _promptDocsBackupPassphrase({required bool confirm}) async {
     final one = TextEditingController();
     final two = TextEditingController();
-    var obscure = true;
+    bool obscure = true;
+    String? errorText;
+
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setSt) {
           return AlertDialog(
-            title: Text(confirm ? 'Create backup passphrase' : 'Enter passphrase'),
+            title: Text(confirm
+                ? 'Set Backup Passphrase'
+                : 'Enter Backup Passphrase'),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -421,7 +425,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       child: Text(
                         'This passphrase is the ONLY way to restore this backup. '
                         'It cannot be recovered. Store it somewhere safe.',
-                        style: TextStyle(color: Colors.redAccent),
+                        style: TextStyle(color: Colors.redAccent, fontSize: 13),
                       ),
                     ),
                   TextField(
@@ -430,11 +434,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     obscureText: obscure,
                     decoration: InputDecoration(
                       labelText: 'Passphrase',
+                      helperText: 'Minimum 8 characters',
+                      errorText: errorText,
                       suffixIcon: IconButton(
                         icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
                         onPressed: () => setSt(() => obscure = !obscure),
                       ),
                     ),
+                    onChanged: (_) {
+                      if (errorText != null) setSt(() => errorText = null);
+                    },
                   ),
                   if (confirm) ...[
                     const SizedBox(height: 12),
@@ -442,6 +451,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       controller: two,
                       obscureText: obscure,
                       decoration: const InputDecoration(labelText: 'Confirm passphrase'),
+                      onChanged: (_) {
+                        if (errorText != null) setSt(() => errorText = null);
+                      },
                     ),
                   ],
                 ],
@@ -456,8 +468,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onPressed: () {
                   final a = one.text;
                   final b = two.text;
-                  if (a.length < 8) return;         // strength minimum
-                  if (confirm && a != b) return;
+                  if (a.length < 8) {
+                    setSt(() => errorText = 'Passphrase must be at least 8 characters');
+                    return;
+                  }
+                  if (confirm && a != b) {
+                    setSt(() => errorText = 'Passphrases do not match');
+                    return;
+                  }
                   Navigator.pop(ctx, a);
                 },
                 child: const Text('OK'),
@@ -478,7 +496,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SettingsService(), DocumentService(), StorageService());
       final bytes = await svc.createBackup(pass);
       final ts = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-      final fname = 'docs-settings-backup-$ts.json';
+      final fname = 'docs-settings-backup-$ts.pwdbak';
 
       if (!mounted) return;
       final choice = await showDialog<String>(
@@ -499,7 +517,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final out = File(p.join(dir.path, fname));
         await out.writeAsBytes(bytes, flush: true);
         if (!mounted) return;
-        messenger.showSnackBar(SnackBar(content: Text('Saved: ${out.path}')));
+        messenger.showSnackBar(SnackBar(content: Text('Saved: ${out.path}'), backgroundColor: Colors.green));
       } else if (choice == 'share') {
         final tmp = await getTemporaryDirectory();
         final file = File(p.join(tmp.path, fname));
@@ -508,10 +526,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subject: 'Documents & Settings Backup');
       }
     } on FormatException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      messenger.showSnackBar(SnackBar(content: Text(e.message), backgroundColor: Colors.orange));
     } catch (e) {
       LoggingService().error('Settings', 'Docs backup failed', e);
-      messenger.showSnackBar(const SnackBar(content: Text('Backup failed. Check Developer > Logs.')));
+      messenger.showSnackBar(SnackBar(content: Text('Backup failed: $e'), backgroundColor: Colors.red));
     }
   }
 
@@ -526,7 +544,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       MaterialPageRoute(
         builder: (_) => FileSystemBrowser(
           initialPath: initialPath,
-          allowedExtensions: const ['json'],
+          allowedExtensions: const ['json', 'pwdbak', 'bak'],
           allowMultiple: false,
         ),
       ),
@@ -547,12 +565,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         content: Text(
           'Restored: settings applied, ${result.documentsAdded} document(s) added, ${result.recentsAdded} recent(s).',
         ),
+        backgroundColor: Colors.green,
       ));
     } on FormatException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      messenger.showSnackBar(SnackBar(content: Text(e.message), backgroundColor: Colors.orange));
     } catch (e) {
       LoggingService().error('Settings', 'Docs restore failed', e);
-      messenger.showSnackBar(const SnackBar(content: Text('Restore failed. Check Developer > Logs.')));
+      messenger.showSnackBar(SnackBar(content: Text('Restore failed: $e'), backgroundColor: Colors.red));
     }
   }
 
