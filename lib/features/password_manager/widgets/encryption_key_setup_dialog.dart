@@ -3,28 +3,54 @@ import '../../../services/encryption_service.dart';
 
 /// Dialog for setting up encryption key (one-time setup)
 Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = false}) async {
-
-  final encryptionService = EncryptionService();
-  // Pre-fill with a random strong key by default
-  final keyController = TextEditingController(text: encryptionService.generateRandomKey());
-  bool obscureKey = false; // Show it by default so they can see the generated key
-  
   final result = await showDialog<bool>(
     context: context,
-    barrierDismissible: !force, // disallow dismiss if forced
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) {
-        return PopScope(
-          canPop: !force, // Prevent back button if forced
-          child: AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.vpn_key, color: Colors.amber),
-              SizedBox(width: 12),
-              Text('Setup Encryption Key'),
-            ],
-          ),
-          content: Column(
+    barrierDismissible: !force,
+    builder: (context) => _EncryptionKeySetupDialog(force: force),
+  );
+  return result ?? false;
+}
+
+class _EncryptionKeySetupDialog extends StatefulWidget {
+  final bool force;
+  const _EncryptionKeySetupDialog({required this.force});
+
+  @override
+  State<_EncryptionKeySetupDialog> createState() => _EncryptionKeySetupDialogState();
+}
+
+class _EncryptionKeySetupDialogState extends State<_EncryptionKeySetupDialog> {
+  final _encryptionService = EncryptionService();
+  late final TextEditingController _keyController;
+  bool _obscureKey = false;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyController = TextEditingController(text: _encryptionService.generateRandomKey());
+  }
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !widget.force,
+      child: AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.vpn_key, color: Colors.amber),
+            SizedBox(width: 12),
+            Expanded(child: Text('Setup Encryption Key')),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -34,8 +60,8 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = fa
               ),
               const SizedBox(height: 16),
               TextField(
-                controller: keyController,
-                obscureText: obscureKey,
+                controller: _keyController,
+                obscureText: _obscureKey,
                 decoration: InputDecoration(
                   labelText: 'Encryption Key',
                   hintText: 'Enter a strong key',
@@ -48,19 +74,18 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = fa
                         tooltip: 'Generate Random Key',
                         onPressed: () {
                           setState(() {
-                             keyController.text = encryptionService.generateRandomKey();
-                             // Make visible when generating
-                             obscureKey = false;
+                            _keyController.text = _encryptionService.generateRandomKey();
+                            _obscureKey = false;
                           });
                         },
                       ),
                       IconButton(
                         icon: Icon(
-                          obscureKey ? Icons.visibility : Icons.visibility_off,
+                          _obscureKey ? Icons.visibility : Icons.visibility_off,
                         ),
                         onPressed: () {
                           setState(() {
-                            obscureKey = !obscureKey;
+                            _obscureKey = !_obscureKey;
                           });
                         },
                       ),
@@ -75,42 +100,51 @@ Future<bool> showEncryptionKeySetupDialog(BuildContext context, {bool force = fa
               ),
             ],
           ),
-          actions: [
-            if (!force)
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-            ElevatedButton(
-              onPressed: () async {
-                final key = keyController.text.trim();
-                if (key.isEmpty || key.length < 6) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Key must be at least 6 characters')),
-                  );
-                  return;
-                }
-                
-                final success = await encryptionService.setEncryptionKey(key);
-                if (!context.mounted) return;
-                if (success) {
-                  Navigator.pop(context, true);
-                } else {
-                  keyController.clear();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Failed to set encryption key')),
-                  );
-                }
-              },
-              child: const Text('Set Key'),
-            ),
-          ],
         ),
-        );
-      },
-    ),
-  );
-  
-  keyController.dispose();
-  return result ?? false;
+        actions: [
+          if (!widget.force)
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+          ElevatedButton(
+            onPressed: _isLoading
+                ? null
+                : () async {
+                    final key = _keyController.text.trim();
+                    final messenger = ScaffoldMessenger.of(context);
+                    final navigator = Navigator.of(context);
+                    if (key.isEmpty || key.length < 6) {
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('Key must be at least 6 characters')),
+                      );
+                      return;
+                    }
+
+                    setState(() => _isLoading = true);
+                    final success = await _encryptionService.setEncryptionKey(key);
+                    if (!mounted) return;
+                    setState(() => _isLoading = false);
+
+                    if (success) {
+                      navigator.pop(true);
+                    } else {
+                      _keyController.clear();
+                      messenger.showSnackBar(
+                        const SnackBar(content: Text('Failed to set encryption key')),
+                      );
+                    }
+                  },
+            child: _isLoading
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Set Key'),
+          ),
+        ],
+      ),
+    );
+  }
 }
