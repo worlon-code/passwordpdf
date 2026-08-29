@@ -248,6 +248,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -292,12 +293,9 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
                 }).toList(),
               ),
             ),
-          ],
-        ),
+        ],
       ),
-    ),
-  ),
-);
+    );
   }
 
   Widget _buildKeyButton({required Widget child, required VoidCallback onPressed}) {
