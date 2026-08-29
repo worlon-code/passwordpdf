@@ -25,6 +25,7 @@ import 'folder_navigation_screen.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/pdf_tools_service.dart';
 import 'pdf_viewer_screen.dart';
+import '../services/office_open_router.dart';
 import 'file_info_screen.dart';
 import 'export_progress_screen.dart';
 import '../widgets/conflict_resolution_dialog.dart';
@@ -401,18 +402,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             final item = _docService.getAllItems().firstWhere((i) => i.id == fileId);
             _openDocument(item);
           } else {
-            // Fallback: open directly via viewer
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PdfViewerScreen(
-                  filePath: filePath,
-                  fileName: fileName,
-                  isExternal: true,
-                  deleteOnClose: isTemp,
-                ),
-              ),
-            );
+            // Fallback: open directly via router
+            openDocument(context, filePath);
           }
         }
         
@@ -1702,15 +1693,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _openDocument(DocumentItem item) async {
-    if (!item.isPdf) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cannot open this file type')),
-        );
-      }
-      return;
-    }
-    
     final filePath = item.sourcePath; // Use actual file path, not ID
     if (filePath == null) {
        if (mounted) {
@@ -1718,6 +1700,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           const SnackBar(content: Text('File path is missing')),
         );
       }
+      return;
+    }
+
+    if (!item.isPdf) {
+      if (!mounted) return;
+      await openDocument(context, filePath);
       return;
     }
     
