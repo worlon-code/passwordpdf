@@ -18,6 +18,7 @@ import '../widgets/duplicate_files_dialog.dart';
 import '../../../services/document_service.dart';
 import 'file_info_screen.dart';
 import '../../../models/document_item_model.dart';
+import '../../../services/logging_service.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
@@ -47,6 +48,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final PdfViewerController _pdfViewerController = PdfViewerController();
   PdfTextSearcher? _textSearcher;
   Key _viewerKey = UniqueKey();
+  final LoggingService _log = LoggingService();
   
   bool _hasCalledSuccess = false;
   String _currentPassword = '';
@@ -127,6 +129,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     if (!_passwordAttempted && _currentPassword.isNotEmpty) {
       _passwordAttempted = true;
       return _currentPassword;
+    }
+    if (_passwordAttempted) {
+      _log.warning('PdfViewer', 'PDF open rejected password attempt for ${widget.filePath}');
     }
     _passwordAttempted = true; // Mark as attempted for subsequent calls
 
