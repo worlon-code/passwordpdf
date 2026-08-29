@@ -120,7 +120,6 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
 Future<void> performUpdate(BuildContext context, UpdateInfo info) async {
     final service = UpdateService();
     bool started = false;
-    // ignore: unused_local_variable
     double progress = 0;
 
     await showDialog(
