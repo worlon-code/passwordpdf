@@ -104,6 +104,10 @@ class LoggingService {
     _addLog('WARN', tag, message);
   }
 
+  void warning(String tag, String message) {
+    _addLog('WARN', tag, message);
+  }
+
   void error(String tag, String message, [dynamic error, StackTrace? stackTrace]) {
     String? stack;
     if (error != null) {

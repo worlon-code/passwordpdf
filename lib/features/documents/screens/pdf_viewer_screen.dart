@@ -131,7 +131,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       return _currentPassword;
     }
     if (_passwordAttempted) {
-      _log.warning('PdfViewer', 'PDF open rejected password attempt for ${widget.filePath}');
+      _log.warn('PdfViewer', 'PDF open rejected password attempt for ${widget.filePath}');
     }
     _passwordAttempted = true; // Mark as attempted for subsequent calls
 
