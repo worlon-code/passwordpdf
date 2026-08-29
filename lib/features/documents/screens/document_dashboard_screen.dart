@@ -69,6 +69,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
+  Timer? _debounceSyncTimer;
   StreamSubscription? _folderSub;
   
   // Performance cache for folder counts (avoid repeated service calls during scroll)
@@ -151,11 +152,21 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
   
+  void _debouncedSync() {
+    _debounceSyncTimer?.cancel();
+    _debounceSyncTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _syncWithReload(isPullToRefresh: true);
+      }
+    });
+  }
+
   @override
   void dispose() {
     DocumentDashboardScreen.currentState = null; // Deregister
     _folderSub?.cancel();
     _syncTimer?.cancel();
+    _debounceSyncTimer?.cancel();
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
     super.dispose();
