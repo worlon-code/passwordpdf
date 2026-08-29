@@ -63,7 +63,7 @@ class SettingsService extends ChangeNotifier {
   /// developer_mode_enabled + last_viewed_build_number (internal).
   Map<String, dynamic> exportBackupMap() => {
     'theme_mode': _themeMode.toString(),
-    'accent_color': _accentColor.value,
+    'accent_color': _accentColor.toARGB32(),
     'font_size_adjustment': _fontSizeAdjustment,
     'max_log_count': _maxLogCount,
     'default_screen_index': _defaultScreenIndex,
@@ -201,7 +201,7 @@ class SettingsService extends ChangeNotifier {
   /// Set accent color
   Future<void> setAccentColor(Color color) async {
     _accentColor = color;
-    await _prefs?.setInt('accent_color', color.value);
+    await _prefs?.setInt('accent_color', color.toARGB32());
     notifyListeners();
   }
 

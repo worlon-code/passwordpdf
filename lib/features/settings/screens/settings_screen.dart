@@ -307,7 +307,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showHexColorInput(BuildContext context, SettingsService settings) {
     final controller = TextEditingController(
       text:
-          settings.accentColor.value
+          settings.accentColor
+              .toARGB32()
               .toRadixString(16)
               .substring(2)
               .toUpperCase(),
