@@ -12,6 +12,7 @@ import 'services/permission_service.dart';
 import 'services/encryption_service.dart';
 import 'services/storage_service.dart';
 import 'services/password_migration_service.dart';
+import 'services/pdf_password_service.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -88,6 +89,12 @@ void main() async {
       if (n > 0) log.info('App', 'Password migration: $n row(s) -> v2');
     }).catchError((e) {
       log.error('App', 'Password migration sweep failed', e);
+    });
+
+    PdfPasswordService().migratePdfPasswordsToV2().then((n) {
+      if (n > 0) log.info('App', 'PDF password migration: $n entry(ies) -> v2');
+    }).catchError((e) {
+      log.error('App', 'PDF password migration sweep failed', e);
     });
     
     // Global Flutter Error Handler (Layout errors, etc)

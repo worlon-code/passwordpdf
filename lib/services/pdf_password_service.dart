@@ -209,4 +209,53 @@ class PdfPasswordService {
     
     await prefs.setBool(_migrationCompleteKey, true);
   }
+
+  static const String _pdfSweepDoneKey = 'pdf_pw_sweep_done_v1';
+  static bool _sweeping = false;
+
+  Future<int> migratePdfPasswordsToV2() async {
+    if (_sweeping) return 0;
+    _sweeping = true;
+    try {
+      final enc = EncryptionService();
+      if (!enc.canOverwriteLegacy || !enc.canWriteV2) return 0;
+
+      await initialize();
+      if (_loadFailed) return 0;
+
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_pdfSweepDoneKey) == true) return 0;
+
+      var migrated = 0;
+      var v1remaining = 0;
+      final keys = _documentPasswords.keys.toList(growable: false);
+      for (final k in keys) {
+        final ct = _documentPasswords[k];
+        if (ct == null || ct == 'NO_PASSWORD') continue;
+        if (ct.startsWith('v2:')) continue;
+
+        final plain = await enc.decrypt(ct);
+        if (plain == null) { v1remaining++; continue; }
+        if (enc.xorEncryptLegacy(plain) != ct) { v1remaining++; continue; }
+
+        final v2 = await enc.encrypt(plain);
+        if (v2 == null || !v2.startsWith('v2:')) { v1remaining++; continue; }
+        final back = await enc.decrypt(v2);
+        if (back != plain) { v1remaining++; continue; }
+
+        // CAS-like: only replace if the map still holds the same ct.
+        if (_documentPasswords[k] == ct) {
+          _documentPasswords[k] = v2;
+          migrated++;
+        } else {
+          v1remaining++;
+        }
+      }
+      if (migrated > 0) await _save();
+      if (v1remaining == 0) await prefs.setBool(_pdfSweepDoneKey, true);
+      return migrated;
+    } finally {
+      _sweeping = false;
+    }
+  }
 }
