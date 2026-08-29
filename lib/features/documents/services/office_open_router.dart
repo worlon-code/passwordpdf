@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import '../../../services/pdf_password_service.dart';
@@ -60,6 +60,26 @@ Future<void> openDocument(BuildContext context, String filePath) async {
       ));
       break;
     case OfficeOpenTarget.externalHandoff:
+      if (context.mounted) {
+        if (size != null && size > kMaxInAppOfficeBytes) {
+          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(
+              content: Text('File exceeds 25MB limit. Opening with external app…'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          final ext = filePath.toLowerCase().split('.').last;
+          if (ext == 'doc' || ext == 'xls') {
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+              SnackBar(
+                content: Text('Legacy .$ext format. Opening with external app…'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+      }
       await OpenFilex.open(filePath);
       break;
   }
