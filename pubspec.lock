@@ -185,6 +185,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  excel2003:
+    dependency: "direct main"
+    description:
+      name: excel2003
+      sha256: "22339fee9c0a6a9dbe21810358822ec366b9f9f66062e451bff6753cdaeaa480"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.0"
   excel_plus:
     dependency: "direct main"
     description:
@@ -974,7 +982,7 @@ packages:
     source: hosted
     version: "1.4.0"
   url_launcher:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: url_launcher
       sha256: f6a7e5c4835bb4e3026a04793a4199ca2d14c739ec378fdfe23fc8075d0439f8
@@ -1094,7 +1102,7 @@ packages:
     source: hosted
     version: "1.1.0"
   xml:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: xml
       sha256: "971043b3a0d3da28727e40ed3e0b5d18b742fa5a68665cca88e74b7876d5e025"

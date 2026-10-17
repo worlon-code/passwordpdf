@@ -190,12 +190,12 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
             const SizedBox(height: 24),
 
             // Action Buttons
-            if (fileExists && file.isPdf)
+            if (fileExists)
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   onPressed: () {
-                    // Close info screen and signal to open PDF
+                    // Close info screen and signal to open document
                     Navigator.pop(context, 'open');
                   },
                   icon: const Icon(Icons.open_in_new),
@@ -340,20 +340,31 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
   IconData _getFileIcon() {
     if (widget.file.isPdf) return Icons.picture_as_pdf;
     if (widget.file.isDoc) return Icons.description;
+    if (widget.file.isCsv) return Icons.table_view;
     if (widget.file.isExcel) return Icons.table_chart;
     return Icons.insert_drive_file;
   }
 
   Color _getFileColor() {
     if (widget.file.isPdf) return Colors.red;
-    if (widget.file.isDoc) return Colors.blue;
-    if (widget.file.isExcel) return Colors.green;
+    if (widget.file.isDoc) return const Color(0xFF185ABD);
+    if (widget.file.isCsv) return const Color(0xFF0F9D58);
+    if (widget.file.isExcel) return const Color(0xFF107C41);
     return Colors.grey;
   }
 
   String _getFileType() {
+    final ext = widget.file.fileExtension;
+    if (ext == 'pdf') return 'PDF Document (.pdf)';
+    if (ext == 'docx') return 'Word Document (.docx)';
+    if (ext == 'doc') return 'Legacy Word Document (.doc)';
+    if (ext == 'xlsx') return 'Excel Spreadsheet (.xlsx)';
+    if (ext == 'xls') return 'Legacy Excel Spreadsheet (.xls)';
+    if (ext == 'csv') return 'CSV Spreadsheet (.csv)';
+    if (ext == 'tsv') return 'TSV Spreadsheet (.tsv)';
     if (widget.file.isPdf) return 'PDF Document';
     if (widget.file.isDoc) return 'Word Document';
+    if (widget.file.isCsv) return 'CSV Spreadsheet';
     if (widget.file.isExcel) return 'Excel Spreadsheet';
     return 'Document';
   }

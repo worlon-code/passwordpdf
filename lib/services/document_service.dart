@@ -262,7 +262,7 @@ class DocumentService extends ChangeNotifier {
                             _log.info('DocumentService', '[Sync] Step: CLONE - ${existingItem.name} exists in manual folder, creating sync reference');
                             if (entity is File) {
                                 final ext = name.split('.').last.toLowerCase();
-                                if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                                if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'].contains(ext)) {
                                     try {
                                         await addReference(entity.path, name, 
                                             folderId: folderId, 
@@ -333,7 +333,7 @@ class DocumentService extends ChangeNotifier {
                 } else if (entity is File) {
                      // Check extension
                      final ext = name.split('.').last.toLowerCase();
-                     if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+                     if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'].contains(ext)) {
                          _log.info('DocumentService', '[Sync] Step: ADD_FILE_START - $name to folder $folderId');
                          try {
                              await addReference(entity.path, name, 

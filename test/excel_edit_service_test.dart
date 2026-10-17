@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:excel_plus/excel_plus.dart';
 import 'package:passwordpdf_manager/services/excel_edit_service.dart';
@@ -59,6 +59,39 @@ void main() {
       // Clean up copy
       if (File(result.savedPath).existsSync()) {
         await File(result.savedPath).delete();
+      }
+    });
+
+    test('loadRichWorkbook loads legacy .xls file (HTML table format)', () async {
+      final service = ExcelEditService();
+      final legacyPath = '${tempDir.path}/legacy_table.xls';
+      await File(legacyPath).writeAsString('<table><tr><td>Col1</td><td>Col2</td></tr><tr><td>Val1</td><td>123</td></tr></table>');
+
+      final wb = await service.loadRichWorkbook(legacyPath);
+      expect(wb.sheets.isNotEmpty, isTrue);
+      final sheet = wb.sheets.first;
+      expect(sheet.getCell(0, 0)?.rawValue, equals('Col1'));
+      expect(sheet.getCell(0, 1)?.rawValue, equals('Col2'));
+      expect(sheet.getCell(1, 0)?.rawValue, equals('Val1'));
+      expect(sheet.getCell(1, 1)?.rawValue, equals('123'));
+    });
+
+    test('loadRichWorkbook loads binary OLE2 .xls file (file_example_XLS_50.xls)', () async {
+      final service = ExcelEditService();
+      final wb = await service.loadRichWorkbook('test_files/file_example_XLS_50.xls');
+      expect(wb.sheets.isNotEmpty, isTrue);
+      final sheet = wb.sheets.first;
+      // Header
+      expect(sheet.getCell(0, 1)?.rawValue, equals('First Name'));
+      expect(sheet.getCell(0, 2)?.rawValue, equals('Last Name'));
+      expect(sheet.getCell(0, 4)?.rawValue, equals('Country'));
+      // Row 1
+      expect(sheet.getCell(1, 1)?.rawValue, equals('Dulce'));
+      expect(sheet.getCell(1, 2)?.rawValue, equals('Abril'));
+      expect(sheet.getCell(1, 4)?.rawValue, equals('United States'));
+      // No replacement characters
+      for (final cell in sheet.cells.values) {
+        expect(cell.rawValue.contains('\uFFFD'), isFalse);
       }
     });
   });

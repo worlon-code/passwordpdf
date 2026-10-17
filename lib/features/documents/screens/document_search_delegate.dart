@@ -63,7 +63,7 @@ class DocumentSearchDelegate extends SearchDelegate<DocumentItem?> {
         return ListTile(
           leading: Icon(
             item.isFolder ? Icons.folder : _getFileIcon(item.name),
-            color: item.isFolder ? Colors.blue : null,
+            color: item.isFolder ? Colors.amber : _getFileColor(item.name),
           ),
           title: Text(item.name),
           subtitle: item.isFolder 
@@ -83,11 +83,33 @@ class DocumentSearchDelegate extends SearchDelegate<DocumentItem?> {
       case 'doc':
       case 'docx':
         return Icons.description;
+      case 'csv':
+      case 'tsv':
+        return Icons.table_view;
       case 'xls':
       case 'xlsx':
-        return Icons.grid_on;
+        return Icons.table_chart;
       default:
         return Icons.insert_drive_file;
+    }
+  }
+
+  Color _getFileColor(String fileName) {
+    final ext = fileName.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'pdf':
+        return Colors.red;
+      case 'doc':
+      case 'docx':
+        return const Color(0xFF185ABD);
+      case 'csv':
+      case 'tsv':
+        return const Color(0xFF0F9D58);
+      case 'xls':
+      case 'xlsx':
+        return const Color(0xFF107C41);
+      default:
+        return Colors.grey;
     }
   }
 }

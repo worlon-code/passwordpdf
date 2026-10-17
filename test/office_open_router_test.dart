@@ -1,4 +1,4 @@
-﻿import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:passwordpdf_manager/features/documents/services/office_open_router.dart';
 
 void main() {
@@ -8,19 +8,20 @@ void main() {
       expect(routeForPath('SAMPLE.PDF'), equals(OfficeOpenTarget.pdfInApp));
     });
 
-    test('routes .docx to wordInApp', () {
+    test('routes .docx and .doc to wordInApp', () {
       expect(routeForPath('/path/to/sample.docx'), equals(OfficeOpenTarget.wordInApp));
       expect(routeForPath('REPORT.DOCX'), equals(OfficeOpenTarget.wordInApp));
+      expect(routeForPath('/path/to/old.doc'), equals(OfficeOpenTarget.wordInApp));
+      expect(routeForPath('MEMO.DOC'), equals(OfficeOpenTarget.wordInApp));
     });
 
-    test('routes .xlsx to excelInApp', () {
+    test('routes .xlsx, .xls, .csv, .tsv to excelInApp', () {
       expect(routeForPath('/path/to/sample.xlsx'), equals(OfficeOpenTarget.excelInApp));
       expect(routeForPath('SHEET.XLSX'), equals(OfficeOpenTarget.excelInApp));
-    });
-
-    test('routes legacy .doc and .xls to externalHandoff', () {
-      expect(routeForPath('/path/to/old.doc'), equals(OfficeOpenTarget.externalHandoff));
-      expect(routeForPath('/path/to/old.xls'), equals(OfficeOpenTarget.externalHandoff));
+      expect(routeForPath('/path/to/old.xls'), equals(OfficeOpenTarget.excelInApp));
+      expect(routeForPath('BUDGET.XLS'), equals(OfficeOpenTarget.excelInApp));
+      expect(routeForPath('/path/to/data.csv'), equals(OfficeOpenTarget.excelInApp));
+      expect(routeForPath('/path/to/data.tsv'), equals(OfficeOpenTarget.excelInApp));
     });
 
     test('routes unknown extensions to externalHandoff', () {

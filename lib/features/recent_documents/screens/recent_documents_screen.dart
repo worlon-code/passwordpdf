@@ -87,6 +87,24 @@ class _RecentDocumentsScreenState extends State<RecentDocumentsScreen> {
     }
   }
 
+  IconData _getFileIcon(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return Icons.description;
+    if (lower.endsWith('.csv') || lower.endsWith('.tsv')) return Icons.table_view;
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) return Icons.table_chart;
+    return Icons.insert_drive_file;
+  }
+
+  Color _getFileColor(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.pdf')) return Colors.red;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return const Color(0xFF185ABD);
+    if (lower.endsWith('.csv') || lower.endsWith('.tsv')) return const Color(0xFF0F9D58);
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) return const Color(0xFF107C41);
+    return Colors.grey;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -142,12 +160,12 @@ class _RecentDocumentsScreenState extends State<RecentDocumentsScreen> {
                         leading: Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+                            color: _getFileColor(document.fileName).withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Icon(
-                            Icons.picture_as_pdf,
-                            color: Theme.of(context).colorScheme.primary,
+                            _getFileIcon(document.fileName),
+                            color: _getFileColor(document.fileName),
                           ),
                         ),
                         title: Text(

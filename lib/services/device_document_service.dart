@@ -107,7 +107,7 @@ class DeviceDocumentService {
              markParents(file.path, pdfFolders);
           } else if (['doc', 'docx'].contains(ext)) {
              markParents(file.path, docFolders);
-          } else if (['xls', 'xlsx'].contains(ext)) {
+          } else if (['xls', 'xlsx', 'csv', 'tsv'].contains(ext)) {
              markParents(file.path, excelFolders);
           }
         }
@@ -309,7 +309,7 @@ class DeviceDocumentService {
           final extMap = {
              'PDF': ['pdf'],
              'Word': ['doc', 'docx'],
-             'Excel': ['xls', 'xlsx']
+             'Excel': ['xls', 'xlsx', 'csv', 'tsv']
           };
           
           if (extMap.containsKey(filterType)) {
@@ -395,7 +395,7 @@ class DeviceDocumentService {
 
     if (!root.existsSync()) return [];
 
-    final allowedExtensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx'};
+    final allowedExtensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.tsv'};
     final ignoredDirs = {
       'Android', // Restricted access, usually
       '.', // Hidden files

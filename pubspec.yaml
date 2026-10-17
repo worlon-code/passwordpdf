@@ -43,6 +43,7 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   receive_sharing_intent: ^1.8.1
   open_filex: ^4.3.2
+  url_launcher: ^6.3.1
   shimmer: ^3.0.0
 
   # Office (Word/Excel) view + edit — MIT/Apache/BSD, fully offline. VERIFY latest majors on pub.dev.
@@ -50,12 +51,14 @@ dependencies:
   pluto_grid: ^8.0.0         # native editable grid UI (MIT)
   docx_file_viewer: ^1.0.2   # pure-Flutter .docx viewer widget `DocxView` (Apache-2.0)
   docx_creator: ^1.2.7       # .docx read (DocxReader) + PDF export (PdfExporter) + edit; pure Dart (MIT)
+  xml: ^6.6.1
   
   # Update System
   dio: ^5.7.0
   crypto: ^3.0.3            # sha256 for key-health token + PIN fallback
   cryptography: ^2.7.0      # AES-256-GCM (Task 15) + Argon2id (Tasks 16/19)
   package_info_plus: ^8.1.0 # used by UpdateService + main.dart for version string
+  excel2003: ^1.0.0
 
 dependency_overrides:
   share_plus: ^10.0.0

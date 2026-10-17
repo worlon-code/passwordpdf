@@ -23,6 +23,12 @@ class FolderNavigationScreen extends StatelessWidget {
 /// Static class to hold pending folder navigation
 class DashboardFolderNavigation {
   static String? pendingFolderId;
+
+  static String? takePending() {
+    final val = pendingFolderId;
+    pendingFolderId = null;
+    return val;
+  }
   
   static void clear() {
     pendingFolderId = null;

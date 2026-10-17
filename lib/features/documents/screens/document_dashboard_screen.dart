@@ -35,6 +35,7 @@ import '../../documents/widgets/folder_selection_dialog.dart';
 import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
 import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 // Import the new dialog
 import 'package:passwordpdf_manager/features/documents/widgets/delete_confirmation_dialog.dart';
 
@@ -111,7 +112,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   void _startAutoSync() {
     // Initial Sync
     _docService.syncAllFolders().then((_) async {
-        await _docService.initialize(); // Reload from DB
         _updateFolderBadges();
         if (mounted) setState(() {}); 
     });
@@ -120,7 +120,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _syncTimer = Timer.periodic(const Duration(minutes: 10), (timer) {
         if (mounted) {
             _docService.syncAllFolders().then((_) async {
-                 await _docService.initialize(); // Reload from DB
                  _updateFolderBadges();
                  if (mounted) setState(() {});
                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Auto-Sync Completed'), duration: Duration(seconds: 1)));
@@ -140,7 +139,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     
     try {
         await _docService.syncAllFolders();
-        await _docService.initialize(); // Reload from DB
         _updateFolderBadges();
         
         if (mounted) {
@@ -184,7 +182,23 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     super.dispose();
   }
 
+  int _lastItemCount = -1;
+  int _lastFolderCount = -1;
+  DateTime? _lastUpdateTime;
+
   void _updateUI() {
+    final allItems = _docService.getAllItems();
+    final allFolders = _docService.getFolders();
+    final now = DateTime.now();
+    if (_lastUpdateTime != null &&
+        now.difference(_lastUpdateTime!).inMilliseconds < 100 &&
+        allItems.length == _lastItemCount &&
+        allFolders.length == _lastFolderCount) {
+      return;
+    }
+    _lastUpdateTime = now;
+    _lastItemCount = allItems.length;
+    _lastFolderCount = allFolders.length;
     _folderCountCache.clear();
     _updateFolderBadges();
     if (mounted) setState(() {});
@@ -322,7 +336,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       MaterialPageRoute(
         builder: (_) => const FileSystemBrowser(
           allowMultiple: true,
-          allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx'],
+          allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'],
         ),
       ),
     );
@@ -368,6 +382,19 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _folderCountCache.clear(); // Clear cache on reload
     if (showLoading) setState(() => _isLoading = true);
     try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedOption = prefs.getString('dashboard_sort_option');
+      final savedAsc = prefs.getBool('dashboard_sort_asc');
+      if (savedOption != null) {
+        _sortOption = SortOption.values.firstWhere(
+          (e) => e.name == savedOption,
+          orElse: () => SortOption.dateModified,
+        );
+      }
+      if (savedAsc != null) {
+        _sortAscending = savedAsc;
+      }
+
       await _docService.initialize();
       _log.info('DocumentDashboard', 'Service initialized');
     } catch (e) {
@@ -381,9 +408,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         });
         
         // Check for pending folder navigation (from notification tap)
-        if (DashboardFolderNavigation.pendingFolderId != null) {
-          final folderId = DashboardFolderNavigation.pendingFolderId;
-          DashboardFolderNavigation.clear();
+        final folderId = DashboardFolderNavigation.takePending();
+        if (folderId != null) {
           setState(() {
             _currentFolderId = folderId;
           });
@@ -685,7 +711,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx'],
+        allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'],
         allowMultiple: true,
       );
 
@@ -1002,7 +1028,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         await for (final entity in sourceDir.list(recursive: recursive, followLinks: false)) {
              if (entity is File) {
                  final ext = entity.path.split('.').last.toLowerCase();
-                 if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) totalFiles++;
+                 if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'].contains(ext)) totalFiles++;
              }
         }
     } catch (e) {
@@ -1066,7 +1092,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 }
             } else if (entity is File) {
                final ext = entity.path.split('.').last.toLowerCase();
-               if (['pdf', 'doc', 'docx', 'xls', 'xlsx'].contains(ext)) {
+               if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'].contains(ext)) {
                    final parentPath = entity.parent.path;
                    final parentId = folderMap[parentPath] ?? rootFolder.id; // Fallback to root for Flat Import
                    
@@ -1703,14 +1729,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
-    if (!item.isPdf) {
-      if (!mounted) return;
-      await openDocument(context, filePath);
-      return;
-    }
-    
-    final fileName = item.name;
-    
     // Check existence explicitly
     final file = File(filePath);
     if (!file.existsSync()) {
@@ -1722,140 +1740,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
       return;
     }
 
-    final pdfService = PdfPasswordService();
-    final tools = PdfToolsService();
-    
-    // 1. Check if specific password stored (Association)
-    final storedPassword = await pdfService.getPasswordForDocument(filePath);
-    if (storedPassword != null) {
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => PdfViewerScreen(
-              filePath: filePath,
-              fileName: fileName,
-              password: storedPassword,
-            ),
-          ),
-        );
-      }
-      return;
-    }
-
-    // 2. Check if file is actually protected
-    // Display loading
     if (!mounted) return;
-    
-    // Track if dialog is open
-    bool dialogOpen = true;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (c) => const Center(child: CircularProgressIndicator()),
-    );
-    
-    try {
-      _log.debug('SmartOpen', 'Checking protection for $filePath');
-      final isProtected = await tools.isProtected(filePath);
-      _log.debug('SmartOpen', 'File protected: $isProtected');
-      
-      if (!isProtected) {
-        if (dialogOpen) {
-          Navigator.pop(context); // Close loading
-          dialogOpen = false;
-        }
-        
-        if (mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => PdfViewerScreen(
-                filePath: filePath,
-                fileName: fileName,
-                password: '',
-                onSuccess: () => pdfService.saveDocumentPassword(filePath, ''),
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      
-      // 3. Try saved passwords
-      _log.debug('SmartOpen', 'Fetching saved passwords');
-      final storage = StorageService();
-      final passwords = await storage.getAllPasswords();
-      final encryption = context.read<EncryptionService>();
-      
-      _log.debug('SmartOpen', 'Found ${passwords.length} saved passwords');
-      
-      String? foundPassword;
-      String? foundKeyName;
-      
-      for (final p in passwords) {
-        final decrypted = await encryption.decrypt(p.encryptedValue);
-        if (decrypted != null) {
-          _log.debug('SmartOpen', 'Trying password: ${p.keyName}');
-          if (await tools.verifyPassword(filePath, decrypted)) {
-            _log.debug('SmartOpen', 'Password matched!');
-            foundPassword = decrypted;
-            foundKeyName = p.keyName;
-            break;
-          }
-        }
-      }
-      
-      if (dialogOpen) {
-        Navigator.pop(context); // Close loading
-        dialogOpen = false;
-      }
-      
-      if (foundPassword != null) {
-        // Success! Save association and open
-        await pdfService.saveDocumentPassword(filePath, foundPassword);
-        if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             SnackBar(content: Text('Unlocked with saved password: ${foundKeyName ?? "Unknown"}'), backgroundColor: Colors.green),
-           );
-           Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => PdfViewerScreen(
-                filePath: filePath,
-                fileName: fileName,
-                password: foundPassword,
-              ),
-            ),
-          );
-        }
-        return;
-      }
-      
-    } catch (e, stack) {
-      _log.error('SmartOpen', 'Error opening document: $e', e, stack);
-      if (dialogOpen && mounted) {
-        Navigator.pop(context);
-        dialogOpen = false;
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error opening file: $e'), backgroundColor: Colors.red),
-        );
-      }
-      return; 
-    }
-    
-    // Ensure dialog close if not closed above
-    if (dialogOpen && mounted) {
-      Navigator.pop(context);
-      dialogOpen = false;
-    }
-    
-    // 4. Fallback to manual input with "Add to list" option
-    if (mounted) {
-      await _showSmartPasswordDialogAndOpen(filePath, fileName);
-    }
+    await openDocument(context, filePath);
   }
 
   Future<void> _showSmartPasswordDialogAndOpen(String filePath, String fileName) async {
@@ -2071,11 +1957,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                    icon: const Icon(Icons.archive),
                    onPressed: _exportSelectedItems,
                    tooltip: 'Export selected as ZIP',
-               ),
-               IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() => _selectedFileIds.clear()),
-                  tooltip: 'Clear selection',
                ),
             ] else ...[
               IconButton(
@@ -2391,6 +2272,10 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             _sortOption = option;
             _sortAscending = ascending;
           });
+          SharedPreferences.getInstance().then((prefs) {
+            prefs.setString('dashboard_sort_option', option.name);
+            prefs.setBool('dashboard_sort_asc', ascending);
+          });
         },
       ),
     );
@@ -2686,7 +2571,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         case 'DOC':
           return ext.endsWith('.doc') || ext.endsWith('.docx');
         case 'Excel':
-          return ext.endsWith('.xls') || ext.endsWith('.xlsx');
+          return ext.endsWith('.xls') || ext.endsWith('.xlsx') || ext.endsWith('.csv') || ext.endsWith('.tsv');
         default:
           return true;
       }
@@ -3076,7 +2961,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                             builder: (context) => FileInfoScreen(file: file),
                           ),
                         );
-                        if (result == 'open' && file.isPdf && mounted && !isMissing) {
+                        if (result == 'open' && mounted && !isMissing) {
                           await _openDocument(file);
                         }
                       } else if (value == 'select') {
@@ -3106,14 +2991,16 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   IconData _getFileIcon(DocumentItem file) {
     if (file.isPdf) return Icons.picture_as_pdf;
     if (file.isDoc) return Icons.description;
+    if (file.isCsv) return Icons.table_view;
     if (file.isExcel) return Icons.table_chart;
     return Icons.insert_drive_file;
   }
 
   Color _getFileColor(DocumentItem file) {
     if (file.isPdf) return Colors.red;
-    if (file.isDoc) return Colors.blue;
-    if (file.isExcel) return Colors.green;
+    if (file.isDoc) return const Color(0xFF185ABD);
+    if (file.isCsv) return const Color(0xFF0F9D58);
+    if (file.isExcel) return const Color(0xFF107C41);
     return Colors.grey;
   }
 

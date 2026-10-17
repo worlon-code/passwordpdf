@@ -27,6 +27,7 @@ class AppConstants {
   static const List<String> supportedPdfExtensions = ['pdf'];
   static const List<String> supportedDocExtensions = ['doc', 'docx'];
   static const List<String> supportedExcelExtensions = ['xls', 'xlsx'];
+  static const List<String> supportedCsvExtensions = ['csv', 'tsv'];
   
   // UI
   static const double defaultPadding = 16.0;
