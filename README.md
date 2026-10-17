@@ -2,6 +2,37 @@
 
 A secure Flutter application for managing PDF files and passwords with advanced folder organization and encryption.
 
+## Version 1.2.8 (Build 127) - In-App Word & Excel Office Suite, Legacy Support & Performance
+
+### 🚀 Major Highlights
+
+#### In-App Microsoft Word & Google Docs Workspace (`.docx`, `.doc`)
+- **Dual View Modes**: Switch seamlessly between **Print Layout** (centered A4/Letter paper sheets with margins, drop shadow, and page footers) and **Mobile Reflow** (optimized compact reading).
+- **Rich Formatting Ribbon**: Paragraph styles (Normal, Title, Heading 1–3), font families (Calibri, Roboto, Arial, Times New Roman, etc.), font sizes (8–72 pt), bold, italic, underline, strikethrough, text colors, and highlights.
+- **In-Page Rich Editing**: Interactive cursor placement directly on the paper canvas with character-level formatting and full Undo/Redo.
+- **Inline Tables & Images**: Rendered embedded OpenXML document images and tables with borders and cell shading.
+- **Tools**: Slide-down Find & Replace bar with live match counts, Document Outline drawer for quick heading navigation, Export to PDF, and Save Copy.
+
+#### In-App Microsoft Excel & Google Sheets Workspace (`.xlsx`, `.xls`, `.csv`, `.tsv`)
+- **High-Performance 2D Virtualized Grid**: Synchronized sticky row and column headers, column width / row height drag-resizing, active cell indicator with autofill square handle, and multi-cell range drag selection.
+- **`fx` Formula Bar & Name Box**: Interactive Name Box for direct cell jumping (`A1`, `D50`) and full formula editing input.
+- **Full AST Formula Engine**: Supports `=SUM`, `=AVERAGE`, `=COUNT`, `=MIN`, `=MAX`, `=IF`, `=CONCAT`, `=TRIM`, `=UPPER`, `=LOWER`, arithmetic operators, cell ranges (`A1:D10`), and automatic dependency recalculation.
+- **Live Status Bar**: Instant statistical aggregation (`Sum`, `Average`, `Count`, `Min`, `Max`) displayed in the footer whenever multiple cells are highlighted.
+- **Workbook Management**: Sheet tabs with add, rename, duplicate, and delete sheet actions, plus CSV active-sheet export.
+
+#### Full Legacy Format Support
+- **Legacy Word (`.doc`)**: High-fidelity plain/rich text extraction from Word 97–2003 binary formats.
+- **Legacy Excel (`.xls`)**: Dual-engine parser supporting both HTML-table `.xls` and binary OLE2/BIFF8 spreadsheets with full UTF-8 and UTF-16LE string decoding.
+- **CSV / TSV**: Fast delimiter-separated value loading with automatic numeric formatting.
+- **UI Consistency**: Distinct badges, color coding, and icons for `.doc`, `.xls`, and `.csv` across document cards, file browser, and search.
+
+#### Bug Fixes & Stability
+- **PDF Saved Password Race Condition**: Serialized password service initialization and candidate password retrieval, preventing false password rejection loops.
+- **Deterministic Folder Sorting**: Eliminated the 2x visual folder reshuffling during navigation and background sync by replacing blocking `statSync()` calls with pre-cached metadata and total ordering comparators.
+- **Spreadsheet Opening Performance**: Replaced dynamic coordinate key scanning with $O(1)$ dimension lookups and virtualized cell widget tree.
+
+### Previous Versions
+
 ## Version 1.0.0-beta.3 - Enhanced PDF Experience!
 
 ### 🚀 New Features
