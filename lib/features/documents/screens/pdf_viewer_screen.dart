@@ -18,6 +18,7 @@ import '../widgets/duplicate_files_dialog.dart';
 import '../../../services/document_service.dart';
 import 'file_info_screen.dart';
 import '../../../models/document_item_model.dart';
+import '../../../services/logging_service.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
@@ -47,6 +48,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   final PdfViewerController _pdfViewerController = PdfViewerController();
   PdfTextSearcher? _textSearcher;
   Key _viewerKey = UniqueKey();
+  final LoggingService _log = LoggingService();
   
   bool _hasCalledSuccess = false;
   String _currentPassword = '';
@@ -128,6 +130,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       _passwordAttempted = true;
       return _currentPassword;
     }
+    if (_passwordAttempted) {
+      _log.warn('PdfViewer', 'PDF open rejected password attempt for ${widget.filePath}');
+    }
     _passwordAttempted = true; // Mark as attempted for subsequent calls
 
     if (!mounted) return null;
@@ -163,6 +168,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     }
 
     // 4. If all candidates fail, Prompt User
+    if (_isLoading && mounted) {
+      setState(() => _isLoading = false);
+    }
+
     final password = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -174,6 +183,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     //              other = a real password attempt.
     if (password != null) {
       _currentPassword = password;
+      if (mounted) setState(() => _isLoading = true);
       return password;
     }
 
@@ -436,6 +446,11 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
               ] : [],
               // Error Handling
               errorBannerBuilder: (context, error, stackTrace, documentRef) {
+                if (_isLoading) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && _isLoading) setState(() => _isLoading = false);
+                  });
+                }
                 if (error.toString().contains('No password supplied')) {
                    return Center(
                      child: Column(

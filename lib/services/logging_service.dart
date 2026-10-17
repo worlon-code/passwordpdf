@@ -104,6 +104,10 @@ class LoggingService {
     _addLog('WARN', tag, message);
   }
 
+  void warning(String tag, String message) {
+    _addLog('WARN', tag, message);
+  }
+
   void error(String tag, String message, [dynamic error, StackTrace? stackTrace]) {
     String? stack;
     if (error != null) {
@@ -124,8 +128,8 @@ class LoggingService {
     await _storage.clearLogs();
   }
   
-  Future<List<LogEntry>> getAllLogs() async {
-    final maps = await _storage.getLogs(limit: 8000);
+  Future<List<LogEntry>> getAllLogs({int limit = 500}) async {
+    final maps = await _storage.getLogs(limit: limit);
     return maps.map((m) => LogEntry.fromMap(m)).toList();
   }
 

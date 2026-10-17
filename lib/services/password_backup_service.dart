@@ -248,6 +248,15 @@ extension RestoreOps on PasswordBackupService {
   }
 
   Future<int> applyRestore(List<RestoreConflict> conflicts) async {
+    // Restore re-establishes the password set under the CURRENT device key, so
+    // re-bless it: this lets encrypt() write even if a Keystore wipe left the key
+    // flagged unhealthy. If the key can't round-trip, we cannot store safely.
+    // Throw FormatException so the restore UI's `on FormatException` surfaces it.
+    final ok = await _encryption.adoptCurrentV2KeyAsHealthy();
+    if (!ok) {
+      throw const FormatException(
+          'Cannot restore: the device encryption key is not available.');
+    }
     var imported = 0;
     for (final c in conflicts) {
       if (c.resolution == ConflictResolution.skip) continue;

@@ -3,15 +3,17 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'services/cleanup_service.dart';
 import 'package:provider/provider.dart';
-import 'core/theme/app_theme.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
-import 'features/password_manager/screens/password_manager_screen.dart';
+import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
 import 'services/permission_service.dart';
 import 'services/encryption_service.dart';
+import 'services/storage_service.dart';
+import 'services/password_migration_service.dart';
+import 'services/pdf_password_service.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -19,11 +21,7 @@ import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'services/document_service.dart';
-import 'features/documents/screens/pdf_viewer_screen.dart';
-import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/documents/screens/all_documents_screen.dart';
-import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
-import 'models/document_item_model.dart';
 import 'features/authentication/widgets/animated_splash_logo.dart';
 import 'features/update/services/update_service.dart';
 import 'features/update/widgets/whats_new_dialog.dart';
@@ -82,6 +80,23 @@ void main() async {
     } catch (e) {
       log.error('App', 'initCrypto failed at startup: $e');
     }
+
+    // One-time v1->v2 password migration sweep. Fire-and-forget so it never
+    // blocks startup; idempotent, gated on both keys healthy, CAS +
+    // prove-before-overwrite. Passwords open normally meanwhile (read-both).
+    PasswordMigrationService(EncryptionService(), StorageService())
+        .migrateLegacyToV2()
+        .then((n) {
+      if (n > 0) log.info('App', 'Password migration: $n row(s) -> v2');
+    }).catchError((e) {
+      log.error('App', 'Password migration sweep failed', e);
+    });
+
+    PdfPasswordService().migratePdfPasswordsToV2().then((n) {
+      if (n > 0) log.info('App', 'PDF password migration: $n entry(ies) -> v2');
+    }).catchError((e) {
+      log.error('App', 'PDF password migration sweep failed', e);
+    });
     
     // Global Flutter Error Handler (Layout errors, etc)
     FlutterError.onError = (FlutterErrorDetails details) {
@@ -208,7 +223,7 @@ Context: ${details.context?.toDescription() ?? 'none'}
           ChangeNotifierProvider.value(value: settingsService),
           ChangeNotifierProvider.value(value: exportService), // Added for Notifications
           Provider<EncryptionService>.value(value: EncryptionService()),
-          Provider<DocumentService>.value(value: DocumentService()),
+          ChangeNotifierProvider<DocumentService>.value(value: DocumentService()),
           Provider<UpdateService>(create: (_) => UpdateService()), // Add UpdateService
         ],
         child: const MyApp(),
@@ -313,8 +328,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _isAuthenticated = false;
   bool _isLoading = true;
   bool _isProcessingIntent = false;
-  // Deduplication tracking: last intent path successfully consumed
-  String? _lastConsumedIntentPath;
+  // Bug-1 fix: stash the cold-start initial intent + its future so the file is
+  // processed + opened AFTER auth (deterministic), never raced by the dashboard.
+  List<SharedMediaFile>? _pendingInitialMedia;
+  Future<void>? _initialIntentFuture;
   int _selectedIndex = 0; // Added for default screen index
 
   @override
@@ -326,7 +343,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     _selectedIndex = settings.defaultScreenIndex;
     
     // Check for startup intents (Cold Start)
-    _checkInitialIntents();
+    _initialIntentFuture = _checkInitialIntents();
     
     // Perform other startup checks
     // Initialize app (Settings, Auth, Permissions)
@@ -346,36 +363,20 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   Future<void> _checkInitialIntents() async {
     try {
       final sharedFiles = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (sharedFiles.isNotEmpty) {
-        final file = sharedFiles.first;
-        if (file.path != null) {
-           PendingFileOpen.filePath = file.path;
-           _lastConsumedIntentPath = file.path;
-           // Fix for "Zombie Intent": Clear it so it doesn't reappear on resume
-           ReceiveSharingIntent.instance.reset();
-        }
+      if (sharedFiles.isNotEmpty && sharedFiles.first.path != null) {
+        // Bug-1 fix: STASH the raw cold-start intent only. The full copy/normalize
+        // (content:// -> temp) + navigation happen POST-AUTH via _handleSharedFiles
+        // (see _openInitialIntentAfterAuth), so a Gmail content:// path is copied
+        // and the open can't be raced by the dashboard's one-shot consumer.
+        _pendingInitialMedia = sharedFiles;
+        ReceiveSharingIntent.instance.reset(); // clear so it can't replay on resume
       }
     } catch (e) {
       LoggingService().error('App', 'Error checking initial intents', e);
     } finally {
-      _log.info('AppEntry', 'Initial intent check complete - last consumed: $_lastConsumedIntentPath');
+      _log.info('AppEntry', 'Initial intent check complete');
     }
   }
-
-  Future<void> _performStartupChecks() async {
-     // NOTE: We do not delay encryption setup here because we want to allow the UI to load first.
-     // However, we can perform non-blocking checks or just rely on MainScreen's checks.
-     // The original design had checks here, but we moved them to MainScreen for better context access.
-     // But since we call it in initState, we'll keep a minimal version or empty if MainScreen handles it.
-     // Actually, looking at previous steps, we moved logic to MainScreen. 
-     // So we can make this empty or just remove the call in initState if it's redundant.
-     // But to fix the build error without extensive refactoring, we define it.
-     
-     // Wait for layout
-     await Future.delayed(Duration.zero);
-  }
-
-
 
   Future<void> _handleSharedFiles(List<SharedMediaFile> files) async {
     if (files.isEmpty) return;
@@ -388,9 +389,6 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     // Consume the native launch intent immediately so it cannot be re-read by
     // getInitialMedia() on a later resume (root cause of "Open With" reopening
     // the previous document).
-    if (files.isNotEmpty && files.first.path != null) {
-      _lastConsumedIntentPath = files.first.path;
-    }
     ReceiveSharingIntent.instance.reset();
     _log.info('AppEntry', 'Received ${files.length} shared files');
     
@@ -655,6 +653,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         _isAuthenticated = true;
         _isLoading = false;
       });
+      _openInitialIntentAfterAuth();
     } else {
       _log.info('AppEntry', 'Authentication IS required - showing lock screen');
       setState(() {
@@ -738,18 +737,13 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
   
   Future<void> _checkForPendingIntent() async {
-    try {
-      final media = await ReceiveSharingIntent.instance.getInitialMedia();
-      if (media.isEmpty) return;
-      if (media.first.path == _lastConsumedIntentPath) {
-        ReceiveSharingIntent.instance.reset();
-        return;
-      }
-      _handleSharedFiles(media);
-      ReceiveSharingIntent.instance.reset();
-    } catch (e) {
-      _log.error('AppEntry', 'Error checking pending intent', e);
-    }
+    // BUG FIX (stale "Open With" reopening the previous file): do NOT re-read
+    // getInitialMedia() on resume. receive_sharing_intent caches `initialMedia`
+    // ONCE at launch and never updates it on onNewIntent, so re-reading it here
+    // replayed the ORIGINAL file. New "Open With"/share intents while the app is
+    // alive are delivered via the getMediaStream() listener registered in
+    // initState -> _handleSharedFiles. Nothing to do on resume.
+    return;
   }
 
   void _onAuthenticated() {
@@ -757,6 +751,22 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     setState(() {
       _isAuthenticated = true;
     });
+    _openInitialIntentAfterAuth();
+  }
+
+  /// Bug-1 fix: after INITIAL auth, wait for the cold-start intent read, then run
+  /// it through the SAME path as warm intents (copies content:// files, sets
+  /// PendingFileOpen, navigates to the docs tab so the dashboard opens it).
+  /// Runs once at startup only (NOT on resume) so it can never replay a stale file.
+  Future<void> _openInitialIntentAfterAuth() async {
+    try {
+      await _initialIntentFuture;
+    } catch (_) {}
+    final media = _pendingInitialMedia;
+    _pendingInitialMedia = null; // consume once
+    if (media != null && media.isNotEmpty) {
+      await _handleSharedFiles(media);
+    }
   }
 
   @override
@@ -990,11 +1000,19 @@ class _MainScreenState extends State<MainScreen> {
     final state = _allDocsKey.currentState;
     if (state == null) return false;
     
+    // 1. Search active
+    if (state.isSearching) {
+      state.stopSearch();
+      return true;
+    }
+
+    // 2. Multi-select active
     if (state.isSelectionMode) {
       state.clearSelection();
       return true;
     }
     
+    // 3. Subfolder open
     if (state.isFolderView && state.currentFolderPath != '/storage/emulated/0') {
       state.navigateUp();
       return true;
@@ -1008,11 +1026,13 @@ class _MainScreenState extends State<MainScreen> {
     final state = _dashboardKey.currentState;
     if (state == null) return false;
     
+    // 2. Multi-select active
     if (state.selectedFileIds.isNotEmpty) {
       state.clearSelection();
       return true;
     }
     
+    // 3. Subfolder open
     if (state.currentFolderId != null) {
       state.navigateUp();
       return true;
@@ -1033,7 +1053,7 @@ class _MainScreenState extends State<MainScreen> {
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         
-        // Delegate to active screen's back handler
+        // Steps 1-3: Delegate to active screen (search, multi-select, subfolder)
         bool handled = false;
         switch (_currentIndex) {
           case 0:
@@ -1046,32 +1066,38 @@ class _MainScreenState extends State<MainScreen> {
             handled = await _handleSettingsBack();
             break;
         }
+        if (handled) return;
+
+        // Step 4: If not on default tab, switch to default tab
+        final defaultIndex = Provider.of<SettingsService>(context, listen: false).defaultScreenIndex;
+        if (_currentIndex != defaultIndex) {
+          setState(() => _currentIndex = defaultIndex);
+          return;
+        }
         
-        // If not handled by screen, show Exit dialog
-        if (!handled) {
-          final shouldExit = await showDialog<bool>(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: const Text('Exit App'),
-              content: const Text('Do you want to close the application?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Leave'),
-                ),
-              ],
-            ),
-          );
-          
-          if (shouldExit == true) {
-            AppEntry.backgroundTime = DateTime(2000);
-            AppEntry.exemptNextPause();
-            SystemNavigator.pop();
-          }
+        // Step 5: Already at root default -> show exit dialog / SystemNavigator.pop()
+        final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Exit App'),
+            content: const Text('Do you want to close the application?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Leave'),
+              ),
+            ],
+          ),
+        );
+        
+        if (shouldExit == true) {
+          AppEntry.backgroundTime = DateTime(2000);
+          AppEntry.exemptNextPause();
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
@@ -1086,9 +1112,13 @@ class _MainScreenState extends State<MainScreen> {
         bottomNavigationBar: NavigationBar(
           selectedIndex: _currentIndex,
           onDestinationSelected: (index) {
+            final prevIndex = _currentIndex;
             setState(() {
               _currentIndex = index;
             });
+            if (index == 1 && prevIndex != 1) {
+              DocumentDashboardScreen.currentState?.reload();
+            }
           },
           destinations: const [
              NavigationDestination(

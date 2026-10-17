@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
-import '../../../core/theme/app_theme.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../features/authentication/widgets/animated_splash_logo.dart';
 
@@ -188,7 +188,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     
     final decoration = widget.isOverlay 
-        ? BoxDecoration(color: Colors.black.withOpacity(0.85)) // Dark overlay
+        ? BoxDecoration(color: Colors.black.withValues(alpha: 0.85)) // Dark overlay
         : BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,
@@ -201,12 +201,19 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
             ),
           );
 
-    return Scaffold(
-      backgroundColor: widget.isOverlay ? Colors.transparent : null,
-      body: Container(
-        decoration: decoration,
-        child: SafeArea(
-          child: _showPinEntry ? _buildPinEntry() : _buildBiometricAuth(),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        SystemNavigator.pop();
+      },
+      child: Scaffold(
+        backgroundColor: widget.isOverlay ? Colors.transparent : null,
+        body: Container(
+          decoration: decoration,
+          child: SafeArea(
+            child: _showPinEntry ? _buildPinEntry() : _buildBiometricAuth(),
+          ),
         ),
       ),
     );
@@ -232,9 +239,9 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
             child: Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.5), width: 2),
               ),
               child: _isAuthenticating
                   ? const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(Colors.white))
@@ -246,7 +253,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
           
           Text(
             _message.isEmpty ? 'Tap to authenticate' : _message,
-            style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 16),
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 16),
             textAlign: TextAlign.center,
           ),
           
@@ -283,7 +290,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
+            color: Colors.white.withValues(alpha: 0.2),
             shape: BoxShape.circle,
           ),
           child: const Icon(Icons.lock, size: 48, color: Colors.white),
@@ -301,7 +308,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
         Text(
           _message,
           style: TextStyle(
-            color: _pinError ? Colors.red.shade200 : Colors.white.withOpacity(0.8),
+            color: _pinError ? Colors.red.shade200 : Colors.white.withValues(alpha: 0.8),
             fontSize: 14,
           ),
         ),
@@ -397,7 +404,7 @@ class _BiometricLockScreenState extends State<BiometricLockScreen> {
           height: 72,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.3), width: 1),
           ),
           child: Center(child: child),
         ),

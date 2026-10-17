@@ -4,11 +4,18 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import '../../../services/document_service.dart';
+import '../../../services/storage_service.dart';
+import '../../../services/docs_settings_backup_service.dart';
+import '../../documents/screens/file_system_browser.dart';
+import '../../documents/screens/document_dashboard_screen.dart';
 import '../services/settings_service.dart';
 import '../../../services/biometric_service.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/encryption_service.dart';
-import '../../debug/screens/debug_logs_screen.dart';
 import '../../authentication/screens/pin_entry_screen.dart';
 import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
@@ -16,7 +23,6 @@ import '../../developer/screens/developer_screen.dart';
 import '../../password_manager/screens/password_manager_screen.dart';
 import '../../../main.dart';
 import '../../update/services/update_service.dart';
-import '../../update/models/update_info.dart';
 import '../../update/widgets/update_dialogs.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -252,7 +258,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 settings.accentColor == color
                                     ? [
                                       BoxShadow(
-                                        color: color.withOpacity(0.5),
+                                        color: color.withValues(alpha: 0.5),
                                         blurRadius: 8,
                                       ),
                                     ]
@@ -309,7 +315,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showHexColorInput(BuildContext context, SettingsService settings) {
     final controller = TextEditingController(
       text:
-          settings.accentColor.value
+          settings.accentColor
+              .toARGB32()
               .toRadixString(16)
               .substring(2)
               .toUpperCase(),
@@ -391,6 +398,187 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
     );
+  }
+
+  Future<String?> _promptDocsBackupPassphrase({required bool confirm}) async {
+    final one = TextEditingController();
+    final two = TextEditingController();
+    bool obscure = true;
+    String? errorText;
+
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setSt) {
+          return AlertDialog(
+            title: Text(confirm
+                ? 'Set Backup Passphrase'
+                : 'Enter Backup Passphrase'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (confirm)
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        'This passphrase is the ONLY way to restore this backup. '
+                        'It cannot be recovered. Store it somewhere safe.',
+                        style: TextStyle(color: Colors.redAccent, fontSize: 13),
+                      ),
+                    ),
+                  TextField(
+                    controller: one,
+                    autofocus: true,
+                    obscureText: obscure,
+                    decoration: InputDecoration(
+                      labelText: 'Passphrase',
+                      helperText: 'Minimum 8 characters',
+                      errorText: errorText,
+                      suffixIcon: IconButton(
+                        icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
+                        onPressed: () => setSt(() => obscure = !obscure),
+                      ),
+                    ),
+                    onChanged: (_) {
+                      if (errorText != null) setSt(() => errorText = null);
+                    },
+                  ),
+                  if (confirm) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: two,
+                      obscureText: obscure,
+                      decoration: const InputDecoration(labelText: 'Confirm passphrase'),
+                      onChanged: (_) {
+                        if (errorText != null) setSt(() => errorText = null);
+                      },
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final a = one.text;
+                  final b = two.text;
+                  if (a.length < 8) {
+                    setSt(() => errorText = 'Passphrase must be at least 8 characters');
+                    return;
+                  }
+                  if (confirm && a != b) {
+                    setSt(() => errorText = 'Passphrases do not match');
+                    return;
+                  }
+                  Navigator.pop(ctx, a);
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _onDocsBackup() async {
+    final pass = await _promptDocsBackupPassphrase(confirm: true);
+    if (pass == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final svc = DocsSettingsBackupService(
+          SettingsService(), DocumentService(), StorageService());
+      final bytes = await svc.createBackup(pass);
+      final allItems = DocumentService().getAllItems();
+      final folderCount = allItems.where((i) => i.isFolder).length;
+      final fileCount = allItems.where((i) => i.isFile).length;
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      final fname = 'docs-settings-backup-$ts.pwdbak';
+
+      if (!mounted) return;
+      final choice = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Save your backup'),
+          content: Text(
+              'Backup prepared with $folderCount folder(s), $fileCount document(s), and app settings.\n\n'
+              'The file is encrypted with your passphrase. Anyone with BOTH the file and the passphrase can restore your data.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, 'save'), child: const Text('Save to device')),
+            TextButton(onPressed: () => Navigator.pop(ctx, 'share'), child: const Text('Share')),
+          ],
+        ),
+      );
+      if (choice == 'save') {
+        final dir = Directory(p.join(SettingsService().exportPath, 'Backup'));
+        await dir.create(recursive: true);
+        final out = File(p.join(dir.path, fname));
+        await out.writeAsBytes(bytes, flush: true);
+        if (!mounted) return;
+        messenger.showSnackBar(SnackBar(content: Text('Saved: ${out.path}'), backgroundColor: Colors.green));
+      } else if (choice == 'share') {
+        final tmp = await getTemporaryDirectory();
+        final file = File(p.join(tmp.path, fname));
+        await file.writeAsBytes(bytes, flush: true);
+        await Share.shareXFiles([XFile(file.path)],
+            subject: 'Documents & Settings Backup');
+      }
+    } on FormatException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message), backgroundColor: Colors.orange));
+    } catch (e) {
+      LoggingService().error('Settings', 'Docs backup failed', e);
+      messenger.showSnackBar(SnackBar(content: Text('Backup failed: $e'), backgroundColor: Colors.red));
+    }
+  }
+
+  Future<void> _onDocsRestore() async {
+    final backupDir = Directory(p.join(SettingsService().exportPath, 'Backup'));
+    final initialPath = backupDir.existsSync()
+        ? backupDir.path
+        : (Directory('/storage/emulated/0/Download').existsSync()
+            ? '/storage/emulated/0/Download'
+            : null);
+    final paths = await Navigator.of(context).push<List<String>>(
+      MaterialPageRoute(
+        builder: (_) => FileSystemBrowser(
+          initialPath: initialPath,
+          allowedExtensions: const ['json', 'pwdbak', 'bak'],
+          allowMultiple: false,
+        ),
+      ),
+    );
+    if (paths == null || paths.isEmpty || !mounted) return;
+    final path = paths.first;
+
+    final pass = await _promptDocsBackupPassphrase(confirm: false);
+    if (pass == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final bytes = await File(path).readAsBytes();
+      final svc = DocsSettingsBackupService(
+          SettingsService(), DocumentService(), StorageService());
+      final result = await svc.restoreFromBytes(bytes, pass);
+      await DocumentDashboardScreen.currentState?.reload();
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(
+          'Restored: settings applied, ${result.documentsAdded} document(s) added, ${result.recentsAdded} recent(s).',
+        ),
+        backgroundColor: Colors.green,
+      ));
+    } on FormatException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message), backgroundColor: Colors.orange));
+    } catch (e) {
+      LoggingService().error('Settings', 'Docs restore failed', e);
+      messenger.showSnackBar(SnackBar(content: Text('Restore failed: $e'), backgroundColor: Colors.red));
+    }
   }
 
   @override
@@ -811,6 +999,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
 
+          _buildSectionHeader('Backup & Restore'),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.backup_outlined),
+                  title: const Text('Backup Documents & Settings'),
+                  subtitle: const Text('Encrypted with a passphrase; saved as .json'),
+                  onTap: _onDocsBackup,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.restore),
+                  title: const Text('Restore Documents & Settings'),
+                  subtitle: const Text('Merges documents; replaces settings'),
+                  onTap: _onDocsRestore,
+                ),
+                const ListTile(
+                  leading: Icon(Icons.info_outline),
+                  title: Text('Password backup lives under Password Manager → Backup'),
+                  dense: true,
+                ),
+              ],
+            ),
+          ),
+
           // About Section
           _buildSectionHeader('About'),
           Card(
@@ -942,7 +1156,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(
                     color: Theme.of(
                       context,
-                    ).colorScheme.onPrimaryContainer.withOpacity(0.8),
+                    ).colorScheme.onPrimaryContainer.withValues(alpha: 0.8),
                   ),
                 ),
               ],

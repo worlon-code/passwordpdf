@@ -229,7 +229,7 @@ class _ConflictResolutionDialogState extends State<ConflictResolutionDialog> {
               // Actions Bar (Bottom)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                color: theme.colorScheme.surfaceVariant.withOpacity(0.3),
+                color: theme.colorScheme.surfaceVariant.withValues(alpha: 0.3),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [

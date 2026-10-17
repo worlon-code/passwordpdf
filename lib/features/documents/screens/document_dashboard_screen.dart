@@ -21,19 +21,17 @@ import '../../../services/export_queue_service.dart';
 import '../../../models/document_item_model.dart';
 import '../../../models/password_model.dart';
 import 'removed_files_screen.dart';
+import 'folder_navigation_screen.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/pdf_tools_service.dart';
 import 'pdf_viewer_screen.dart';
+import '../services/office_open_router.dart';
 import 'file_info_screen.dart';
 import 'export_progress_screen.dart';
-import '../widgets/password_selection_dialog.dart';
-import '../../common/utils/file_conflict_resolver.dart';
 import '../widgets/conflict_resolution_dialog.dart';
 import '../../../models/conflict_resolution_model.dart';
-import 'folder_navigation_screen.dart';
 import '../widgets/duplicate_files_dialog.dart';
 import '../../documents/widgets/folder_selection_dialog.dart';
-import '../../../main.dart' show PendingFileOpen;
 import 'package:passwordpdf_manager/features/common/models/sort_option.dart';
 import 'package:passwordpdf_manager/features/common/widgets/sort_bottom_sheet.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
@@ -73,6 +71,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   
   bool get _isExporting => _exportQueue.jobs.any((j) => j.status == ExportStatus.inProgress);
   Timer? _syncTimer;
+  Timer? _debounceSyncTimer;
+  StreamSubscription? _folderSub;
   
   // Performance cache for folder counts (avoid repeated service calls during scroll)
   final Map<String, (int fileCount, int folderCount)> _folderCountCache = {};
@@ -89,11 +89,20 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     _navigateUp();
   }
 
+  Future<void> reload() async {
+    _folderCountCache.clear();
+    await _docService.initialize();
+    await _docService.syncAllFolders();
+    _updateFolderBadges();
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
     DocumentDashboardScreen.currentState = this; // Register for back handling
     _exportQueue.addListener(_updateUI);
+    _docService.addListener(_updateUI);
     _exportQueue.init(); // Load history
     _exportQueue.startWorker();
     _initialize().then((_) => _startAutoSync());
@@ -154,16 +163,29 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     }
   }
   
+  void _debouncedSync() {
+    _debounceSyncTimer?.cancel();
+    _debounceSyncTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        _syncWithReload(isPullToRefresh: true);
+      }
+    });
+  }
+
   @override
   void dispose() {
     DocumentDashboardScreen.currentState = null; // Deregister
+    _folderSub?.cancel();
     _syncTimer?.cancel();
+    _debounceSyncTimer?.cancel();
+    _docService.removeListener(_updateUI);
     _exportQueue.removeListener(_updateUI);
     _exportQueue.stopWorker();
     super.dispose();
   }
 
   void _updateUI() {
+    _folderCountCache.clear();
     _updateFolderBadges();
     if (mounted) setState(() {});
   }
@@ -380,18 +402,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             final item = _docService.getAllItems().firstWhere((i) => i.id == fileId);
             _openDocument(item);
           } else {
-            // Fallback: open directly via viewer
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => PdfViewerScreen(
-                  filePath: filePath,
-                  fileName: fileName,
-                  isExternal: true,
-                  deleteOnClose: isTemp,
-                ),
-              ),
-            );
+            // Fallback: open directly via router
+            openDocument(context, filePath);
           }
         }
         
@@ -954,7 +966,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                  context: context,
                  builder: (context) => AlertDialog(
                      title: const Text('Multiple Conflicts Found'),
-                     content: Text('Multiple folders named "${folderName}" already exist.\n\nAutomtically rename existing folders to "${folderName}_1", "${folderName}_2", etc. to proceed?'),
+                     content: Text('Multiple folders named "$folderName" already exist.\n\nAutomatically rename existing folders to "${folderName}_1", "${folderName}_2", etc. to proceed?'),
                      actions: [
                         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
                         ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Auto Rename')),
@@ -1031,32 +1043,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     int processedFiles = 0;
     
     try {
-        // Create Root Folder (with sourcePath for Sync!)
-        // Note: createFolder doesn't support sourcePath param yet, we might need to update it or update item after creation.
-        // DocumentService.createFolder returns DocumentItem.
-        
+        // Create root folder, import files, then persist sourcePath on the root for Sync.
         var rootFolder = await _docService.createFolder(
            finalFolderName,
            parentId: _currentFolderId,
         );
-        
-        // Update root folder with sourcePath (Manual update via service private access workaround or update API)
-        // Since we can't easily change service signature right now, we can update the item in memory and save.
-        // Actually, let's check DocumentService.createFolder.
-        // It likely doesn't have sourcePath. We should add it or use updateItem? 
-        // Let's assume we can update it later. Wait, we need it.
-        // Quick Hack: Modify local item and call _saveDocuments() logic? No, too risky.
-        // Better: We will rely on "Zero Copy" where files have sourcePath. 
-        // But for "Sync" feature, we need *Folder* to have sourcePath.
-        // I will add a method `_docService.updateFolderSourcePath(id, path)` or just handle it if possible.
-        // For now, let's just proceed with import logic. If I can't save sourcePath, Phase 3 (Sync) will fail.
-        // Actually, I can use `_docService.updateItem` if exposed? No.
-        
-        // Let's instantiate a modified item and inject it? No.
-        // Let's modify DocumentService.createFolder later?
-        // Okay, I will try to call `_docService.updateItem(rootFolder.copyWith(sourcePath: sourceDir.path))` if it exists.
-        // If not, I'll add `updateItem` to DocumentService in next step.
-        
+
         // Map: Source Dir Path -> App Folder ID
         final folderMap = <String, String>{sourceDir.path: rootFolder.id};
         
@@ -1701,15 +1693,6 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
   }
 
   Future<void> _openDocument(DocumentItem item) async {
-    if (!item.isPdf) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cannot open this file type')),
-        );
-      }
-      return;
-    }
-    
     final filePath = item.sourcePath; // Use actual file path, not ID
     if (filePath == null) {
        if (mounted) {
@@ -1717,6 +1700,12 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           const SnackBar(content: Text('File path is missing')),
         );
       }
+      return;
+    }
+
+    if (!item.isPdf) {
+      if (!mounted) return;
+      await openDocument(context, filePath);
       return;
     }
     
@@ -2375,7 +2364,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           comparison = a.modifiedAt.compareTo(b.modifiedAt);
           break;
       }
-      return _sortAscending ? comparison : -comparison;
+      
+      int result = _sortAscending ? comparison : -comparison;
+      
+      // Deterministic tie-breaker to prevent unstable quicksort shuffling
+      if (result == 0) {
+        result = a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      }
+      if (result == 0) {
+        result = a.id.compareTo(b.id);
+      }
+      return result;
     });
     return items;
   }
@@ -2563,7 +2562,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                         Icon(
                           Icons.folder_open,
                           size: 80,
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
                         ),
                         const SizedBox(height: 16),
                         Text(_filterType == 'All' ? 'Folder is empty' : 'No $_filterType files found'),
@@ -2621,7 +2620,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+      color: Theme.of(context).colorScheme.surfaceVariant.withValues(alpha: 0.3),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -2755,7 +2754,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           Icon(
             Icons.folder_outlined,
             size: 120,
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
           ),
           const SizedBox(height: 24),
           Text(
@@ -2786,7 +2785,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     return RepaintBoundary(
       child: Card(
         margin: const EdgeInsets.only(bottom: 12),
-      color: isSelected ? Colors.blue.withOpacity(0.1) : null,
+      color: isSelected ? Colors.blue.withValues(alpha: 0.1) : null,
       child: InkWell(
         onLongPress: () {
           setState(() {
@@ -2822,7 +2821,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
+                  color: Colors.blue.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Icon(Icons.folder, color: Colors.blue, size: 28),
@@ -2976,7 +2975,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         color: isSelected 
             ? Theme.of(context).colorScheme.primaryContainer 
-            : (isMissing ? Colors.red.withOpacity(0.05) : null),
+            : (isMissing ? Colors.red.withValues(alpha: 0.05) : null),
         child: InkWell(
           onLongPress: () {
             _toggleFileSelection(file.id);
@@ -3005,8 +3004,8 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                   height: 48,
                   decoration: BoxDecoration(
                     color: isMissing 
-                        ? Colors.red.withOpacity(0.1) 
-                        : fileColor.withOpacity(0.1),
+                        ? Colors.red.withValues(alpha: 0.1) 
+                        : fileColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Center(

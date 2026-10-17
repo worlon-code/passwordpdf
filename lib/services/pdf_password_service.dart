@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'encryption_service.dart';
 import 'logging_service.dart';
+import 'storage_service.dart';
 
 /// Service for managing PDF document passwords
 /// Tracks which documents have been opened successfully with which passwords
@@ -13,18 +14,19 @@ class PdfPasswordService {
 
   final EncryptionService _encryptionService = EncryptionService();
   final LoggingService _log = LoggingService();
+  final StorageService _storageService = StorageService();
   
   static const String _documentsPasswordsKey = 'document_passwords';
   static const String _migrationCompleteKey = 'password_paths_migrated_v2';
   
-  /// Map of file path -> encrypted password
   Map<String, String> _documentPasswords = {};
   bool _isInitialized = false;
+  bool _loadFailed = false;
 
   /// Initialize the service
   Future<void> initialize() async {
     if (_isInitialized) return;
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getString(_documentsPasswordsKey);
@@ -34,6 +36,17 @@ class PdfPasswordService {
       }
       _isInitialized = true;
     } catch (e) {
+      // Preserve the raw (possibly corrupt but still recoverable) blob so we
+      // don't overwrite it with '{}' on the next _save(). Gate writes off.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final raw = prefs.getString(_documentsPasswordsKey);
+        if (raw != null && raw.isNotEmpty) {
+          final ts = DateTime.now().millisecondsSinceEpoch;
+          await prefs.setString('${_documentsPasswordsKey}_corrupt_$ts', raw);
+        }
+      } catch (_) {}
+      _loadFailed = true;
       _documentPasswords = {};
       _isInitialized = true;
     }
@@ -41,6 +54,7 @@ class PdfPasswordService {
 
   /// Save document password mappings
   Future<void> _save() async {
+    if (_loadFailed) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_documentsPasswordsKey, jsonEncode(_documentPasswords));
   }
@@ -149,6 +163,7 @@ class PdfPasswordService {
     await initialize();
     final passwords = <String>{};
     
+    // 1. From document history
     for (final encrypted in _documentPasswords.values) {
       if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
       
@@ -156,6 +171,19 @@ class PdfPasswordService {
       if (decrypted != null && decrypted.isNotEmpty) {
         passwords.add(decrypted);
       }
+    }
+    
+    // 2. From Password Manager
+    try {
+      final managerPasswords = await _storageService.getAllPasswords();
+      for (final model in managerPasswords) {
+        final decrypted = await _encryptionService.decrypt(model.encryptedValue);
+        if (decrypted != null && decrypted.isNotEmpty) {
+          passwords.add(decrypted);
+        }
+      }
+    } catch (e) {
+      _log.error('PdfPasswordService', 'Failed to load passwords from Password Manager', e);
     }
     
     return passwords.toList();
@@ -179,12 +207,11 @@ class PdfPasswordService {
       final newPath = oldToNewPathMap[oldPath];
       
       if (newPath != null && newPath != oldPath) {
-        // Map old path to new path
         newPasswords[newPath] = entry.value;
+        // MUST NOT also copy oldPath (was leaving both around, bloating the map)
         migratedCount++;
         _log.info('PdfPasswordService', 'Migrated: $oldPath -> $newPath');
       } else {
-        // Keep as-is
         newPasswords[oldPath] = entry.value;
       }
     }
@@ -196,5 +223,54 @@ class PdfPasswordService {
     }
     
     await prefs.setBool(_migrationCompleteKey, true);
+  }
+
+  static const String _pdfSweepDoneKey = 'pdf_pw_sweep_done_v1';
+  static bool _sweeping = false;
+
+  Future<int> migratePdfPasswordsToV2() async {
+    if (_sweeping) return 0;
+    _sweeping = true;
+    try {
+      final enc = EncryptionService();
+      if (!enc.canOverwriteLegacy || !enc.canWriteV2) return 0;
+
+      await initialize();
+      if (_loadFailed) return 0;
+
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(_pdfSweepDoneKey) == true) return 0;
+
+      var migrated = 0;
+      var v1remaining = 0;
+      final keys = _documentPasswords.keys.toList(growable: false);
+      for (final k in keys) {
+        final ct = _documentPasswords[k];
+        if (ct == null || ct == 'NO_PASSWORD') continue;
+        if (ct.startsWith('v2:')) continue;
+
+        final plain = await enc.decrypt(ct);
+        if (plain == null) { v1remaining++; continue; }
+        if (enc.xorEncryptLegacy(plain) != ct) { v1remaining++; continue; }
+
+        final v2 = await enc.encrypt(plain);
+        if (v2 == null || !v2.startsWith('v2:')) { v1remaining++; continue; }
+        final back = await enc.decrypt(v2);
+        if (back != plain) { v1remaining++; continue; }
+
+        // CAS-like: only replace if the map still holds the same ct.
+        if (_documentPasswords[k] == ct) {
+          _documentPasswords[k] = v2;
+          migrated++;
+        } else {
+          v1remaining++;
+        }
+      }
+      if (migrated > 0) await _save();
+      if (v1remaining == 0) await prefs.setBool(_pdfSweepDoneKey, true);
+      return migrated;
+    } finally {
+      _sweeping = false;
+    }
   }
 }

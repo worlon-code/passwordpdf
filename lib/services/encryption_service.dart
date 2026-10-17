@@ -1,9 +1,9 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:crypto/crypto.dart' as crypto; // sha256 key-health token
+import 'package:shared_preferences/shared_preferences.dart'; // v2 key-health mirror (survives Keystore wipe)
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'logging_service.dart';
 
 /// Service for encryption key management
@@ -31,17 +31,30 @@ class EncryptionService {
   static const String _legacyKeyStorageKey = 'encryption_key';
   // sha256(legacy key) recorded when health is known-good; gates all overwrites.
   static const String _legacyKeyHealthToken = 'legacy_key_health_v1';
+  // sha256(aes_key_v2) mirror stored in PLAIN SharedPreferences so it SURVIVES a
+  // Keystore wipe (secure storage vanishes with the Keystore). Lets us detect
+  // that aes_key_v2 was wiped + silently re-minted, which would orphan v2 data.
+  static const String _v2KeyHealthPref = 'v2_key_health_v1';
   static const String _v2Tag = 'v2:'; // ciphertext namespace tag (read-both)
 
   SecretKey? _aesKey; // cached v2 key (decoded)
   bool _legacyKeyHealthy = false; // true only after token matches
+  bool _v2KeyHealthy = false; // true only when the v2 key matches its health mirror (or fresh)
+  bool _initialized = false; // set true only after initCrypto() fully completes
 
   /// Call ONCE from single-threaded startup, before any encrypt/decrypt.
   Future<void> initCrypto() async {
-    // Idempotency guard: re-entry within a process is a no-op so a second
-    // aes_key_v2 can never be minted (double-mint protection, code-level).
-    if (_aesKey != null) return;
-    // 1) Ensure v2 key exists (mint once).
+    // Idempotency guard: re-entry within a process is a no-op. Gated on a
+    // DEDICATED flag (not _aesKey) set only AFTER init fully completes, so a
+    // partial init (e.g. a prefs write throws) is re-runnable, not latched.
+    // (Minting stays double-safe via the `b64 == null` check below.)
+    if (_initialized) return;
+       // 1) Ensure v2 key exists (mint once) + detect a Keystore wipe/re-mint.
+    // Read the plain-prefs health mirror BEFORE minting: if a mirror exists but
+    // the current v2 key is gone (or differs), the Keystore was wiped and any v2
+    // data written under the old key is now unreadable -> disable v2 writes.
+    final prefs = await SharedPreferences.getInstance();
+    final priorHealth = prefs.getString(_v2KeyHealthPref);
     var b64 = await _secureStorage.read(key: _aesKeyStorageKey);
     if (b64 == null || b64.isEmpty) {
       final fresh = await AesGcm.with256bits().newSecretKey();
@@ -50,7 +63,51 @@ class EncryptionService {
       await _secureStorage.write(key: _aesKeyStorageKey, value: b64);
       _log.info('EncryptionService', 'Minted aes_key_v2 (256-bit)');
     }
-    _aesKey = SecretKey(base64Decode(b64));
+    final keyBytes = base64Decode(b64);
+    _aesKey = SecretKey(keyBytes);
+    final healthNow = crypto.sha256.convert(keyBytes).toString();
+    if (priorHealth == null) {
+      // First run of wipe-detection (fresh install, or upgrade from a build that
+      // minted the key before detection existed). Trust-on-first-use: record the
+      // baseline. Safe because no v2 data can exist before the writer ships.
+      await prefs.setString(_v2KeyHealthPref, healthNow);
+      _v2KeyHealthy = true;
+    } else if (priorHealth == healthNow) {
+      _v2KeyHealthy = true; // current key matches its mirror
+    } else {
+      // Mirror exists but the current key differs: re-minted after a Keystore
+      // wipe (or the key changed). v2 data under the old key is orphaned. Keep
+      // the old mirror as evidence and DISABLE v2 writes; recovery = passphrase
+      // Restore.
+      _v2KeyHealthy = false;
+      _log.error(
+        'EncryptionService',
+        'v2 key health MISMATCH (Keystore wipe/re-mint) — v2 writes DISABLED',
+      );
+    }
+
+    // 1b) v2-key FUNCTIONAL self-test: a hash match only proves the key BYTES
+    // are unchanged, not that the Keystore can still perform crypto with them
+    // (a key can be present but invalidated). Require a real encrypt->decrypt
+    // round-trip before trusting the key to WRITE v2 data.
+    if (_v2KeyHealthy) {
+      try {
+        // Round-trip through the SAME envelope build + slice as real writes/reads,
+        // so a future package change to nonce/tag length flips health false
+        // (fail-safe) instead of silently writing unreadable v2.
+        final raw = await _buildV2Blob('v2_selftest');
+        final back = await _decryptAesGcm(base64Encode(raw));
+        if (back != 'v2_selftest') {
+          _v2KeyHealthy = false;
+          _log.error('EncryptionService',
+              'v2 key self-test MISMATCH — v2 writes DISABLED');
+        }
+      } catch (e) {
+        _v2KeyHealthy = false;
+        _log.error('EncryptionService',
+            'v2 key self-test threw — v2 writes DISABLED', e);
+      }
+    }
 
     // 2) Key-health gate on the LEGACY key.
     final legacy = await _secureStorage.read(key: _legacyKeyStorageKey);
@@ -72,9 +129,49 @@ class EncryptionService {
     } else {
       _legacyKeyHealthy = false; // no legacy key => nothing to read-migrate
     }
+
+    // NOTE: initCrypto() intentionally has NO internal try/catch — main.dart
+    // wraps this call in a swallowing try/catch, so if secure-storage read/write
+    // THROWS (corrupt Keystore) we leave _aesKey null + _v2KeyHealthy false =>
+    // canWriteV2 false (fail-safe). Do NOT remove that main.dart guard.
+    _initialized = true; // reached only on a fully successful init
   }
 
   bool get canOverwriteLegacy => _legacyKeyHealthy && _aesKey != null;
+  /// Safe to WRITE new v2 ciphertext. The v2 writer + migration MUST gate on
+  /// this so a wiped/re-minted key can never produce unreadable v2 data.
+  bool get canWriteV2 => _v2KeyHealthy && _aesKey != null;
+
+  /// RESTORE-ONLY re-bless: adopt the current in-Keystore v2 key as healthy.
+  /// Functional self-test first; on success, persist the health mirror for the
+  /// current key and enable v2 writes. Returns false if the key can't round-trip
+  /// (caller MUST abort). Passphrase Restore calls this because it deliberately
+  /// re-establishes the password set under the CURRENT device key (e.g. a Keystore
+  /// wipe silently re-minted it). DO NOT call from initCrypto/encrypt/startup —
+  /// that would mask a real key wipe and defeat the fail-safe.
+  Future<bool> adoptCurrentV2KeyAsHealthy() async {
+    if (_aesKey == null) return false;
+    try {
+      final raw = await _buildV2Blob('v2_selftest');
+      final back = await _decryptAesGcm(base64Encode(raw));
+      if (back != 'v2_selftest') return false;
+    } catch (_) {
+      return false;
+    }
+    try {
+      final bytes = await _aesKey!.extractBytes();
+      final healthNow = crypto.sha256.convert(bytes).toString();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_v2KeyHealthPref, healthNow);
+      _v2KeyHealthy = true;
+      _log.info('EncryptionService',
+          'Adopted current v2 key as healthy (restore re-bless)');
+      return true;
+    } catch (e) {
+      _log.error('EncryptionService', 'adopt: failed to persist health', e);
+      return false;
+    }
+  }
 
   // Callback to notify when key is set
   void Function()? onKeySet;
@@ -185,27 +282,27 @@ class EncryptionService {
   }
 
   /// Encrypt a value using the stored key
+  /// Build a v2 AES-256-GCM envelope for [plainText]: [12B nonce][ciphertext][16B
+  /// GCM tag] — the exact layout _decryptAesGcm slices. Shared by encrypt() and
+  /// the key self-test. Requires _aesKey != null (callers ensure it).
+  Future<List<int>> _buildV2Blob(String plainText) async {
+    final algo = AesGcm.with256bits();
+    final box = await algo.encrypt(utf8.encode(plainText), secretKey: _aesKey!);
+    return <int>[...box.nonce, ...box.cipherText, ...box.mac.bytes];
+  }
+
+  /// Encrypt a value as v2 (AES-256-GCM, tagged 'v2:'). Refuses to write (returns
+  /// null) when the v2 key is unhealthy/unavailable — NEVER emits legacy XOR or
+  /// undecryptable data. Callers already treat null as a failure and surface it.
   Future<String?> encrypt(String plainText) async {
     try {
-      if (_encryptionKey == null) {
-        _encryptionKey = await _secureStorage.read(key: 'encryption_key');
-      }
-
-      if (_encryptionKey == null) {
-        _log.error('EncryptionService', 'No encryption key set');
+      if (!canWriteV2) {
+        _log.error('EncryptionService',
+            'encrypt blocked: v2 key not writable (unhealthy/uninitialised)');
         return null;
       }
-
-      // Simple XOR encryption for demo (use proper AES in production)
-      final keyBytes = utf8.encode(_encryptionKey!);
-      final plainBytes = utf8.encode(plainText);
-      final encryptedBytes = <int>[];
-
-      for (int i = 0; i < plainBytes.length; i++) {
-        encryptedBytes.add(plainBytes[i] ^ keyBytes[i % keyBytes.length]);
-      }
-
-      return base64Encode(encryptedBytes);
+      final raw = await _buildV2Blob(plainText);
+      return '$_v2Tag${base64Encode(raw)}';
     } catch (e) {
       _log.error('EncryptionService', 'Encryption failed', e);
       return null;
@@ -246,7 +343,11 @@ class EncryptionService {
   /// stored v1 blob. Used by the migration verify (later steps); proves the
   /// legacy decrypt was correct before any overwrite.
   String xorEncryptLegacy(String plainText) {
-    final keyBytes = utf8.encode(_encryptionKey!);
+    final key = _encryptionKey;
+    if (key == null) {
+      throw StateError('xorEncryptLegacy: legacy key not loaded');
+    }
+    final keyBytes = utf8.encode(key);
     final plainBytes = utf8.encode(plainText);
     final out = <int>[];
     for (int i = 0; i < plainBytes.length; i++) {

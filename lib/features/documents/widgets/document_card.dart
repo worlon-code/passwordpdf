@@ -41,7 +41,7 @@ class DocumentCard extends StatelessWidget {
           leading: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+              color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Icon(
@@ -80,8 +80,8 @@ class DocumentCard extends StatelessWidget {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      Theme.of(context).colorScheme.primary.withOpacity(0.7),
-                      Theme.of(context).colorScheme.secondary.withOpacity(0.7),
+                      Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+                      Theme.of(context).colorScheme.secondary.withValues(alpha: 0.7),
                     ],
                   ),
                 ),
@@ -109,13 +109,13 @@ class DocumentCard extends StatelessWidget {
                   Text(
                     _fileSize,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                   Text(
                     _modifiedDate,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
                 ],

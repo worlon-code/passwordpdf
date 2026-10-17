@@ -31,7 +31,7 @@ class SettingsService extends ChangeNotifier {
   bool _hasPinSet = false;
   Color _accentColor = const Color(0xFF6750A4); // Default Material 3 primary
   int _fontSizeAdjustment = -4; // -7 to 0, default -4
-  int _maxLogCount = 8000;
+  int _maxLogCount = 300;
   bool _developerModeEnabled = false;
   int _defaultScreenIndex = 0; // 0 = All Docs, 1 = Documents
   int _autoLockTimeout = 10; // Default 10 minutes
@@ -56,6 +56,43 @@ class SettingsService extends ChangeNotifier {
   int get autoLockTimeout => _autoLockTimeout;
   int get lastViewedBuildNumber => _lastViewedBuildNumber;
   bool get autoCheckUpdates => _autoCheckUpdates;
+
+  // ==================== BACKUP (Settings) ====================
+  /// Whitelisted, device-portable settings for the Documents+Settings backup.
+  /// EXCLUDES: export_path (device-local), auth_method + PIN (credentials/lockout),
+  /// developer_mode_enabled + last_viewed_build_number (internal).
+  Map<String, dynamic> exportBackupMap() => {
+    'theme_mode': _themeMode.toString(),
+    'accent_color': _accentColor.toARGB32(),
+    'font_size_adjustment': _fontSizeAdjustment,
+    'max_log_count': _maxLogCount,
+    'default_screen_index': _defaultScreenIndex,
+    'auto_lock_timeout': _autoLockTimeout,
+    'auto_check_updates': _autoCheckUpdates,
+  };
+
+  /// Apply a whitelisted settings map from a backup (REPLACE). Each field is
+  /// type-checked and skipped if absent/wrong-type; the numeric setters clamp
+  /// ranges, so out-of-range restored values cannot brick anything.
+  Future<void> importBackupMap(Map<String, dynamic> m) async {
+    final tm = m['theme_mode'];
+    if (tm is String) {
+      await setThemeMode(ThemeMode.values
+          .firstWhere((e) => e.toString() == tm, orElse: () => _themeMode));
+    }
+    final ac = m['accent_color'];
+    if (ac is int) await setAccentColor(Color(ac));
+    final fs = m['font_size_adjustment'];
+    if (fs is int) await setFontSizeAdjustment(fs);
+    final ml = m['max_log_count'];
+    if (ml is int) await setMaxLogCount(ml);
+    final ds = m['default_screen_index'];
+    if (ds is int) await setDefaultScreenIndex(ds);
+    final al = m['auto_lock_timeout'];
+    if (al is int) await setAutoLockTimeout(al);
+    final au = m['auto_check_updates'];
+    if (au is bool) await setAutoCheckUpdates(au);
+  }
 
   /// Initialize settings service
   Future<void> initialize() async {
@@ -102,7 +139,7 @@ class SettingsService extends ChangeNotifier {
     // Load max log count
     final maxLog = _prefs!.getInt('max_log_count');
     if (maxLog != null) {
-      _maxLogCount = maxLog.clamp(1000, 50000);
+      _maxLogCount = maxLog.clamp(50, 5000);
     }
     _log.setMaxLogLimit(_maxLogCount);
 
@@ -164,7 +201,7 @@ class SettingsService extends ChangeNotifier {
   /// Set accent color
   Future<void> setAccentColor(Color color) async {
     _accentColor = color;
-    await _prefs?.setInt('accent_color', color.value);
+    await _prefs?.setInt('accent_color', color.toARGB32());
     notifyListeners();
   }
 
@@ -175,9 +212,9 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set max log count (1000 to 50000)
+  /// Set max log count (50 to 5000)
   Future<void> setMaxLogCount(int count) async {
-    _maxLogCount = count.clamp(1000, 50000);
+    _maxLogCount = count.clamp(50, 5000);
     await _prefs?.setInt('max_log_count', _maxLogCount);
     _log.setMaxLogLimit(_maxLogCount);
     notifyListeners();

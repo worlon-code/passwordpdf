@@ -101,7 +101,7 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
                     width: 100,
                     height: 100,
                     decoration: BoxDecoration(
-                      color: _getFileColor().withOpacity(0.1),
+                      color: _getFileColor().withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(16),
                     ),
                     child: Icon(
@@ -122,7 +122,7 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     decoration: BoxDecoration(
-                      color: _getFileColor().withOpacity(0.1),
+                      color: _getFileColor().withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
@@ -257,7 +257,7 @@ class _FileInfoScreenState extends State<FileInfoScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
+                  color: Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(Icons.copy_all, color: Colors.orange),

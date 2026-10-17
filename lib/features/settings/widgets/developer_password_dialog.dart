@@ -65,6 +65,7 @@ class _DeveloperPasswordDialogState extends State<DeveloperPasswordDialog> {
             autofocus: true,
             decoration: InputDecoration(
               labelText: 'Password',
+              helperText: 'Minimum 6 characters',
               border: const OutlineInputBorder(),
               errorText: _errorMessage,
               suffixIcon: IconButton(

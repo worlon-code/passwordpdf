@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import '../models/document_item_model.dart';
@@ -57,7 +59,7 @@ class DuplicateInfo {
 }
 
 /// Service for managing document folders and files
-class DocumentService {
+class DocumentService extends ChangeNotifier {
   static final DocumentService _instance = DocumentService._internal();
   factory DocumentService() => _instance;
   DocumentService._internal();
@@ -67,6 +69,7 @@ class DocumentService {
   
   static const String _documentsKey = 'documents_items';
   final List<DocumentItem> _items = [];
+  final Map<String, Completer<bool>> _folderSyncLocks = {};
 
   // Need path provider to persist copies
   // We assume main.dart/UI passes us valid paths, but we need to import: 
@@ -171,28 +174,38 @@ class DocumentService {
   /// Sync specific folder with its source path
   /// Returns true if sync successful, false if failed
   Future<bool> syncFolder(String folderId) async {
-    final folderIndex = _items.indexWhere((i) => i.id == folderId);
-    if (folderIndex == -1) {
-      _log.error('DocumentService', 'Sync failed: Folder not found with ID $folderId');
-      return false;
+    if (_folderSyncLocks.containsKey(folderId)) {
+      _log.info('DocumentService', 'Sync already in progress for folder ID $folderId, awaiting lock');
+      return await _folderSyncLocks[folderId]!.future;
     }
-    final folder = _items[folderIndex];
-    
-    if (folder.sourcePath == null) {
-      _log.error('DocumentService', 'Sync failed: Folder ${folder.name} has no sourcePath');
-      return false;
-    }
-    
-    final dir = Directory(folder.sourcePath!);
-    if (!await dir.exists()) {
-      _log.error('DocumentService', 'Sync failed: Source directory not found: ${folder.sourcePath}');
-      return false; // Source folder deleted?
-    }
-    
-    _log.info('DocumentService', 'Syncing folder: ${folder.name}');
-    
+    final lock = Completer<bool>();
+    _folderSyncLocks[folderId] = lock;
+
     try {
-        final entities = await dir.list(recursive: false, followLinks: false).toList();
+      final folderIndex = _items.indexWhere((i) => i.id == folderId);
+      if (folderIndex == -1) {
+        _log.error('DocumentService', 'Sync failed: Folder not found with ID $folderId');
+        lock.complete(false);
+        return false;
+      }
+      final folder = _items[folderIndex];
+      
+      if (folder.sourcePath == null) {
+        _log.error('DocumentService', 'Sync failed: Folder ${folder.name} has no sourcePath');
+        lock.complete(false);
+        return false;
+      }
+      
+      final dir = Directory(folder.sourcePath!);
+      if (!await dir.exists()) {
+        _log.error('DocumentService', 'Sync failed: Source directory not found: ${folder.sourcePath}');
+        lock.complete(false);
+        return false; // Source folder deleted?
+      }
+      
+      _log.info('DocumentService', 'Syncing folder: ${folder.name}');
+      
+      final entities = await dir.list(recursive: false, followLinks: false).toList();
         
         // 1. Sync Files/Folders from Disk to App
         // Special case: Download folder should only sync files, not subfolders
@@ -402,19 +415,15 @@ class DocumentService {
         }
 
         _log.info('DocumentService', '[Sync] SUCCESS - ${folder.name}');
+        lock.complete(true);
         return true;
     } catch (e, stackTrace) {
-        _log.error('DocumentService', '[Sync] FAILED for ${folder.name}: $e\nStack trace:\n$stackTrace', e);
+        _log.error('DocumentService', '[Sync] FAILED: $e\nStack trace:\n$stackTrace', e);
+        lock.complete(false);
         return false;
+    } finally {
+        _folderSyncLocks.remove(folderId);
     }
-  }
-
-  /// @deprecated Use addReference instead for Zero Copy architecture
-  /// Import a file (Copy to App Storage + DB) - LEGACY
-  Future<ImportResult> importFile(String sourcePath, String sourceName, {String? targetName, bool allowDuplicate = false}) async {
-    // Redirect to Zero Copy addReference
-    _log.info('DocumentService', '[LEGACY] importFile called, redirecting to addReference');
-    return addReference(sourcePath, targetName ?? sourceName, allowDuplicate: allowDuplicate);
   }
 
   /// Get folder path string for an item
@@ -510,6 +519,139 @@ class DocumentService {
 
   /// Get all items
   List<DocumentItem> getAllItems() => List.unmodifiable(_items);
+
+  /// Merge document items from a backup into the current library. Id-preserving,
+  /// relationship-repairing: NEVER overwrites or orphans an existing item.
+  ///  - dedup: files by sourcePath, folders by (name + parentId);
+  ///  - added items get FRESH unique ids;
+  ///  - folder membership (fileIds) reconstructed from resolved parentId,
+  ///    unioned with existing children;
+  ///  - refs that resolve to nothing are dropped (dangling parent -> unorganized).
+  /// Returns the number of items added.
+  Future<int> mergeFromBackup(List<DocumentItem> incoming) async {
+    await initialize();
+
+    final existingIds = _items.map((e) => e.id).toSet();
+    final existingFileByPath = <String, DocumentItem>{};
+    final existingFolderByKey = <String, DocumentItem>{};
+    final existingFolderByPath = <String, DocumentItem>{};
+    
+    for (final e in _items) {
+      if (e.isFolder) {
+        existingFolderByKey['${e.name.toLowerCase()}|${e.parentId ?? ''}'] = e;
+        if (e.sourcePath != null && e.sourcePath!.isNotEmpty) {
+          existingFolderByPath[e.sourcePath!] = e;
+        }
+      } else if (e.sourcePath != null && e.sourcePath!.isNotEmpty) {
+        existingFileByPath[e.sourcePath!] = e;
+      }
+    }
+
+    final usedIds = {...existingIds};
+    final idMap = <String, String>{};
+    final additions = <String, DocumentItem>{};
+    var seq = DateTime.now().microsecondsSinceEpoch;
+    String freshId() {
+      var c = (seq++).toString();
+      while (usedIds.contains(c)) {
+        c = (seq++).toString();
+      }
+      usedIds.add(c);
+      return c;
+    }
+
+    // Pass 1: Match duplicates & allocate fresh IDs for additions
+    for (final item in incoming) {
+      DocumentItem? dup;
+      if (item.isFolder) {
+        if (item.sourcePath != null && item.sourcePath!.isNotEmpty) {
+          dup = existingFolderByPath[item.sourcePath!];
+        }
+        dup ??= existingFolderByKey['${item.name.toLowerCase()}|${item.parentId ?? ''}'];
+      } else if (item.sourcePath != null && item.sourcePath!.isNotEmpty) {
+        dup = existingFileByPath[item.sourcePath!];
+      }
+
+      if (dup != null) {
+        idMap[item.id] = dup.id;
+        // If the backup item is an imported folder with sync, ensure isImported & sourcePath are preserved
+        if (item.isFolder && item.isImported && item.sourcePath != null) {
+          final dupIdx = _items.indexWhere((e) => e.id == dup!.id);
+          if (dupIdx != -1) {
+            _items[dupIdx] = _items[dupIdx].copyWith(
+              isImported: true,
+              sourcePath: item.sourcePath,
+              lastSynced: item.lastSynced ?? _items[dupIdx].lastSynced,
+            );
+          }
+        }
+      } else {
+        final fid = freshId();
+        idMap[item.id] = fid;
+        additions[fid] = item;
+      }
+    }
+
+    String? resolveRef(String? ref) {
+      if (ref == null) return null;
+      final m = idMap[ref];
+      if (m != null) return m;
+      if (existingIds.contains(ref)) return ref;
+      return null;
+    }
+
+    // Pass 2: If existing files were unorganized but backup specifies a parent folder, update parent
+    for (final item in incoming) {
+      if (item.parentId != null) {
+        final resolvedParent = resolveRef(item.parentId);
+        final mappedId = idMap[item.id];
+        if (mappedId != null && resolvedParent != null) {
+          final idx = _items.indexWhere((e) => e.id == mappedId);
+          if (idx != -1 && _items[idx].parentId == null) {
+            _items[idx] = _items[idx].copyWith(parentId: resolvedParent);
+          }
+        }
+      }
+    }
+
+    // Pass 3: Build and append new items with fully resolved parent references
+    final built = <DocumentItem>[];
+    additions.forEach((fid, item) {
+      built.add(DocumentItem(
+        id: fid,
+        name: item.name,
+        type: item.type,
+        sourcePath: item.sourcePath,
+        parentId: resolveRef(item.parentId),
+        fileIds: const [],
+        size: item.size,
+        createdAt: item.createdAt,
+        modifiedAt: item.modifiedAt,
+        isImported: item.isImported,
+        isImportedFile: item.isImportedFile,
+        isNew: item.isNew,
+        missingOnDevice: item.missingOnDevice,
+        addedAt: item.addedAt,
+        lastSynced: item.lastSynced,
+      ));
+    });
+    _items.addAll(built);
+
+    // Pass 4: Reconstruct fileIds for all folders in _items
+    for (var i = 0; i < _items.length; i++) {
+      if (_items[i].isFolder) {
+        final folderId = _items[i].id;
+        final kids = _items
+            .where((e) => e.isFile && e.parentId == folderId)
+            .map((e) => e.id)
+            .toList();
+        _items[i] = _items[i].copyWith(fileIds: kids);
+      }
+    }
+
+    await _saveDocuments();
+    return built.length;
+  }
 
   /// Get all folders
   List<DocumentItem> getFolders() {
@@ -932,6 +1074,7 @@ class DocumentService {
         _items.clear();
         _items.addAll(parsed);
         _log.info('DocumentService', 'Loaded ${_items.length} items (skipped $skipped corrupt)');
+        notifyListeners();
       }
     } catch (e) {
       _log.error('DocumentService', 'Failed to load documents', e);
@@ -939,14 +1082,21 @@ class DocumentService {
   }
 
   /// Save documents to storage
-  Future<void> _saveDocuments() async {
+  Future<bool> _saveDocuments() async {
     try {
+      final current = _prefs?.getString(_documentsKey);
+      if (current != null && current.isNotEmpty) {
+        await _prefs?.setString('${_documentsKey}_bak', current);
+      }
       final jsonList = _items.map((item) => item.toJson()).toList();
       final jsonString = json.encode(jsonList);
-      await _prefs?.setString(_documentsKey, jsonString);
+      final ok = await _prefs?.setString(_documentsKey, jsonString) ?? false;
       _log.debug('DocumentService', 'Saved ${_items.length} items');
+      notifyListeners();
+      return ok;
     } catch (e) {
       _log.error('DocumentService', 'Failed to save documents', e);
+      return false;
     }
   }
 

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../settings/services/settings_service.dart';
 import '../../../services/logging_service.dart';
-import '../../../core/theme/app_theme.dart';
 
 /// PIN entry screen for PIN authentication
 class PinEntryScreen extends StatefulWidget {
@@ -130,30 +130,46 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppTheme.primaryLight,
-              AppTheme.secondaryLight,
-            ],
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (widget.isSetupMode && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        } else {
+          SystemNavigator.pop();
+        }
+      },
+      child: Scaffold(
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Theme.of(context).colorScheme.primary,
+                Theme.of(context).colorScheme.secondary,
+              ],
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Back button for verify mode (not setup)
-              if (!widget.isSetupMode)
-                Align(
-                  alignment: Alignment.topLeft,
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                )
+          child: SafeArea(
+            child: Column(
+              children: [
+                // Back button for verify mode (not setup)
+                if (!widget.isSetupMode)
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      onPressed: () {
+                        if (Navigator.canPop(context)) {
+                          Navigator.pop(context);
+                        } else {
+                          SystemNavigator.pop();
+                        }
+                      },
+                    ),
+                  )
               else
                 const SizedBox(height: 48),
               
@@ -163,7 +179,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
+                  color: Colors.white.withValues(alpha: 0.2),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
@@ -191,7 +207,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
               Text(
                 _message,
                 style: TextStyle(
-                  color: _hasError ? Colors.red.shade200 : Colors.white.withOpacity(0.8),
+                  color: _hasError ? Colors.red.shade200 : Colors.white.withValues(alpha: 0.8),
                   fontSize: 16,
                 ),
                 textAlign: TextAlign.center,
@@ -232,6 +248,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 
@@ -293,7 +310,7 @@ class _PinEntryScreenState extends State<PinEntryScreen> {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             border: Border.all(
-              color: Colors.white.withOpacity(0.3),
+              color: Colors.white.withValues(alpha: 0.3),
               width: 1,
             ),
           ),

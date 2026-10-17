@@ -55,3 +55,9 @@ logs/
 .fvm/
 # Added by code-review-graph
 .code-review-graph/
+
+# Android per-machine + signing secrets (must never be committed)
+**/android/local.properties
+**/android/key.properties
+**/android/**/*.jks
+**/android/**/*.keystore

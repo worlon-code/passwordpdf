@@ -34,6 +34,10 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled true
+        // arm64-v8a only is applied at BUILD TIME via release_build.ps1's
+        // `assembleRelease -Ptarget-platform=android-arm64` (Flutter's own ABI
+        // selection). ndk.abiFilters does NOT filter Flutter's native libs when
+        // building via gradle, so do not add an abiFilters block here.
     }
 
     buildTypes {

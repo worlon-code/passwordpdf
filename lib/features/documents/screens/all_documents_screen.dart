@@ -1,24 +1,19 @@
 import 'dart:async';
-import 'package:flutter/services.dart';
-import 'package:passwordpdf_manager/services/pdf_password_service.dart';
-import 'package:passwordpdf_manager/features/documents/screens/pdf_viewer_screen.dart';
+import 'package:passwordpdf_manager/features/documents/services/office_open_router.dart';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/material.dart' as material;
 import 'package:open_filex/open_filex.dart';
 import 'package:passwordpdf_manager/services/device_document_service.dart';
 import 'package:passwordpdf_manager/services/document_service.dart';
 import 'package:passwordpdf_manager/services/logging_service.dart';
 import 'package:passwordpdf_manager/services/export_queue_service.dart';
 import 'package:passwordpdf_manager/main.dart';
-import 'package:passwordpdf_manager/features/documents/screens/folder_navigation_screen.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/duplicate_files_dialog.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/conflict_resolution_dialog.dart';
 import 'package:passwordpdf_manager/models/conflict_resolution_model.dart';
 import 'package:passwordpdf_manager/models/document_item_model.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/folder_selection_dialog.dart';
-import 'package:passwordpdf_manager/features/documents/screens/file_system_browser.dart';
 import 'package:passwordpdf_manager/features/documents/screens/file_info_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -88,6 +83,8 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
   }
   
   // Public accessors for MainScreen back navigation
+  bool get isSearching => _isSearching;
+  void stopSearch() => _stopSearch();
   bool get isSelectionMode => _isSelectionMode;
   bool get isFolderView => _isFolderView;
   String get currentFolderPath => _currentFolderPath;
@@ -439,8 +436,8 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       }
       
       // 2. Import file
-      _log.info('AllDocumentsScreen', 'Calling docService.importFile...');
-      final result = await docService.importFile(file.path, fileName);
+      _log.info('AllDocumentsScreen', 'Calling docService.addReference...');
+      final result = await docService.addReference(file.path, fileName, allowDuplicate: false);
       _log.info('AllDocumentsScreen', 'Import result: success=${result.success}, isDuplicate=${result.isDuplicate}, error=${result.errorMessage}');
       
       if (mounted && Navigator.canPop(context)) Navigator.pop(context);
@@ -448,19 +445,9 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       if (result.success && result.importItem != null) {
         _log.info('AllDocumentsScreen', 'Imported: $fileName');
         
-        // 3. Open the imported file with password
-        final passwordService = PdfPasswordService();
-        final storedPassword = await passwordService.getPasswordForDocument(result.importItem!.sourcePath!);
-        
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => PdfViewerScreen(
-              filePath: result.importItem!.sourcePath!,
-              fileName: result.importItem!.name,
-              password: storedPassword,
-            ),
-          ),
-        );
+        // 3. Open the imported file via central router
+        if (!mounted) return;
+        await openDocument(context, result.importItem!.sourcePath!);
       } else if (result.isDuplicate) {
         // Bug Fix: Check for multiple duplicates
         final duplicates = result.duplicates ?? [];
@@ -480,7 +467,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'File "${fileName}" already exists',
+                    'File "$fileName" already exists',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
@@ -552,23 +539,10 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
 
   Future<void> _openFile(FileSystemEntity file, bool isPdf) async {
-    if (isPdf) {
-      // Retrieve stored password before opening
-      final passwordService = PdfPasswordService();
-      final storedPassword = await passwordService.getPasswordForDocument(file.path);
-      
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PdfViewerScreen(
-            filePath: file.path,
-            fileName: file.path.split(Platform.pathSeparator).last,
-            password: storedPassword,
-          ),
-        ),
-      );
-    } else {
-      await OpenFilex.open(file.path);
-    }
+    // Route by extension/size: PDF + docx + xlsx open in-app; .doc/.xls/oversized
+    // hand off to an external app. (isPdf kept for callers; router re-derives type.)
+    if (!mounted) return;
+    await openDocument(context, file.path);
   }
 
   void _importSelected([List<String>? explicitPaths]) {
@@ -780,10 +754,9 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
 
         // Import (always allow duplicate when overwriting, since the original
         // is intentionally still present at this point).
-        final result = await docService.importFile(
+        final result = await docService.addReference(
           file.path, 
-          fileName, 
-          targetName: importName,
+          importName, 
           allowDuplicate: forceImport || isOverwrite
         );
         
@@ -999,6 +972,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                    _stopSearch();
                  } else {
                    _searchController.clear();
+                   FocusScope.of(context).unfocus();
                    _onSearchChanged('');
                  }
               }
@@ -1081,7 +1055,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
           if (_isFolderView)
             Container(
                width: double.infinity,
-               color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+               color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                child: Row(
                  children: [
@@ -1221,7 +1195,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.blue.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(Icons.folder, color: Colors.blue, size: 28),
@@ -1259,7 +1233,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: _getFileColor(name).withOpacity(0.1),
+                  color: _getFileColor(name).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Icon(_getFileIcon(name), color: _getFileColor(name), size: 28),
@@ -1274,7 +1248,7 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
         ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text('$date • $size'),
-        tileColor: isSelected ? Theme.of(context).primaryColor.withOpacity(0.1) : null,
+        tileColor: isSelected ? Theme.of(context).primaryColor.withValues(alpha: 0.1) : null,
         onTap: () => _handleFileTap(file),
         onLongPress: () => _toggleSelection(file.path),
         trailing: _isSelectionMode 

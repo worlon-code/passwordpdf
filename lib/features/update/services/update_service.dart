@@ -198,22 +198,22 @@ class UpdateService {
            return null;
         }
 
-        // SECURITY: verify the SHA-256 supplied by the manifest, if present.
-        // (When the server always emits sha256, a follow-up task should make a
-        //  missing checksum a hard failure.)
-        if (expectedSha256 != null && expectedSha256.isNotEmpty) {
-          final fileBytes = await file.readAsBytes();
-          final actual = sha256.convert(fileBytes).toString().toLowerCase();
-          if (actual != expectedSha256.toLowerCase()) {
-            _log.error('UpdateService',
-                'APK checksum mismatch. expected=$expectedSha256 actual=$actual', null);
-            await file.delete().catchError((_) => file);
-            return null;
-          }
-          _log.info('UpdateService', 'APK checksum verified OK');
-        } else {
-          _log.info('UpdateService', 'No expected sha256 supplied; skipping checksum verification');
+        // SECURITY: verify the SHA-256 supplied by the manifest (MANDATORY).
+        // Hard-fail and delete the file if missing or mismatched.
+        if (expectedSha256 == null || expectedSha256.isEmpty) {
+          _log.error('UpdateService', 'Refusing update: manifest did not provide a sha256 checksum', null);
+          await file.delete().catchError((_) => file);
+          return null;
         }
+        final fileBytes = await file.readAsBytes();
+        final actual = sha256.convert(fileBytes).toString().toLowerCase();
+        if (actual != expectedSha256.toLowerCase()) {
+          _log.error('UpdateService',
+              'APK checksum mismatch. expected=$expectedSha256 actual=$actual', null);
+          await file.delete().catchError((_) => file);
+          return null;
+        }
+        _log.info('UpdateService', 'APK checksum verified OK');
 
         return file;
       }

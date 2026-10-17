@@ -395,6 +395,22 @@ class StorageService {
     );
   }
 
+  /// Compare-and-swap a password's ciphertext for the v1->v2 migration sweep.
+  /// The WHERE matches BOTH id AND the exact old ciphertext ON PURPOSE: the
+  /// encrypted_value predicate makes this a no-op (0 rows) if the row was edited
+  /// or replaced underneath us, so a stale sweep write can never clobber a user
+  /// change. Do NOT simplify to id-only. Returns rows affected (1=ok, 0=skip).
+  Future<int> migratePasswordCiphertext(
+      int id, String oldValue, String newValue) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.passwordsTable,
+      {'encrypted_value': newValue},
+      where: 'id = ? AND encrypted_value = ?',
+      whereArgs: [id, oldValue],
+    );
+  }
+
   /// Delete a password
   Future<int> deletePassword(int id) async {
     final db = await database;
@@ -466,17 +482,24 @@ class StorageService {
 
   // ==================== LOGS OPERATIONS ====================
 
+  static int _logInsertCount = 0;
+
   /// Insert a log entry
   Future<void> insertLog(Map<String, dynamic> log, {int retentionLimit = 8000}) async {
     final db = await database;
-    await db.transaction((txn) async {
-       await txn.insert(AppConstants.logsTable, log);
-       // Prune old logs (Keep last N)
-       await txn.rawDelete(
-         'DELETE FROM ${AppConstants.logsTable} WHERE id NOT IN (SELECT id FROM ${AppConstants.logsTable} ORDER BY id DESC LIMIT ?)',
-         [retentionLimit]
-       );
-    });
+    await db.insert(AppConstants.logsTable, log);
+    
+    // Prune lazily every 200 inserts to avoid SQLite lock contention
+    _logInsertCount++;
+    if (_logInsertCount >= 200) {
+      _logInsertCount = 0;
+      try {
+        await db.rawDelete(
+          'DELETE FROM ${AppConstants.logsTable} WHERE id NOT IN (SELECT id FROM ${AppConstants.logsTable} ORDER BY id DESC LIMIT ?)',
+          [retentionLimit],
+        );
+      } catch (_) {}
+    }
   }
 
   /// Get logs

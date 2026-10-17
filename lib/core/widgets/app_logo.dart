@@ -32,7 +32,7 @@ class AppLogo extends StatelessWidget {
                   borderRadius: BorderRadius.circular(size * 0.15),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
+                      color: Colors.black.withValues(alpha: 0.2),
                       blurRadius: size * 0.1,
                       offset: Offset(0, size * 0.05),
                     ),
@@ -48,7 +48,7 @@ class AppLogo extends StatelessWidget {
                   width: cornerSize,
                   height: cornerSize,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.3), // Lighter fold
+                    color: Colors.white.withValues(alpha: 0.3), // Lighter fold
                     borderRadius: BorderRadius.only(
                       bottomLeft: Radius.circular(size * 0.1),
                       topRight: Radius.circular(size * 0.15),

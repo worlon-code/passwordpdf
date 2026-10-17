@@ -13,7 +13,6 @@ import '../../settings/services/settings_service.dart';
 import '../../documents/screens/file_system_browser.dart';
 import '../widgets/add_password_dialog.dart';
 import '../widgets/restore_conflict_table.dart';
-import '../widgets/restore_file_picker.dart';
 
 /// Password manager screen to view and manage saved passwords
 class PasswordManagerScreen extends StatefulWidget {
@@ -162,18 +161,10 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   }
 
   Future<void> _onRestore() async {
-    if (!await _encryptionService.isKeySet()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Set an encryption key first, then restore your backup.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
+    // No legacy-key gate here: restore must work on a fresh install / after a
+    // Keystore wipe (there may be no legacy key). Readiness is enforced inside
+    // applyRestore via adoptCurrentV2KeyAsHealthy(), which throws FormatException
+    // (caught below) if the device key is unusable.
     final backupDir = Directory(p.join(SettingsService().exportPath, 'Backup'));
     final initialPath = backupDir.existsSync()
         ? backupDir.path
@@ -247,11 +238,18 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   List<PasswordModel> _passwords = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  final FocusNode _searchFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _loadPasswords();
+  }
+
+  @override
+  void dispose() {
+    _searchFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPasswords() async {
@@ -389,6 +387,11 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         title: const Text('Password Manager'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'Search',
+            onPressed: () => _searchFocusNode.requestFocus(),
+          ),
+          IconButton(
             icon: const Icon(Icons.backup_outlined),
             tooltip: 'Backup',
             onPressed: _onBackup,
@@ -406,6 +409,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: TextField(
+              focusNode: _searchFocusNode,
               onChanged: (value) {
                 setState(() {
                   _searchQuery = value;
@@ -491,7 +495,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                                 decoration: BoxDecoration(
                                   color: Theme.of(
                                     context,
-                                  ).colorScheme.primary.withOpacity(0.1),
+                                  ).colorScheme.primary.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Icon(

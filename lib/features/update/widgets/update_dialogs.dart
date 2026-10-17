@@ -38,7 +38,7 @@ class UpdateAvailableDialog extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.grey.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(updateInfo.releaseNotes.isEmpty 
@@ -106,10 +106,11 @@ class InvocationDialog extends StatelessWidget {
 }
 
 // Global Helper Functions
-Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
+Future<void> showUpdateDialog(BuildContext context, UpdateInfo info, {bool isMandatory = false}) async {
+    final mandatory = isMandatory || info.forceUpdate;
     showDialog(
       context: context,
-      barrierDismissible: !info.forceUpdate,
+      barrierDismissible: !mandatory,
       builder: (ctx) => UpdateAvailableDialog(
         updateInfo: info,
         onUpdate: () => performUpdate(ctx, info),
@@ -120,7 +121,6 @@ Future<void> showUpdateDialog(BuildContext context, UpdateInfo info) async {
 Future<void> performUpdate(BuildContext context, UpdateInfo info) async {
     final service = UpdateService();
     bool started = false;
-    // ignore: unused_local_variable
     double progress = 0;
 
     await showDialog(

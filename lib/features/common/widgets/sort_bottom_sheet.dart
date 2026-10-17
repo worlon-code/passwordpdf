@@ -109,7 +109,7 @@ class _SortBottomSheetState extends State<SortBottomSheet> {
                   child: Row(
                     children: [
                       Icon(_getIconForOption(option), 
-                        color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).iconTheme.color?.withOpacity(0.7) ?? Colors.grey
+                        color: isSelected ? Theme.of(context).colorScheme.primary : Theme.of(context).iconTheme.color?.withValues(alpha: 0.7) ?? Colors.grey
                       ),
                       const SizedBox(width: 16),
                       Expanded(
