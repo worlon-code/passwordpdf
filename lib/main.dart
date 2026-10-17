@@ -531,11 +531,18 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     // Always set pending file for later opening (even if not authenticated yet)
     // Dashboard will check PendingFileOpen after authentication completes
     if (fileToOpenPath != null) {
-      // Check both extension AND MIME type for PDF detection (Gmail may lack extension)
-      final isPdf = fileToOpenPath.toLowerCase().endsWith('.pdf') || 
-                    (fileToOpenMimeType?.toLowerCase().contains('pdf') ?? false);
+      // Check both extension AND MIME type for supported document formats
+      final ext = fileToOpenPath.toLowerCase().split('.').last;
+      final isSupportedDoc = ext == 'pdf' || ext == 'docx' || ext == 'xlsx' || ext == 'doc' || ext == 'xls' ||
+                    ext == 'csv' || ext == 'tsv' ||
+                    (fileToOpenMimeType?.toLowerCase().contains('pdf') ?? false) ||
+                    (fileToOpenMimeType?.toLowerCase().contains('word') ?? false) ||
+                    (fileToOpenMimeType?.toLowerCase().contains('officedocument') ?? false) ||
+                    (fileToOpenMimeType?.toLowerCase().contains('excel') ?? false) ||
+                    (fileToOpenMimeType?.toLowerCase().contains('spreadsheet') ?? false) ||
+                    (fileToOpenMimeType?.toLowerCase().contains('csv') ?? false);
       
-      if (isPdf) {
+      if (isSupportedDoc) {
          // Set pending file for MainScreen/Dashboard to open with password handling
          PendingFileOpen.filePath = fileToOpenPath;
          PendingFileOpen.fileName = fileToOpenName ?? 'Document';

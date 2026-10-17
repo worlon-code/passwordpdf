@@ -5,6 +5,25 @@ import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:passwordpdf_manager/services/device_document_service.dart';
+import '../services/office_open_router.dart';
+
+class _FileEntryMeta {
+  final FileSystemEntity entity;
+  final String path;
+  final String nameLower;
+  final bool isDirectory;
+  final int size;
+  final DateTime modified;
+
+  const _FileEntryMeta({
+    required this.entity,
+    required this.path,
+    required this.nameLower,
+    required this.isDirectory,
+    required this.size,
+    required this.modified,
+  });
+}
 
 class FileSystemBrowser extends StatefulWidget {
   final String? initialPath;
@@ -16,7 +35,7 @@ class FileSystemBrowser extends StatefulWidget {
   const FileSystemBrowser({
     Key? key,
     this.initialPath,
-    this.allowedExtensions = const ['pdf', 'doc', 'docx', 'xls', 'xlsx'],
+    this.allowedExtensions = const ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'tsv'],
     this.allowMultiple = true,
     this.allowFolderSelection = false,
     this.onSelectionChanged,
@@ -30,6 +49,8 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
   late Directory _currentDir;
   List<FileSystemEntity> _files = [];
   List<FileSystemEntity> _filteredFiles = [];
+  final Map<String, _FileEntryMeta> _metaCache = {};
+  int _loadGeneration = 0;
   final Set<String> _selectedPaths = {};
   bool _isLoading = false;
   String? _errorMessage;
@@ -81,6 +102,8 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
   Future<void> _loadDirectory() async {
     if (_isVirtualMode) return;
 
+    final int generation = ++_loadGeneration;
+
     setState(() {
       _isLoading = true;
       _errorMessage = null;
@@ -88,26 +111,55 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
 
     try {
       if (!await _checkPermission()) return;
+      if (generation != _loadGeneration) return;
       
       final List<FileSystemEntity> entities = [];
       await for (final entity in _currentDir.list(followLinks: false)) {
          if (!_showHidden && path.basename(entity.path).startsWith('.')) continue;
          entities.add(entity);
       }
+      if (generation != _loadGeneration) return;
+
+      _metaCache.clear();
+      for (final entity in entities) {
+        final p = entity.path;
+        final isDir = entity is Directory;
+        int size = 0;
+        DateTime modified = DateTime.fromMillisecondsSinceEpoch(0);
+        try {
+          final stat = entity.statSync();
+          size = isDir ? 0 : stat.size;
+          modified = stat.modified;
+        } catch (_) {}
+
+        _metaCache[p] = _FileEntryMeta(
+          entity: entity,
+          path: p,
+          nameLower: path.basename(p).toLowerCase(),
+          isDirectory: isDir,
+          size: size,
+          modified: modified,
+        );
+      }
       
       _files = entities;
       _applyFiltersAndSort();
       
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _isLoading = false);
+      }
     } catch (e) {
-       if (mounted) setState(() {
+       if (mounted && generation == _loadGeneration) {
+         setState(() {
            _isLoading = false;
            _errorMessage = 'Access denied or error: $e';
-       });
+         });
+       }
     }
   }
   
   Future<void> _loadVirtualView(String type) async {
+      final int generation = ++_loadGeneration;
       setState(() {
           _isLoading = true;
           _errorMessage = null;
@@ -118,6 +170,7 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
       try {
           // Sync DB first to ensure freshness
           await _docService.syncAndIndex();
+          if (generation != _loadGeneration) return;
           
           List<FileSystemEntity> results = [];
           
@@ -143,14 +196,41 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
               _sortBy = 'name';
               _sortAsc = true;
           }
+          if (generation != _loadGeneration) return;
+
+          _metaCache.clear();
+          for (final entity in results) {
+            final p = entity.path;
+            final isDir = entity is Directory;
+            int size = 0;
+            DateTime modified = DateTime.fromMillisecondsSinceEpoch(0);
+            try {
+              final stat = entity.statSync();
+              size = isDir ? 0 : stat.size;
+              modified = stat.modified;
+            } catch (_) {}
+
+            _metaCache[p] = _FileEntryMeta(
+              entity: entity,
+              path: p,
+              nameLower: path.basename(p).toLowerCase(),
+              isDirectory: isDir,
+              size: size,
+              modified: modified,
+            );
+          }
           
           _files = results;
           _applyFiltersAndSort();
           
       } catch (e) {
-          _errorMessage = 'Failed to load documents: $e';
+          if (mounted && generation == _loadGeneration) {
+            _errorMessage = 'Failed to load documents: $e';
+          }
       } finally {
-          if (mounted) setState(() => _isLoading = false);
+          if (mounted && generation == _loadGeneration) {
+            setState(() => _isLoading = false);
+          }
       }
   }
 
@@ -161,10 +241,9 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
       // Filter Chips (AND Logic)
       if (_activeFilters.contains('large')) {
           processed = processed.where((e) {
-              if (e is! File) return false;
-              try {
-                  return e.statSync().size > (10 * 1024 * 1024); // > 10MB
-              } catch (_) { return false; }
+              final meta = _metaCache[e.path];
+              if (meta == null || meta.isDirectory) return false;
+              return meta.size > (10 * 1024 * 1024); // > 10MB
           }).toList();
       }
       
@@ -172,48 +251,68 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
           final now = DateTime.now();
           final weekAgo = now.subtract(const Duration(days: 7));
           processed = processed.where((e) {
-              try {
-                  return e.statSync().modified.isAfter(weekAgo);
-              } catch (_) { return false; }
+              final meta = _metaCache[e.path];
+              if (meta == null) return false;
+              return meta.modified.isAfter(weekAgo);
           }).toList();
       }
 
       // Extension Filter
       processed = processed.where((e) {
+        final meta = _metaCache[e.path];
+        if (meta != null && meta.isDirectory) return true;
         if (e is Directory) return true;
-        if (e is File) {
-           final ext = e.path.split('.').last.toLowerCase();
-           return widget.allowedExtensions.contains(ext);
-        }
-        return false;
+        final ext = e.path.split('.').last.toLowerCase();
+        return widget.allowedExtensions.contains(ext);
       }).toList();
 
-      // Sort
+      // Deterministic total ordering sort
       processed.sort((a, b) {
-          final aIsDir = a is Directory;
-          final bIsDir = b is Directory;
-          if (aIsDir && !bIsDir) return -1;
-          if (!aIsDir && bIsDir) return 1;
+          final metaA = _metaCache[a.path];
+          final metaB = _metaCache[b.path];
+
+          final aIsDir = metaA?.isDirectory ?? (a is Directory);
+          final bIsDir = metaB?.isDirectory ?? (b is Directory);
+          if (aIsDir != bIsDir) {
+            return aIsDir ? -1 : 1;
+          }
           
-          int cmp;
+          int cmp = 0;
           switch (_sortBy) {
               case 'date':
-                  final aTime = a.statSync().modified;
-                  final bTime = b.statSync().modified;
+                  final aTime = metaA?.modified ?? DateTime.fromMillisecondsSinceEpoch(0);
+                  final bTime = metaB?.modified ?? DateTime.fromMillisecondsSinceEpoch(0);
                   cmp = aTime.compareTo(bTime);
                   break;
               case 'size':
-                  if (a is File && b is File) {
-                      cmp = a.statSync().size.compareTo(b.statSync().size);
-                  } else {
-                      cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+                  if (!aIsDir && !bIsDir) {
+                      final aSize = metaA?.size ?? 0;
+                      final bSize = metaB?.size ?? 0;
+                      cmp = aSize.compareTo(bSize);
                   }
                   break;
               case 'name': 
               default:
-                  cmp = a.path.toLowerCase().compareTo(b.path.toLowerCase());
+                  final aName = metaA?.nameLower ?? path.basename(a.path).toLowerCase();
+                  final bName = metaB?.nameLower ?? path.basename(b.path).toLowerCase();
+                  cmp = aName.compareTo(bName);
+                  break;
           }
-          return _sortAsc ? cmp : -cmp;
+
+          if (!_sortAsc) {
+            cmp = -cmp;
+          }
+
+          // Total ordering tie-breakers (Directories & identical size/date values)
+          if (cmp == 0) {
+            final aName = metaA?.nameLower ?? path.basename(a.path).toLowerCase();
+            final bName = metaB?.nameLower ?? path.basename(b.path).toLowerCase();
+            cmp = aName.compareTo(bName);
+          }
+          if (cmp == 0) {
+            cmp = a.path.compareTo(b.path);
+          }
+          return cmp;
       });
       
       setState(() {
@@ -462,6 +561,7 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
 
       return InkWell(
            onTap: () => isDir ? _openDirectory(entity as Directory) : _toggleSelection(entity.path),
+           onDoubleTap: isDir ? null : () => openDocument(context, entity.path),
            onLongPress: () => isDir ? null : _toggleSelection(entity.path),
            child: Container(
                decoration: BoxDecoration(
@@ -475,7 +575,7 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
                    children: [
                        Icon(
                            isDir ? Icons.folder : _getFileIcon(name), 
-                           color: isDir ? Colors.amber : theme.colorScheme.primary, 
+                           color: isDir ? Colors.amber : _getFileColor(name), 
                            size: 48
                        ),
                        const SizedBox(height: 12),
@@ -510,7 +610,7 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
       final name = path.basename(file.path);
       final isSelected = _selectedPaths.contains(file.path);
       return ListTile(
-           leading: Icon(_getFileIcon(name), color: Theme.of(context).colorScheme.primary),
+           leading: Icon(_getFileIcon(name), color: _getFileColor(name)),
            title: Text(name),
            subtitle: FutureBuilder<FileStat>(
                future: file.stat(),
@@ -520,6 +620,7 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
            ),
            trailing: Checkbox(value: isSelected, onChanged: (v) => _toggleSelection(file.path)),
            onTap: () => _toggleSelection(file.path),
+           onLongPress: () => openDocument(context, file.path),
            selected: isSelected,
       );
   }
@@ -598,6 +699,8 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
           case 'pdf': return Icons.picture_as_pdf;
           case 'doc': 
           case 'docx': return Icons.description;
+          case 'csv':
+          case 'tsv': return Icons.table_view;
           case 'xls': 
           case 'xlsx': return Icons.table_chart;
           case 'txt': return Icons.text_snippet;
@@ -605,6 +708,24 @@ class _FileSystemBrowserState extends State<FileSystemBrowser> {
           case 'jpeg':
           case 'png': return Icons.image;
           default: return Icons.insert_drive_file;
+      }
+  }
+
+  Color _getFileColor(String fileName) {
+      final ext = fileName.split('.').last.toLowerCase();
+      switch (ext) {
+          case 'pdf': return Colors.red;
+          case 'doc': 
+          case 'docx': return const Color(0xFF185ABD);
+          case 'csv':
+          case 'tsv': return const Color(0xFF0F9D58);
+          case 'xls': 
+          case 'xlsx': return const Color(0xFF107C41);
+          case 'txt': return Colors.brown;
+          case 'jpg':
+          case 'jpeg':
+          case 'png': return Colors.purple;
+          default: return Colors.grey;
       }
   }
 }

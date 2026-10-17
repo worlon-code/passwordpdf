@@ -1,6 +1,7 @@
-import 'dart:io';
+import 'dart:collection';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'package:path/path.dart' as p;
 import 'encryption_service.dart';
 import 'logging_service.dart';
 import 'storage_service.dart';
@@ -21,12 +22,21 @@ class PdfPasswordService {
   
   Map<String, String> _documentPasswords = {};
   bool _isInitialized = false;
+  Future<void>? _initFuture;
   bool _loadFailed = false;
 
-  /// Initialize the service
-  Future<void> initialize() async {
-    if (_isInitialized) return;
+  /// Helper to normalize file paths across Windows/POSIX and whitespace
+  String _normalizePath(String rawPath) {
+    return p.normalize(rawPath.trim()).replaceAll('\\', '/');
+  }
 
+  /// Initialize the service (serialized to prevent concurrent init races)
+  Future<void> initialize() {
+    if (_isInitialized) return Future.value();
+    return _initFuture ??= _doInitialize();
+  }
+
+  Future<void> _doInitialize() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getString(_documentsPasswordsKey);
@@ -60,26 +70,32 @@ class PdfPasswordService {
   }
 
   /// Get stored password for a document (decrypted)
-  /// Checks both exact path and filename match for backward compatibility
+  /// Checks exact path, normalized path, and filename match for backward compatibility
   Future<String?> getPasswordForDocument(String filePath) async {
     await initialize();
     
     // 1. Try exact path match first
     var encryptedPassword = _documentPasswords[filePath];
     
-    // 2. If not found, try matching by filename (for migrated files)
+    // 2. Try normalized path match second
+    final normPath = _normalizePath(filePath);
+    if ((encryptedPassword == null || encryptedPassword.isEmpty) && normPath != filePath) {
+      encryptedPassword = _documentPasswords[normPath];
+    }
+    
+    // 3. If not found, try matching by filename (for migrated files)
     if (encryptedPassword == null || encryptedPassword.isEmpty) {
-      final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+      final fileName = p.basename(filePath).toLowerCase();
       
       for (final entry in _documentPasswords.entries) {
-        final storedFileName = entry.key.split(RegExp(r'[/\\]')).last.toLowerCase();
+        final storedFileName = p.basename(entry.key).toLowerCase();
         if (storedFileName == fileName) {
           encryptedPassword = entry.value;
           
-          // Migrate: Add new path as alias
-          _documentPasswords[filePath] = encryptedPassword;
+          // Migrate: Add normalized path as alias
+          _documentPasswords[normPath] = encryptedPassword;
           await _save();
-          _log.info('PdfPasswordService', 'Migrated password from old path to: $filePath');
+          _log.info('PdfPasswordService', 'Migrated password from old path to: $normPath');
           break;
         }
       }
@@ -101,34 +117,42 @@ class PdfPasswordService {
   /// Store successful password for a document
   Future<void> saveDocumentPassword(String filePath, String password) async {
     await initialize();
+    final normPath = _normalizePath(filePath);
     
     if (password.isEmpty) {
       // Document doesn't need password
       _documentPasswords[filePath] = 'NO_PASSWORD';
+      _documentPasswords[normPath] = 'NO_PASSWORD';
     } else {
       // Encrypt and store
       final encrypted = await _encryptionService.encrypt(password);
       if (encrypted != null) {
         _documentPasswords[filePath] = encrypted;
+        _documentPasswords[normPath] = encrypted;
       }
     }
     
     await _save();
   }
 
+  /// Save password alias
+  Future<void> savePasswordForDocument(String filePath, String password) =>
+      saveDocumentPassword(filePath, password);
+
   /// Check if document has a stored password
   Future<bool> hasStoredPassword(String filePath) async {
     await initialize();
+    final normPath = _normalizePath(filePath);
     
-    // Check exact match
-    if (_documentPasswords.containsKey(filePath)) {
+    // Check exact or normalized match
+    if (_documentPasswords.containsKey(filePath) || _documentPasswords.containsKey(normPath)) {
       return true;
     }
     
     // Check by filename (for migrated files)
-    final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+    final fileName = p.basename(filePath).toLowerCase();
     for (final key in _documentPasswords.keys) {
-      final storedFileName = key.split(RegExp(r'[/\\]')).last.toLowerCase();
+      final storedFileName = p.basename(key).toLowerCase();
       if (storedFileName == fileName) {
         return true;
       }
@@ -140,12 +164,14 @@ class PdfPasswordService {
   /// Clear stored password for a document
   Future<void> clearDocumentPassword(String filePath) async {
     await initialize();
+    final normPath = _normalizePath(filePath);
     _documentPasswords.remove(filePath);
+    _documentPasswords.remove(normPath);
     
     // Also clear by filename match
-    final fileName = filePath.split(RegExp(r'[/\\]')).last.toLowerCase();
+    final fileName = p.basename(filePath).toLowerCase();
     _documentPasswords.removeWhere((key, _) {
-      final storedFileName = key.split(RegExp(r'[/\\]')).last.toLowerCase();
+      final storedFileName = p.basename(key).toLowerCase();
       return storedFileName == fileName;
     });
     
@@ -161,14 +187,14 @@ class PdfPasswordService {
   /// Get all unique decrypted passwords to try
   Future<List<String>> getAllUniquePasswords() async {
     await initialize();
-    final passwords = <String>{};
+    final passwords = LinkedHashSet<String>();
     
     // 1. From document history
     for (final encrypted in _documentPasswords.values) {
       if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
       
       final decrypted = await _encryptionService.decrypt(encrypted);
-      if (decrypted != null && decrypted.isNotEmpty) {
+      if (decrypted != null && decrypted.trim().isNotEmpty) {
         passwords.add(decrypted);
       }
     }
@@ -178,7 +204,7 @@ class PdfPasswordService {
       final managerPasswords = await _storageService.getAllPasswords();
       for (final model in managerPasswords) {
         final decrypted = await _encryptionService.decrypt(model.encryptedValue);
-        if (decrypted != null && decrypted.isNotEmpty) {
+        if (decrypted != null && decrypted.trim().isNotEmpty) {
           passwords.add(decrypted);
         }
       }

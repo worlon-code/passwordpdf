@@ -118,18 +118,52 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   // Password Candidates Logic
-  List<String> _candidatePasswords = [];
+  final List<String> _candidatePasswords = [];
   int _candidateIndex = 0;
-  bool _candidatesLoaded = false;
+  Future<void>? _candidatesLoadFuture;
+  Future<String?>? _inFlightPasswordRequest;
 
-  Future<String?> _getPassword() async {
-    // 1. If we have a current password (from widget or successful user input), use it once.
-    // However, if _passwordAttempted is true, it means the viewer called us AGAIN, 
-    // implying the previous password FAILED.
-    if (!_passwordAttempted && _currentPassword.isNotEmpty) {
-      _passwordAttempted = true;
-      return _currentPassword;
+  Future<void> _loadCandidatesOnce() async {
+    final service = PdfPasswordService();
+    await service.initialize();
+
+    // 1. Initial password from widget (if passed)
+    if (widget.password != null && widget.password!.isNotEmpty) {
+      if (!_candidatePasswords.contains(widget.password!)) {
+        _candidatePasswords.add(widget.password!);
+      }
     }
+
+    // 2. Priority: Specific password for this document (path or filename match)
+    final specificPwd = await service.getPasswordForDocument(widget.filePath);
+    if (specificPwd != null && specificPwd.isNotEmpty) {
+      if (!_candidatePasswords.contains(specificPwd)) {
+        _candidatePasswords.insert(0, specificPwd);
+      }
+    }
+
+    // 3. Fallback: All other unique passwords
+    final allPwds = await service.getAllUniquePasswords();
+    for (final pwd in allPwds) {
+      if (!_candidatePasswords.contains(pwd)) {
+        _candidatePasswords.add(pwd);
+      }
+    }
+  }
+
+  Future<String?> _getPassword() {
+    if (_inFlightPasswordRequest != null) {
+      return _inFlightPasswordRequest!;
+    }
+    final req = _doGetPassword();
+    _inFlightPasswordRequest = req;
+    req.whenComplete(() {
+      _inFlightPasswordRequest = null;
+    });
+    return req;
+  }
+
+  Future<String?> _doGetPassword() async {
     if (_passwordAttempted) {
       _log.warn('PdfViewer', 'PDF open rejected password attempt for ${widget.filePath}');
     }
@@ -137,32 +171,14 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
 
     if (!mounted) return null;
 
-    // 2. Load candidates if not already done
-    if (!_candidatesLoaded) {
-       _candidatesLoaded = true;
-       // Load all potential passwords from service
-       final service = PdfPasswordService();
-       
-       // Priority 1: Check specifically for this document (Path or Filename match)
-       final specificPwd = await service.getPasswordForDocument(widget.filePath);
-       if (specificPwd != null && specificPwd.isNotEmpty) {
-          _candidatePasswords.add(specificPwd);
-       }
-       
-       // Priority 2: All other unique passwords (Recursive Check)
-       final allPwds = await service.getAllUniquePasswords();
-       for (final pwd in allPwds) {
-          if (!_candidatePasswords.contains(pwd)) {
-             _candidatePasswords.add(pwd);
-          }
-       }
-    }
+    _candidatesLoadFuture ??= _loadCandidatesOnce();
+    await _candidatesLoadFuture;
 
     // 3. Try next candidate
     if (_candidateIndex < _candidatePasswords.length) {
        final pwd = _candidatePasswords[_candidateIndex];
        _candidateIndex++;
-       // Update cached password so if it works, we know which one it was (though we don't persist it here yet)
+       // Update cached password so if it works, we know which one it was
        _currentPassword = pwd; 
        return pwd;
     }
@@ -463,6 +479,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                              setState(() {
                                _passwordAttempted = false;
                                _currentPassword = ''; // Fix Bug-1: Clear wrong password so dialog shows again
+                               _candidateIndex = _candidatePasswords.length;
                                _viewerKey = UniqueKey();
                              });
                            },

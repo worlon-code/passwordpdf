@@ -20,11 +20,13 @@ OfficeOpenTarget routeForPath(String path, {int? sizeBytes}) {
     case 'pdf':
       return OfficeOpenTarget.pdfInApp;
     case 'docx':
+    case 'doc':
       return OfficeOpenTarget.wordInApp;
     case 'xlsx':
-      return OfficeOpenTarget.excelInApp;
-    case 'doc': // legacy binary — no OSS Dart reader (invariant 5)
     case 'xls':
+    case 'csv':
+    case 'tsv':
+      return OfficeOpenTarget.excelInApp;
     default:
       return OfficeOpenTarget.externalHandoff;
   }
@@ -40,6 +42,7 @@ Future<void> openDocument(BuildContext context, String filePath) async {
 
   switch (routeForPath(filePath, sizeBytes: size)) {
     case OfficeOpenTarget.pdfInApp:
+      await PdfPasswordService().initialize();
       final stored = await PdfPasswordService().getPasswordForDocument(filePath);
       if (!context.mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
@@ -68,16 +71,6 @@ Future<void> openDocument(BuildContext context, String filePath) async {
               duration: Duration(seconds: 2),
             ),
           );
-        } else {
-          final ext = filePath.toLowerCase().split('.').last;
-          if (ext == 'doc' || ext == 'xls') {
-            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-              SnackBar(
-                content: Text('Legacy .$ext format. Opening with external app…'),
-                duration: const Duration(seconds: 2),
-              ),
-            );
-          }
         }
       }
       await OpenFilex.open(filePath);

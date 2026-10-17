@@ -55,5 +55,15 @@ void main() {
         await File(result.savedPath).delete();
       }
     });
+
+    test('loadRichDocument loads legacy .doc file', () async {
+      final service = WordEditService();
+      final legacyPath = '${tempDir.path}/legacy_sample.doc';
+      await File(legacyPath).writeAsString('Line 1 of legacy doc\nLine 2 of legacy doc');
+
+      final doc = await service.loadRichDocument(legacyPath);
+      expect(doc.blocks.isNotEmpty, isTrue);
+      expect(doc.blocks.first.plainText, contains('Line 1 of legacy doc'));
+    });
   });
 }

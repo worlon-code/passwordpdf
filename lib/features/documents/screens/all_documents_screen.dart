@@ -302,16 +302,17 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
       }
 
       final fileName = file.path.split(Platform.pathSeparator).last;
-      final isPdf = fileName.toLowerCase().endsWith('.pdf');
+      final ext = fileName.toLowerCase().split('.').last;
+      final isDocument = ext == 'pdf' || ext == 'docx' || ext == 'xlsx' || ext == 'doc' || ext == 'xls' || ext == 'csv' || ext == 'tsv';
       
-      _log.info('AllDocumentsScreen', 'fileName: $fileName, isPdf: $isPdf');
+      _log.info('AllDocumentsScreen', 'fileName: $fileName, ext: $ext, isDocument: $isDocument');
 
-      if (isPdf) {
-        _log.info('AllDocumentsScreen', 'Calling _importAndOpenSingle...');
+      if (isDocument) {
+        _log.info('AllDocumentsScreen', 'Calling _importAndOpenSingle for document...');
         await _importAndOpenSingle(file, docService);
         _log.info('AllDocumentsScreen', '_importAndOpenSingle returned');
       } else {
-        _log.info('AllDocumentsScreen', 'Showing bottom sheet for non-PDF...');
+        _log.info('AllDocumentsScreen', 'Showing bottom sheet for non-Office file...');
         showModalBottomSheet(
           context: context,
           shape: const RoundedRectangleBorder(
@@ -329,6 +330,15 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
                     leading: Icon(_getFileIcon(fileName), color: _getFileColor(fileName), size: 32),
                   ),
                   const Divider(),
+                  ListTile(
+                    leading: const Icon(Icons.remove_red_eye_outlined),
+                    title: const Text('Open in App'),
+                    onTap: () {
+                      _log.info('AllDocumentsScreen', 'Open in App tapped from sheet');
+                      Navigator.pop(sheetContext);
+                      _importAndOpenSingle(file, docService);
+                    },
+                  ),
                   ListTile(
                     leading: const Icon(Icons.open_in_new),
                     title: const Text('Open with System'),
@@ -835,16 +845,20 @@ class AllDocumentsScreenState extends State<AllDocumentsScreen> {
   }
 
   IconData _getFileIcon(String name) {
-    if (name.toLowerCase().endsWith('.pdf')) return Icons.picture_as_pdf;
-    if (name.toLowerCase().contains('.doc')) return Icons.description;
-    if (name.toLowerCase().contains('.xls')) return Icons.table_chart;
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return Icons.description;
+    if (lower.endsWith('.csv') || lower.endsWith('.tsv')) return Icons.table_view;
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) return Icons.table_chart;
     return Icons.insert_drive_file;
   }
   
   Color _getFileColor(String name) {
-    if (name.toLowerCase().endsWith('.pdf')) return Colors.red;
-    if (name.toLowerCase().contains('.doc')) return Colors.blue;
-    if (name.toLowerCase().contains('.xls')) return Colors.green;
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.pdf')) return Colors.red;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return const Color(0xFF185ABD);
+    if (lower.endsWith('.csv') || lower.endsWith('.tsv')) return const Color(0xFF0F9D58);
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) return const Color(0xFF107C41);
     return Colors.grey;
   }
   

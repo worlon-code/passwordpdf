@@ -63,7 +63,7 @@ class DocumentItem {
       fileIds: fileIds ?? this.fileIds,
       size: size ?? this.size,
       createdAt: createdAt,
-      modifiedAt: modifiedAt ?? DateTime.now(),
+      modifiedAt: modifiedAt ?? this.modifiedAt,
       isImported: isImported ?? this.isImported,
       isImportedFile: isImportedFile ?? this.isImportedFile,
       isNew: isNew ?? this.isNew,
@@ -154,8 +154,9 @@ enum DocumentItemType {
 /// Helper to get file extension
 extension DocumentItemExtension on DocumentItem {
   String? get fileExtension {
-    if (isFile && sourcePath != null) {
-      final parts = sourcePath!.split('.');
+    if (isFile) {
+      final target = sourcePath ?? name;
+      final parts = target.split('.');
       if (parts.length > 1) {
         return parts.last.toLowerCase();
       }
@@ -165,5 +166,8 @@ extension DocumentItemExtension on DocumentItem {
 
   bool get isPdf => fileExtension == 'pdf';
   bool get isDoc => fileExtension == 'doc' || fileExtension == 'docx';
+  bool get isCsv => fileExtension == 'csv' || fileExtension == 'tsv';
   bool get isExcel => fileExtension == 'xls' || fileExtension == 'xlsx';
+  bool get isSpreadsheet => isExcel || isCsv;
 }
+
