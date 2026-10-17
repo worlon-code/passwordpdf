@@ -258,54 +258,20 @@ class WordEditService {
     }
 
     final runs = <WordTextRun>[];
-    for (final rElem in pElem.findElements('w:r')) {
-      final tElem = rElem.findElements('w:t').firstOrNull;
-      final text = tElem?.innerText ?? '';
-      if (text.isEmpty) continue;
-
-      bool bold = false;
-      bool italic = false;
-      bool underline = false;
-      bool strikethrough = false;
-      String fontFamily = 'Calibri';
-      double fontSizePt = 11.0;
-      String? textColorHex;
-      String? highlightColorHex;
-
-      final rPr = rElem.findElements('w:rPr').firstOrNull;
-      if (rPr != null) {
-        bold = rPr.findElements('w:b').isNotEmpty;
-        italic = rPr.findElements('w:i').isNotEmpty;
-        underline = rPr.findElements('w:u').isNotEmpty;
-        strikethrough = rPr.findElements('w:strike').isNotEmpty;
-
-        final font = rPr.findElements('w:rFonts').firstOrNull?.getAttribute('w:ascii');
-        if (font != null && font.isNotEmpty) fontFamily = font;
-
-        final sz = rPr.findElements('w:sz').firstOrNull?.getAttribute('w:val');
-        if (sz != null) {
-          final halfPts = double.tryParse(sz);
-          if (halfPts != null) fontSizePt = halfPts / 2.0;
+    for (final child in pElem.children.whereType<XmlElement>()) {
+      if (child.name.local == 'r') {
+        final run = _parseRun(child);
+        if (run != null) runs.add(run);
+      } else if (child.name.local == 'hyperlink') {
+        final rId = child.getAttribute('r:id') ??
+            child.getAttribute('id') ??
+            child.attributes.where((a) => a.name.local == 'id').firstOrNull?.value;
+        final target = rId != null ? relMap[rId] : null;
+        for (final rChild in child.children.whereType<XmlElement>().where((e) => e.name.local == 'r')) {
+          final run = _parseRun(rChild, linkUrl: target);
+          if (run != null) runs.add(run);
         }
-
-        final color = rPr.findElements('w:color').firstOrNull?.getAttribute('w:val');
-        if (color != null && color != 'auto') textColorHex = '#$color';
-
-        final highlight = rPr.findElements('w:highlight').firstOrNull?.getAttribute('w:val');
-        if (highlight != null) highlightColorHex = highlight;
       }
-
-      runs.add(WordTextRun(
-        text: text,
-        bold: bold,
-        italic: italic,
-        underline: underline,
-        strikethrough: strikethrough,
-        fontFamily: fontFamily,
-        fontSizePt: fontSizePt,
-        textColorHex: textColorHex,
-        highlightColorHex: highlightColorHex,
-      ));
     }
 
     return WordParagraphBlock(
@@ -317,6 +283,59 @@ class WordEditService {
       listLevel: listLevel,
       indentLeft: indentLeft,
       lineSpacing: lineSpacing,
+    );
+  }
+
+  WordTextRun? _parseRun(XmlElement rElem, {String? linkUrl}) {
+    final tElem = rElem.findElements('w:t').firstOrNull ??
+        rElem.children.whereType<XmlElement>().where((e) => e.name.local == 't').firstOrNull;
+    final text = tElem?.innerText ?? '';
+    if (text.isEmpty) return null;
+
+    bool bold = false;
+    bool italic = false;
+    bool underline = linkUrl != null;
+    bool strikethrough = false;
+    String fontFamily = 'Calibri';
+    double fontSizePt = 11.0;
+    String? textColorHex = linkUrl != null ? '#0563C1' : null;
+    String? highlightColorHex;
+
+    final rPr = rElem.findElements('w:rPr').firstOrNull ??
+        rElem.children.whereType<XmlElement>().where((e) => e.name.local == 'rPr').firstOrNull;
+    if (rPr != null) {
+      if (rPr.findAllElements('w:b').isNotEmpty) bold = true;
+      if (rPr.findAllElements('w:i').isNotEmpty) italic = true;
+      if (rPr.findAllElements('w:u').isNotEmpty) underline = true;
+      if (rPr.findAllElements('w:strike').isNotEmpty) strikethrough = true;
+
+      final font = rPr.findAllElements('w:rFonts').firstOrNull?.getAttribute('w:ascii');
+      if (font != null && font.isNotEmpty) fontFamily = font;
+
+      final sz = rPr.findAllElements('w:sz').firstOrNull?.getAttribute('w:val');
+      if (sz != null) {
+        final halfPts = double.tryParse(sz);
+        if (halfPts != null) fontSizePt = halfPts / 2.0;
+      }
+
+      final color = rPr.findAllElements('w:color').firstOrNull?.getAttribute('w:val');
+      if (color != null && color != 'auto') textColorHex = '#$color';
+
+      final highlight = rPr.findAllElements('w:highlight').firstOrNull?.getAttribute('w:val');
+      if (highlight != null) highlightColorHex = highlight;
+    }
+
+    return WordTextRun(
+      text: text,
+      bold: bold,
+      italic: italic,
+      underline: underline,
+      strikethrough: strikethrough,
+      fontFamily: fontFamily,
+      fontSizePt: fontSizePt,
+      textColorHex: textColorHex,
+      highlightColorHex: highlightColorHex,
+      linkUrl: linkUrl,
     );
   }
 

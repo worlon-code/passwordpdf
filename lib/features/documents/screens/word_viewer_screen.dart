@@ -48,6 +48,7 @@ class _WordViewerScreenState extends State<WordViewerScreen> {
   late bool _isEditMode;
   bool _isReflowMode = false;
   double _zoomScale = 1.0;
+  bool _hasAutoFitted = false;
 
   // Formatting state
   WordFormattingState _formatState = const WordFormattingState();
@@ -646,18 +647,33 @@ class _WordViewerScreenState extends State<WordViewerScreen> {
 
                     // Paper Canvas
                     Expanded(
-                      child: WordPageCanvas(
-                        key: _canvasKey,
-                        document: _document!,
-                        isEditMode: _isEditMode,
-                        isReflowMode: _isReflowMode,
-                        zoomScale: _zoomScale,
-                        searchQuery: _searchQuery,
-                        onContentChanged: () {
-                          setState(() => _isDirty = true);
-                        },
-                        onSelectionFormatChanged: (state) {
-                          setState(() => _formatState = state);
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (!_hasAutoFitted && constraints.maxWidth > 0) {
+                            _hasAutoFitted = true;
+                            final availableWidth = constraints.maxWidth - 32;
+                            final fitScale = (availableWidth / 816.0).clamp(0.25, 2.0);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) setState(() => _zoomScale = fitScale);
+                            });
+                          }
+                          return WordPageCanvas(
+                            key: _canvasKey,
+                            document: _document!,
+                            isEditMode: _isEditMode,
+                            isReflowMode: _isReflowMode,
+                            zoomScale: _zoomScale,
+                            searchQuery: _searchQuery,
+                            onZoomScaleChanged: (scale) {
+                              if (mounted) setState(() => _zoomScale = scale);
+                            },
+                            onContentChanged: () {
+                              setState(() => _isDirty = true);
+                            },
+                            onSelectionFormatChanged: (state) {
+                              setState(() => _formatState = state);
+                            },
+                          );
                         },
                       ),
                     ),
@@ -764,15 +780,26 @@ class _WordViewerScreenState extends State<WordViewerScreen> {
                 icon: const Icon(Icons.remove, size: 14),
                 tooltip: 'Zoom Out',
                 onPressed: () {
-                  if (_zoomScale > 0.6) setState(() => _zoomScale -= 0.1);
+                  _canvasKey.currentState?.zoomOut();
                 },
               ),
-              Text('${(_zoomScale * 100).toInt()}%', style: const TextStyle(fontSize: 11)),
+              GestureDetector(
+                onTap: () {
+                  _canvasKey.currentState?.toggleFitOrOriginal();
+                },
+                child: Tooltip(
+                  message: 'Tap to toggle Fit / 100%',
+                  child: Text(
+                    '${(_zoomScale * 100).toInt()}%',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.add, size: 14),
                 tooltip: 'Zoom In',
                 onPressed: () {
-                  if (_zoomScale < 2.0) setState(() => _zoomScale += 0.1);
+                  _canvasKey.currentState?.zoomIn();
                 },
               ),
             ],

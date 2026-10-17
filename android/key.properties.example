@@ -1,0 +1,12 @@
+# Template for Google Play Store upload keystore signing.
+# 1. Generate an upload keystore if you don't have one:
+#    keytool -genkey -v -keystore android/upload-keystore.jks -keyalg RSA -keysize 4096 -validity 10000 -alias upload
+#
+# 2. Copy this file to `android/key.properties` (which is already in .gitignore):
+#    cp android/key.properties.example android/key.properties
+#
+# 3. Fill in your credentials:
+storePassword=YOUR_KEYSTORE_PASSWORD
+keyPassword=YOUR_KEY_PASSWORD
+keyAlias=upload
+storeFile=upload-keystore.jks

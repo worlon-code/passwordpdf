@@ -62,6 +62,7 @@ class WordTextRun {
   double fontSizePt;
   String? textColorHex;
   String? highlightColorHex;
+  String? linkUrl;
 
   WordTextRun({
     required this.text,
@@ -73,6 +74,7 @@ class WordTextRun {
     this.fontSizePt = 11.0,
     this.textColorHex,
     this.highlightColorHex,
+    this.linkUrl,
   });
 
   WordTextRun copyWith({
@@ -85,6 +87,7 @@ class WordTextRun {
     double? fontSizePt,
     String? textColorHex,
     String? highlightColorHex,
+    String? linkUrl,
   }) {
     return WordTextRun(
       text: text ?? this.text,
@@ -96,6 +99,7 @@ class WordTextRun {
       fontSizePt: fontSizePt ?? this.fontSizePt,
       textColorHex: textColorHex ?? this.textColorHex,
       highlightColorHex: highlightColorHex ?? this.highlightColorHex,
+      linkUrl: linkUrl ?? this.linkUrl,
     );
   }
 }

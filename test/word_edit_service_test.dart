@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docx_creator/docx_creator.dart';
 import 'package:passwordpdf_manager/services/word_edit_service.dart';
+import 'package:passwordpdf_manager/models/word_document_model.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -64,6 +65,21 @@ void main() {
       final doc = await service.loadRichDocument(legacyPath);
       expect(doc.blocks.isNotEmpty, isTrue);
       expect(doc.blocks.first.plainText, contains('Line 1 of legacy doc'));
+    });
+
+    test('WordTextRun supports linkUrl and copyWith preserves it', () {
+      final run = WordTextRun(
+        text: 'Google',
+        linkUrl: 'https://google.com',
+      );
+      expect(run.linkUrl, equals('https://google.com'));
+
+      final copy = run.copyWith(text: 'Alphabet');
+      expect(copy.text, equals('Alphabet'));
+      expect(copy.linkUrl, equals('https://google.com'));
+
+      final overridden = run.copyWith(linkUrl: 'https://flutter.dev');
+      expect(overridden.linkUrl, equals('https://flutter.dev'));
     });
   });
 }

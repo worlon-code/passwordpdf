@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
 import '../../../services/pdf_tools_service.dart';
 import '../../../services/pdf_password_service.dart';
@@ -358,6 +359,17 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             passwordProvider: () => _getPassword(),
             params: PdfViewerParams(
               maxScale: 8.0,
+              linkHandlerParams: null,
+              linkWidgetBuilder: (context, link, size) {
+                return Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    splashColor: Colors.blue.withValues(alpha: 0.2),
+                    highlightColor: Colors.blue.withValues(alpha: 0.1),
+                    onTap: () => _openPdfLink(link),
+                  ),
+                );
+              },
 
 
               // Bug-3 Fix: Center pages if they don't fill the screen (single page issue)
@@ -538,6 +550,66 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
       ),
     ),  // Close PopScope
   );
+  }
+
+  Future<void> _openPdfLink(PdfLink link) async {
+    if (link.url != null) {
+      await _launchResolvedUrl(context, link.url.toString());
+    } else if (link.dest != null) {
+      await _pdfViewerController.goToDest(link.dest);
+    }
+  }
+
+  Future<void> _launchResolvedUrl(BuildContext context, String rawUrl) async {
+    var text = rawUrl.trim();
+    while (text.endsWith('.') || text.endsWith(',') || text.endsWith(';') || text.endsWith(')')) {
+      text = text.substring(0, text.length - 1).trim();
+    }
+
+    Uri? uri;
+    if (text.startsWith('mailto:') || text.startsWith('http://') || text.startsWith('https://') || text.startsWith('tel:')) {
+      uri = Uri.tryParse(text);
+    } else if (text.contains('@') && !text.contains('/')) {
+      uri = Uri.tryParse('mailto:$text');
+    } else {
+      uri = Uri.tryParse('https://$text');
+    }
+
+    if (uri == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Invalid link: $rawUrl')),
+        );
+      }
+      return;
+    }
+
+    try {
+      bool launched = false;
+      try {
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        launched = false;
+      }
+      if (!launched) {
+        try {
+          launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+        } catch (_) {
+          launched = false;
+        }
+      }
+      if (!launched && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open link: $rawUrl')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error opening link: $e')),
+        );
+      }
+    }
   }
 
   // --- PDF Tools Implementation ---

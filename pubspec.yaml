@@ -43,6 +43,7 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   receive_sharing_intent: ^1.8.1
   open_filex: ^4.3.2
+  url_launcher: ^6.3.1
   shimmer: ^3.0.0
 
   # Office (Word/Excel) view + edit — MIT/Apache/BSD, fully offline. VERIFY latest majors on pub.dev.

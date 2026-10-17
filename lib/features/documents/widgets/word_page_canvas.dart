@@ -1,17 +1,96 @@
 import 'dart:math' as math;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../models/word_document_model.dart';
 import 'word_ribbon_toolbar.dart';
 
-/// Custom TextEditingController that renders rich formatted text runs and search highlights
+/// Custom TextEditingController that renders rich formatted text runs, hyperlinks, and search highlights
 class RichParagraphEditingController extends TextEditingController {
   final WordParagraphBlock block;
   String? searchQuery;
+  final void Function(String url)? onLinkTap;
+  final List<TapGestureRecognizer> _recognizers = [];
+  bool isEditing = false;
+
+  static final RegExp _linkRegex = RegExp(
+    r'(https?:\/\/[^\s<>"' + "'" + r']+|www\.[^\s<>"' + "'" + r']+|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)',
+    caseSensitive: false,
+  );
 
   RichParagraphEditingController({
     required this.block,
     this.searchQuery,
+    this.onLinkTap,
   }) : super(text: block.plainText);
+
+  @override
+  void dispose() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+    super.dispose();
+  }
+
+  static String normalizeUrl(String raw) {
+    var url = raw.trim();
+    while (url.endsWith('.') || url.endsWith(',') || url.endsWith(';') || url.endsWith(')') || url.endsWith('>')) {
+      url = url.substring(0, url.length - 1).trim();
+    }
+    if (url.contains('@') && !url.startsWith('mailto:') && !url.startsWith('http://') && !url.startsWith('https://')) {
+      return 'mailto:$url';
+    }
+    if (url.startsWith('www.')) {
+      return 'https://$url';
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('mailto:') && !url.startsWith('tel:')) {
+      return 'https://$url';
+    }
+    return url;
+  }
+
+  Widget _buildLinkWidget({
+    required String text,
+    required String targetUrl,
+    required TextStyle linkStyle,
+    String? searchQuery,
+  }) {
+    final cleanTarget = normalizeUrl(targetUrl);
+    InlineSpan contentSpan;
+    if (searchQuery != null && searchQuery.isNotEmpty && text.toLowerCase().contains(searchQuery.toLowerCase())) {
+      final spans = <InlineSpan>[];
+      final query = searchQuery.toLowerCase();
+      final lower = text.toLowerCase();
+      int start = 0;
+      int matchIdx;
+      while ((matchIdx = lower.indexOf(query, start)) != -1) {
+        if (matchIdx > start) {
+          spans.add(TextSpan(text: text.substring(start, matchIdx), style: linkStyle));
+        }
+        spans.add(TextSpan(
+          text: text.substring(matchIdx, matchIdx + query.length),
+          style: linkStyle.copyWith(backgroundColor: Colors.yellowAccent, color: Colors.black),
+        ));
+        start = matchIdx + query.length;
+      }
+      if (start < text.length) {
+        spans.add(TextSpan(text: text.substring(start), style: linkStyle));
+      }
+      contentSpan = TextSpan(children: spans);
+    } else {
+      contentSpan = TextSpan(text: text, style: linkStyle);
+    }
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onLinkTap?.call(cleanTarget),
+        child: Text.rich(contentSpan),
+      ),
+    );
+  }
 
   @override
   TextSpan buildTextSpan({
@@ -19,48 +98,146 @@ class RichParagraphEditingController extends TextEditingController {
     TextStyle? style,
     required bool withComposing,
   }) {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+
     if (block.runs.isEmpty) {
       return TextSpan(text: text, style: style);
     }
 
     final spans = <InlineSpan>[];
     for (final run in block.runs) {
-      TextStyle runStyle = _buildRunStyle(run, style);
+      final runStyle = _buildRunStyle(run, style);
 
-      // Search match highlighting
-      if (searchQuery != null && searchQuery!.isNotEmpty && run.text.toLowerCase().contains(searchQuery!.toLowerCase())) {
-        final query = searchQuery!.toLowerCase();
-        final lower = run.text.toLowerCase();
-        int start = 0;
-        int matchIdx;
-        while ((matchIdx = lower.indexOf(query, start)) != -1) {
-          if (matchIdx > start) {
-            spans.add(TextSpan(
-              text: run.text.substring(start, matchIdx),
-              style: runStyle,
-            ));
-          }
-          spans.add(TextSpan(
-            text: run.text.substring(matchIdx, matchIdx + query.length),
-            style: runStyle.copyWith(
-              backgroundColor: Colors.yellowAccent,
-              color: Colors.black,
+      if (run.linkUrl != null && run.linkUrl!.isNotEmpty) {
+        final linkStyle = runStyle.copyWith(
+          color: const Color(0xFF0563C1),
+          decoration: TextDecoration.underline,
+        );
+
+        if (!isEditing) {
+          spans.add(WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: _buildLinkWidget(
+              text: run.text,
+              targetUrl: run.linkUrl!,
+              linkStyle: linkStyle,
+              searchQuery: searchQuery,
             ),
           ));
-          start = matchIdx + query.length;
-        }
-        if (start < run.text.length) {
-          spans.add(TextSpan(
-            text: run.text.substring(start),
-            style: runStyle,
-          ));
+        } else {
+          _addHighlightedOrPlainSpan(
+            spans: spans,
+            text: run.text,
+            baseStyle: linkStyle,
+            searchQuery: searchQuery,
+          );
         }
       } else {
-        spans.add(TextSpan(text: run.text, style: runStyle));
+        final matches = _linkRegex.allMatches(run.text).toList();
+        if (matches.isEmpty) {
+          _addHighlightedOrPlainSpan(
+            spans: spans,
+            text: run.text,
+            baseStyle: runStyle,
+            searchQuery: searchQuery,
+          );
+        } else {
+          int lastIndex = 0;
+          for (final m in matches) {
+            if (m.start > lastIndex) {
+              _addHighlightedOrPlainSpan(
+                spans: spans,
+                text: run.text.substring(lastIndex, m.start),
+                baseStyle: runStyle,
+                searchQuery: searchQuery,
+              );
+            }
+            final matchText = m.group(0)!;
+            final linkStyle = runStyle.copyWith(
+              color: const Color(0xFF0563C1),
+              decoration: TextDecoration.underline,
+            );
+
+            if (!isEditing) {
+              spans.add(WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: _buildLinkWidget(
+                  text: matchText,
+                  targetUrl: matchText,
+                  linkStyle: linkStyle,
+                  searchQuery: searchQuery,
+                ),
+              ));
+            } else {
+              _addHighlightedOrPlainSpan(
+                spans: spans,
+                text: matchText,
+                baseStyle: linkStyle,
+                searchQuery: searchQuery,
+              );
+            }
+            lastIndex = m.end;
+          }
+          if (lastIndex < run.text.length) {
+            _addHighlightedOrPlainSpan(
+              spans: spans,
+              text: run.text.substring(lastIndex),
+              baseStyle: runStyle,
+              searchQuery: searchQuery,
+            );
+          }
+        }
       }
     }
 
     return TextSpan(children: spans, style: style);
+  }
+
+  void _addHighlightedOrPlainSpan({
+    required List<InlineSpan> spans,
+    required String text,
+    required TextStyle baseStyle,
+    String? searchQuery,
+    GestureRecognizer? recognizer,
+  }) {
+    if (searchQuery != null && searchQuery.isNotEmpty && text.toLowerCase().contains(searchQuery.toLowerCase())) {
+      final query = searchQuery.toLowerCase();
+      final lower = text.toLowerCase();
+      int start = 0;
+      int matchIdx;
+      while ((matchIdx = lower.indexOf(query, start)) != -1) {
+        if (matchIdx > start) {
+          spans.add(TextSpan(
+            text: text.substring(start, matchIdx),
+            style: baseStyle,
+            recognizer: recognizer,
+          ));
+        }
+        spans.add(TextSpan(
+          text: text.substring(matchIdx, matchIdx + query.length),
+          style: baseStyle.copyWith(
+            backgroundColor: Colors.yellowAccent,
+            color: Colors.black,
+          ),
+          recognizer: recognizer,
+        ));
+        start = matchIdx + query.length;
+      }
+      if (start < text.length) {
+        spans.add(TextSpan(
+          text: text.substring(start),
+          style: baseStyle,
+          recognizer: recognizer,
+        ));
+      }
+    } else {
+      spans.add(TextSpan(text: text, style: baseStyle, recognizer: recognizer));
+    }
   }
 
   TextStyle _buildRunStyle(WordTextRun run, TextStyle? baseStyle) {
@@ -209,6 +386,7 @@ class WordPageCanvas extends StatefulWidget {
   final String? searchQuery;
   final VoidCallback? onContentChanged;
   final Function(WordFormattingState state)? onSelectionFormatChanged;
+  final ValueChanged<double>? onZoomScaleChanged;
 
   const WordPageCanvas({
     super.key,
@@ -219,6 +397,7 @@ class WordPageCanvas extends StatefulWidget {
     this.searchQuery,
     this.onContentChanged,
     this.onSelectionFormatChanged,
+    this.onZoomScaleChanged,
   });
 
   @override
@@ -228,11 +407,21 @@ class WordPageCanvas extends StatefulWidget {
 class WordPageCanvasState extends State<WordPageCanvas> {
   final Map<String, RichParagraphEditingController> _controllers = {};
   String? _activeBlockId;
+  late final TransformationController _transformationController;
+  double _fitScale = 1.0;
+  bool _initializedScale = false;
 
   @override
   void initState() {
     super.initState();
+    _transformationController = TransformationController();
+    _transformationController.addListener(_onTransformationChanged);
     _initControllers();
+  }
+
+  void _onTransformationChanged() {
+    final currentScale = _transformationController.value.getMaxScaleOnAxis();
+    widget.onZoomScaleChanged?.call(currentScale);
   }
 
   @override
@@ -244,6 +433,77 @@ class WordPageCanvasState extends State<WordPageCanvas> {
         ctrl.refresh();
       }
     }
+    if (widget.isEditMode != oldWidget.isEditMode) {
+      for (final ctrl in _controllers.values) {
+        ctrl.isEditing = widget.isEditMode;
+        ctrl.refresh();
+      }
+    }
+  }
+
+  Future<void> _handleLinkTap(String rawUrl) async {
+    final url = RichParagraphEditingController.normalizeUrl(rawUrl);
+    final uri = Uri.tryParse(url);
+    if (uri != null) {
+      try {
+        bool launched = false;
+        try {
+          launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (_) {
+          launched = false;
+        }
+        if (!launched) {
+          try {
+            launched = await launchUrl(uri, mode: LaunchMode.platformDefault);
+          } catch (_) {
+            launched = false;
+          }
+        }
+        if (!launched && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open link: $url')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error opening link: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  void zoomIn() {
+    _zoomBy(1.15);
+  }
+
+  void zoomOut() {
+    _zoomBy(1 / 1.15);
+  }
+
+  void toggleFitOrOriginal() {
+    final currentScale = _transformationController.value.getMaxScaleOnAxis();
+    if ((currentScale - _fitScale).abs() < 0.08) {
+      _setZoomScale(1.0);
+    } else {
+      _setZoomScale(_fitScale);
+    }
+  }
+
+  void _zoomBy(double factor) {
+    final currentScale = _transformationController.value.getMaxScaleOnAxis();
+    final newScale = (currentScale * factor).clamp(0.2, 3.5);
+    _setZoomScale(newScale);
+  }
+
+  void _setZoomScale(double targetScale) {
+    final matrix = _transformationController.value.clone();
+    final currentScale = matrix.getMaxScaleOnAxis();
+    if (currentScale == 0) return;
+    final scaleFactor = targetScale / currentScale;
+    matrix.scale(scaleFactor, scaleFactor);
+    _transformationController.value = matrix;
   }
 
   void _initControllers() {
@@ -252,7 +512,8 @@ class WordPageCanvasState extends State<WordPageCanvas> {
         final ctrl = RichParagraphEditingController(
           block: b,
           searchQuery: widget.searchQuery,
-        );
+          onLinkTap: _handleLinkTap,
+        )..isEditing = widget.isEditMode;
         ctrl.addListener(() {
           ctrl.syncRunsFromText();
           widget.onContentChanged?.call();
@@ -264,6 +525,8 @@ class WordPageCanvasState extends State<WordPageCanvas> {
 
   @override
   void dispose() {
+    _transformationController.removeListener(_onTransformationChanged);
+    _transformationController.dispose();
     for (final c in _controllers.values) {
       c.dispose();
     }
@@ -351,7 +614,7 @@ class WordPageCanvasState extends State<WordPageCanvas> {
       final cells = <WordTableCell>[];
       for (int c = 0; c < cols; c++) {
         final p = WordParagraphBlock(id: 'p_tbl_${DateTime.now().millisecondsSinceEpoch}_${r}_$c');
-        _controllers[p.id] = RichParagraphEditingController(block: p);
+        _controllers[p.id] = RichParagraphEditingController(block: p, onLinkTap: _handleLinkTap);
         cells.add(WordTableCell(paragraphs: [p]));
       }
       tableRows.add(WordTableRow(cells: cells));
@@ -378,7 +641,7 @@ class WordPageCanvasState extends State<WordPageCanvas> {
       runs: [WordTextRun(text: '────────────────────────────────────────')],
       alignment: 'center',
     );
-    _controllers[p.id] = RichParagraphEditingController(block: p);
+    _controllers[p.id] = RichParagraphEditingController(block: p, onLinkTap: _handleLinkTap);
     widget.document.blocks.add(p);
     widget.onContentChanged?.call();
     setState(() {});
@@ -397,20 +660,50 @@ class WordPageCanvasState extends State<WordPageCanvas> {
           // Horizontal Page Ruler
           if (!widget.isReflowMode) _buildHorizontalRuler(isDark),
 
-          // Scrollable canvas area
+          // Interactive Zoomable & Pannable Canvas Area
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-              physics: const AlwaysScrollableScrollPhysics(),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const ClampingScrollPhysics(),
-                child: Center(
-                  child: widget.isReflowMode
-                      ? _buildReflowView(theme, isDark)
-                      : _buildPrintLayoutView(theme, isDark),
-                ),
-              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final viewportWidth = constraints.maxWidth;
+
+                // Auto-fit to display width on first layout
+                if (!_initializedScale && viewportWidth > 0) {
+                  _initializedScale = true;
+                  const double paperWidth = 816.0;
+                  final availableWidth = viewportWidth - 32.0;
+                  _fitScale = (availableWidth / paperWidth).clamp(0.2, 2.0);
+
+                  final initialX = (viewportWidth - (paperWidth * _fitScale)) / 2;
+                  const initialY = 16.0;
+                  _transformationController.value = Matrix4.identity()
+                    ..translate(initialX, initialY)
+                    ..scale(_fitScale, _fitScale, 1.0);
+
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) {
+                      widget.onZoomScaleChanged?.call(_fitScale);
+                    }
+                  });
+                }
+
+                return InteractiveViewer(
+                  transformationController: _transformationController,
+                  minScale: 0.2,
+                  maxScale: 3.5,
+                  panEnabled: true,
+                  scaleEnabled: true,
+                  boundaryMargin: const EdgeInsets.symmetric(vertical: 400, horizontal: 200),
+                  constrained: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: SelectionArea(
+                      child: widget.isReflowMode
+                          ? _buildReflowView(theme, isDark)
+                          : _buildPaper(theme, isDark),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -429,12 +722,11 @@ class WordPageCanvasState extends State<WordPageCanvas> {
     );
   }
 
-  Widget _buildPrintLayoutView(ThemeData theme, bool isDark) {
+  Widget _buildPaper(ThemeData theme, bool isDark) {
     const double paperWidth = 816.0; // Standard A4 width at 96 DPI
-    final double scale = widget.zoomScale;
 
     return Container(
-      width: paperWidth * scale,
+      width: paperWidth,
       constraints: const BoxConstraints(minHeight: 1056.0),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF242526) : Colors.white,
@@ -449,8 +741,8 @@ class WordPageCanvasState extends State<WordPageCanvas> {
         ],
       ),
       padding: EdgeInsets.symmetric(
-        horizontal: widget.document.pageSetup.marginLeftPt * scale,
-        vertical: widget.document.pageSetup.marginTopPt * scale,
+        horizontal: widget.document.pageSetup.marginLeftPt,
+        vertical: widget.document.pageSetup.marginTopPt,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -554,7 +846,10 @@ class WordPageCanvasState extends State<WordPageCanvas> {
     final ctrl = _controllers[p.id] ??= RichParagraphEditingController(
       block: p,
       searchQuery: widget.searchQuery,
+      onLinkTap: _handleLinkTap,
     );
+    ctrl.searchQuery = widget.searchQuery;
+    ctrl.isEditing = widget.isEditMode;
 
     TextAlign align = TextAlign.left;
     if (p.alignment == 'center') align = TextAlign.center;
@@ -638,7 +933,7 @@ class WordPageCanvasState extends State<WordPageCanvas> {
                       ),
                     ),
                   )
-                : SelectableText.rich(
+                : Text.rich(
                     ctrl.buildTextSpan(
                       context: context,
                       withComposing: false,

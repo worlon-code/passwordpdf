@@ -39,7 +39,7 @@ class ExcelViewerScreen extends StatefulWidget {
 
 class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   final ExcelEditService _editService = ExcelEditService();
-  final GlobalKey<ExcelGridCanvasState> _gridKey = GlobalKey<ExcelGridCanvasState>();
+  final ExcelGridController _gridController = ExcelGridController();
 
   ExcelWorkbookModel? _workbook;
   bool _isLoading = true;
@@ -49,6 +49,7 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
   // Active Selection State
   ExcelSelectionInfo _selectionInfo = const ExcelSelectionInfo(activeRow: 0, activeCol: 0);
   ExcelCellStyle _activeStyle = const ExcelCellStyle();
+  double _zoomScale = 1.0;
 
   // Find in Sheet
   bool _showFind = false;
@@ -385,6 +386,8 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
     setState(() {
       _workbook!.sheets.add(ExcelSheetModel(name: name));
       _workbook!.activeSheetIndex = _workbook!.sheets.length - 1;
+      _selectionInfo = const ExcelSelectionInfo(activeRow: 0, activeCol: 0);
+      _activeStyle = const ExcelCellStyle();
       _isDirty = true;
     });
   }
@@ -437,6 +440,8 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
     setState(() {
       _workbook!.sheets.insert(index + 1, newSheet);
       _workbook!.activeSheetIndex = index + 1;
+      _selectionInfo = const ExcelSelectionInfo(activeRow: 0, activeCol: 0);
+      _activeStyle = const ExcelCellStyle();
       _isDirty = true;
     });
   }
@@ -453,6 +458,8 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
       if (_workbook!.activeSheetIndex >= _workbook!.sheets.length) {
         _workbook!.activeSheetIndex = _workbook!.sheets.length - 1;
       }
+      _selectionInfo = const ExcelSelectionInfo(activeRow: 0, activeCol: 0);
+      _activeStyle = const ExcelCellStyle();
       _isDirty = true;
     });
   }
@@ -506,7 +513,7 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
                     subtitle: Text(fn['desc']!),
                     onTap: () {
                       Navigator.pop(ctx);
-                      _gridKey.currentState?.updateActiveCellFormulaOrValue('=${fn['name']}()');
+                      _gridController.updateActiveCellFormulaOrValue('=${fn['name']}()');
                     },
                   );
                 },
@@ -889,10 +896,10 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
                           _selectionInfo.activeCellData?.rawValue ??
                           '',
                       onNavigateToCell: (coord) {
-                        _gridKey.currentState?.navigateToCell(coord);
+                        _gridController.navigateToCell(coord);
                       },
                       onFormulaChanged: (val) {
-                        _gridKey.currentState?.updateActiveCellFormulaOrValue(val);
+                        _gridController.updateActiveCellFormulaOrValue(val);
                       },
                       onCommit: () {
                         if (_workbook != null) {
@@ -908,9 +915,14 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
                     // 2D Virtualized Spreadsheet Grid
                     Expanded(
                       child: ExcelGridCanvas(
-                        key: _gridKey,
+                        key: ValueKey('sheet_${_workbook!.activeSheetIndex}_${_workbook!.activeSheet.name}'),
+                        controller: _gridController,
                         sheet: _workbook!.activeSheet,
                         workbook: _workbook,
+                        zoomScale: _zoomScale,
+                        onZoomScaleChanged: (scale) {
+                          if (mounted) setState(() => _zoomScale = scale);
+                        },
                         onSelectionChanged: (info) {
                           setState(() {
                             _selectionInfo = info;
@@ -954,7 +966,7 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
                   if (entry.value.displayValue.toLowerCase().contains(query.toLowerCase())) {
                     final rc = keyToRowCol(entry.key);
                     if (rc != null) {
-                      _gridKey.currentState?.navigateToCell(rowColToCellCoordinate(rc.$1, rc.$2));
+                      _gridController.navigateToCell(rowColToCellCoordinate(rc.$1, rc.$2));
                       break;
                     }
                   }
@@ -999,6 +1011,8 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
                     onTap: () {
                       setState(() {
                         _workbook!.activeSheetIndex = i;
+                        _selectionInfo = const ExcelSelectionInfo(activeRow: 0, activeCol: 0);
+                        _activeStyle = const ExcelCellStyle();
                       });
                     },
                     onLongPress: () {
@@ -1036,20 +1050,57 @@ class _ExcelViewerScreenState extends State<ExcelViewerScreen> {
           // Live Selection Status Bar (Sum, Avg, Count, Min, Max)
           if (stats.isNotEmpty) ...[
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: stats.entries.map((e) {
                   return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     child: Text(
                       '${e.key}: ${e.value}',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
                     ),
                   );
                 }).toList(),
               ),
             ),
           ],
+
+          // Zoom controls: [-] 100% [+]
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.remove, size: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                  tooltip: 'Zoom Out',
+                  onPressed: () => setState(() => _zoomScale = (_zoomScale / 1.15).clamp(0.4, 2.5)),
+                ),
+                GestureDetector(
+                  onTap: () => setState(() => _zoomScale = 1.0),
+                  child: Tooltip(
+                    message: 'Tap to reset zoom (100%)',
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: Text(
+                        '${(_zoomScale * 100).toInt()}%',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add, size: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                  tooltip: 'Zoom In',
+                  onPressed: () => setState(() => _zoomScale = (_zoomScale * 1.15).clamp(0.4, 2.5)),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
