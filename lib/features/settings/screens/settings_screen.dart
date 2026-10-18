@@ -21,6 +21,7 @@ import '../widgets/developer_password_dialog.dart';
 import '../widgets/color_picker_dialog.dart';
 import '../../developer/screens/developer_screen.dart';
 import '../../password_manager/screens/password_manager_screen.dart';
+import 'signature_manager_screen.dart';
 import '../../../main.dart';
 import '../../update/services/update_service.dart';
 import '../../update/widgets/update_dialogs.dart';
@@ -771,6 +772,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 24),
 
+          // Signatures Section
+          _buildSectionHeader('Signatures'),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.draw_outlined),
+              title: const Text('Signature Manager'),
+              subtitle: const Text('Manage, rename, and delete saved signatures'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap:
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const SignatureManagerScreen(),
+                    ),
+                  ),
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
           // Security Section
           _buildSectionHeader('Security'),
           Card(
@@ -860,6 +881,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       leading: const Icon(Icons.security),
                       title: const Text('Current Protection'),
                       subtitle: Text(authText),
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                Consumer<SettingsService>(
+                  builder: (context, settings, child) {
+                    return SwitchListTile(
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: const Text('Screen Protection'),
+                      subtitle: const Text('Block screenshots and hide preview in recent apps (FLAG_SECURE)'),
+                      value: settings.secureScreenEnabled,
+                      onChanged: (value) async {
+                        await settings.setSecureScreenEnabled(value);
+                      },
+                    );
+                  },
+                ),
+                const Divider(height: 1),
+                Consumer<SettingsService>(
+                  builder: (context, settings, child) {
+                    return SwitchListTile(
+                      secondary: const Icon(Icons.auto_awesome),
+                      title: const Text('AI Vault Password Access'),
+                      subtitle: const Text('Allow local AI to read passwords from vault for protected PDFs without asking in each chat'),
+                      value: settings.aiAutoVaultPasswordAccess,
+                      onChanged: (value) async {
+                        await settings.setAiAutoVaultPasswordAccess(value);
+                      },
                     );
                   },
                 ),

@@ -28,6 +28,7 @@ import 'pdf_viewer_screen.dart';
 import '../services/office_open_router.dart';
 import 'file_info_screen.dart';
 import 'export_progress_screen.dart';
+import 'image_to_pdf_studio_screen.dart';
 import '../widgets/conflict_resolution_dialog.dart';
 import '../../../models/conflict_resolution_model.dart';
 import '../widgets/duplicate_files_dialog.dart';
@@ -38,6 +39,8 @@ import 'package:passwordpdf_manager/features/documents/screens/file_system_brows
 import 'package:shared_preferences/shared_preferences.dart';
 // Import the new dialog
 import 'package:passwordpdf_manager/features/documents/widgets/delete_confirmation_dialog.dart';
+import '../../ai/screens/ai_studio_screen.dart';
+import '../../ai/widgets/ai_sparkle_icon.dart';
 
 
 
@@ -344,6 +347,45 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
     if (selectedPaths != null && selectedPaths.isNotEmpty) {
       _importFiles(selectedPaths);
     }
+  }
+
+  void _showAddOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('Add Existing Documents'),
+              subtitle: const Text('Browse device for PDF, Word, Excel files'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _openFileBrowser();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: Colors.deepPurple),
+              title: const Text('Images to PDF Studio'),
+              subtitle: const Text('Scan with camera or combine photos into a PDF'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ImageToPdfStudioScreen()),
+                ).then((_) {
+                  if (mounted) _syncWithReload(isPullToRefresh: true);
+                });
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
   
   Future<String?> _showRenameExistingDialog(String currentName) async {
@@ -1984,6 +2026,22 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 onPressed: _showSortOptions,
                 tooltip: 'Sort items',
               ),
+              if (_currentFolderId != null)
+                IconButton(
+                  icon: const AiSparkleIcon(size: 22),
+                  tooltip: 'Chat with Folder (AI)',
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => AiStudioScreen(
+                          initialFolderId: _currentFolderId,
+                          initialFolderName: _getFolderName(),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               /* Download icon removed as requested (redundant with multi-select)
               if (_currentFolderId != null)
                 IconButton(
@@ -2212,7 +2270,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: _openFileBrowser,
+          onPressed: _showAddOptions,
           icon: const Icon(Icons.add),
           label: const Text('Add Files'),
         ),
@@ -2749,7 +2807,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         subtitle: Text(_buildFolderSubtitle(folder.id)),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
-            if (value == 'rename') {
+            if (value == 'chat_ai') {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AiStudioScreen(
+                    initialFolderId: folder.id,
+                    initialFolderName: folder.name,
+                  ),
+                ),
+              );
+            } else if (value == 'rename') {
               if (folder.isImported) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot rename imported/synced folders')));
                   return;
@@ -2799,6 +2867,16 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             }
           },
           itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'chat_ai',
+              child: Row(
+                children: [
+                  const AiSparkleIcon(size: 18),
+                  const SizedBox(width: 8),
+                  const Text('Chat with AI'),
+                ],
+              ),
+            ),
             if (folder.isImported)
                 const PopupMenuItem(
                   value: 'sync',

@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
+import 'features/ai/screens/ai_studio_screen.dart';
+import 'features/ai/widgets/ai_sparkle_icon.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
@@ -1048,6 +1050,11 @@ class _MainScreenState extends State<MainScreen> {
     return false;
   }
   
+  /// Back handler for AI Studio screen
+  Future<bool> _handleAiStudioBack() async {
+    return false;
+  }
+
   /// Back handler for Settings screen
   Future<bool> _handleSettingsBack() async {
     return false;
@@ -1070,6 +1077,9 @@ class _MainScreenState extends State<MainScreen> {
             handled = await _handleDashboardBack();
             break;
           case 2:
+            handled = await _handleAiStudioBack();
+            break;
+          case 3:
             handled = await _handleSettingsBack();
             break;
         }
@@ -1113,6 +1123,7 @@ class _MainScreenState extends State<MainScreen> {
           children: [
             AllDocumentsScreen(key: _allDocsKey),
             DocumentDashboardScreen(key: _dashboardKey),
+            const AiStudioScreen(),
             const SettingsScreen(),
           ],
         ),
@@ -1137,6 +1148,11 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.folder_outlined),
               selectedIcon: Icon(Icons.folder),
               label: 'Documents',
+            ),
+            NavigationDestination(
+              icon: const AiSparkleIcon(size: 24),
+              selectedIcon: const AiSparkleIcon(size: 26),
+              label: 'AI',
             ),
             NavigationDestination(
               icon: Icon(Icons.settings_outlined),

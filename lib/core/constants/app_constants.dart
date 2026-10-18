@@ -15,6 +15,16 @@ class AppConstants {
   static const String exportJobsTable = 'export_jobs';
   static const String logsTable = 'logs';
   static const String filesIndexTable = 'files_index';
+  static const String passwordHistoryTable = 'password_history';
+  static const String encryptedSignaturesTable = 'encrypted_signatures';
+  static const String aiDocumentIndexTable = 'ai_document_index';
+  static const String aiDocumentPagesTable = 'ai_document_pages';
+  static const String aiDocumentChunksTable = 'ai_document_chunks';
+  static const String aiChunkEmbeddingsTable = 'ai_chunk_embeddings';
+  static const String aiChunksFtsTable = 'ai_chunks_fts';
+  static const String aiInstalledModelsTable = 'ai_installed_models';
+  static const String aiChatSessionsTable = 'ai_chat_sessions';
+  static const String aiChatMessagesTable = 'ai_chat_messages';
   
   // Encryption
   static const String encryptionKeyName = 'pdf_encryption_key';

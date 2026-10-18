@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:path_provider/path_provider.dart';
@@ -8,6 +9,7 @@ import '../../../models/password_model.dart';
 import '../../../services/encryption_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/password_backup_service.dart';
+import '../../../services/biometric_service.dart';
 import '../../settings/services/settings_service.dart';
 
 import '../../documents/screens/file_system_browser.dart';
@@ -25,6 +27,28 @@ class PasswordManagerScreen extends StatefulWidget {
 class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   final StorageService _storageService = StorageService();
   final EncryptionService _encryptionService = EncryptionService();
+  final BiometricService _biometricService = BiometricService();
+
+  Future<bool> _authenticateForSensitiveAction({
+    String reason = 'Authenticate to access password',
+  }) async {
+    final available = await _biometricService.isBiometricAvailable();
+    if (available) {
+      final ok = await _biometricService.authenticate(localizedReason: reason);
+      if (!ok) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Authentication required to reveal or copy password'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return false;
+      }
+    }
+    return true;
+  }
 
   PasswordBackupService get _backup =>
       PasswordBackupService(_storageService, _encryptionService);
@@ -238,6 +262,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   List<PasswordModel> _passwords = [];
   bool _isLoading = true;
   String _searchQuery = '';
+  String? _selectedTagFilter;
   final FocusNode _searchFocusNode = FocusNode();
 
   @override
@@ -255,14 +280,49 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   Future<void> _loadPasswords() async {
     setState(() => _isLoading = true);
     try {
-      final passwords = await _storageService.getAllPasswords();
+      final rawPasswords = await _storageService.getAllPasswords();
+      final decryptedList = <PasswordModel>[];
+      for (final p in rawPasswords) {
+        List<String> tags = p.tags;
+        if (p.encryptedTags != null && p.encryptedTags!.isNotEmpty) {
+          try {
+            final dec = await _encryptionService.decrypt(p.encryptedTags!);
+            if (dec != null && dec.isNotEmpty) {
+              tags = dec
+                  .split(',')
+                  .map((t) => t.trim())
+                  .where((t) => t.isNotEmpty)
+                  .toList();
+            }
+          } catch (_) {}
+        }
+        decryptedList.add(p.copyWith(tags: tags));
+      }
       setState(() {
-        _passwords = passwords;
+        _passwords = decryptedList;
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
       _showError('Error loading passwords: $e');
+    }
+  }
+
+  Set<String> get _allTags {
+    final tags = <String>{};
+    for (final p in _passwords) {
+      tags.addAll(p.tags);
+    }
+    return tags;
+  }
+
+  Future<void> _toggleFavorite(PasswordModel password) async {
+    try {
+      final updated = password.copyWith(isFavorite: !password.isFavorite);
+      await _storageService.updatePassword(updated);
+      await _loadPasswords();
+    } catch (e) {
+      _showError('Failed to update favorite: $e');
     }
   }
 
@@ -374,10 +434,313 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   }
 
   List<PasswordModel> get _filteredPasswords {
-    if (_searchQuery.isEmpty) return _passwords;
-    return _passwords.where((pwd) {
-      return pwd.keyName.toLowerCase().contains(_searchQuery.toLowerCase());
-    }).toList();
+    var list = _passwords;
+    if (_selectedTagFilter == 'favorites') {
+      list = list.where((p) => p.isFavorite).toList();
+    } else if (_selectedTagFilter != null && _selectedTagFilter!.isNotEmpty) {
+      list = list.where((p) => p.tags.contains(_selectedTagFilter)).toList();
+    }
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((pwd) {
+        final matchesName = pwd.keyName.toLowerCase().contains(q);
+        final matchesTag = pwd.tags.any((t) => t.toLowerCase().contains(q));
+        return matchesName || matchesTag;
+      }).toList();
+    }
+    return list;
+  }
+
+  Future<void> _showPasswordDetails(PasswordModel initialPassword) async {
+    PasswordModel password = initialPassword;
+    bool obscure = true;
+    String? plainText;
+    List<Map<String, dynamic>>? history;
+    bool loadingHistory = false;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          password.keyName,
+                          style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: Icon(
+                          password.isFavorite ? Icons.star : Icons.star_border,
+                          color: password.isFavorite ? Colors.amber : null,
+                        ),
+                        tooltip: 'Toggle Favorite',
+                        onPressed: () async {
+                          await _toggleFavorite(password);
+                          final updated = _passwords.firstWhere(
+                            (p) => p.id == password.id,
+                            orElse: () => password,
+                          );
+                          setModalState(() {
+                            password = updated;
+                          });
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Password display box
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(ctx).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            obscure
+                                ? '••••••••••••'
+                                : (plainText ?? 'Failed to decrypt'),
+                            style: TextStyle(
+                              fontFamily: obscure ? null : 'monospace',
+                              fontSize: 16,
+                              letterSpacing: obscure ? 2 : 0,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
+                          onPressed: () async {
+                            if (obscure) {
+                              final auth = await _authenticateForSensitiveAction(
+                                reason: 'Authenticate to reveal password',
+                              );
+                              if (!auth) return;
+
+                              if (plainText == null) {
+                                final dec = await _encryptionService.decrypt(password.encryptedValue);
+                                setModalState(() {
+                                  plainText = dec;
+                                  obscure = false;
+                                });
+                              } else {
+                                setModalState(() => obscure = false);
+                              }
+                            } else {
+                              setModalState(() => obscure = true);
+                            }
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.copy),
+                          tooltip: 'Copy Password',
+                          onPressed: () async {
+                            final auth = await _authenticateForSensitiveAction(
+                              reason: 'Authenticate to copy password',
+                            );
+                            if (!auth) return;
+
+                            final secret = plainText ??
+                                await _encryptionService.decrypt(password.encryptedValue);
+                            if (secret != null && secret.isNotEmpty) {
+                              await Clipboard.setData(ClipboardData(text: secret));
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Password copied to clipboard')),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Tags
+                  Text(
+                    'Tags',
+                    style: Theme.of(ctx).textTheme.labelLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  if (password.tags.isEmpty)
+                    Text(
+                      'No tags assigned',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                    )
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: password.tags.map((t) => Chip(
+                        label: Text(t, style: const TextStyle(fontSize: 12)),
+                        padding: EdgeInsets.zero,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      )).toList(),
+                    ),
+                  const SizedBox(height: 20),
+                  // Password History Section
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Password History (Last 5)',
+                        style: Theme.of(ctx).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      TextButton.icon(
+                        icon: const Icon(Icons.history, size: 18),
+                        label: Text(history == null ? 'Show' : 'Hide'),
+                        onPressed: () async {
+                          if (history == null) {
+                            setModalState(() => loadingHistory = true);
+                            final hist = await _storageService.getPasswordHistory(password.id!);
+                            setModalState(() {
+                              history = hist;
+                              loadingHistory = false;
+                            });
+                          } else {
+                            setModalState(() => history = null);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                  if (loadingHistory)
+                    const Center(child: Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator())),
+                  if (history != null) ...[
+                    if (history!.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text(
+                          'No previous password versions recorded.',
+                          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                        ),
+                      )
+                    else
+                      ...history!.map((entry) {
+                        final changedAt = DateTime.fromMillisecondsSinceEpoch(entry['changed_at'] as int);
+                        final encVal = entry['encrypted_value'] as String;
+                        return Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Changed: ${changedAt.toLocal().toString().split('.')[0]}',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  const Text('••••••••', style: TextStyle(letterSpacing: 2, fontSize: 12)),
+                                ],
+                              ),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.copy, size: 18),
+                                    tooltip: 'Copy Old Password',
+                                    onPressed: () async {
+                                      final auth = await _authenticateForSensitiveAction(
+                                        reason: 'Authenticate to copy historical password',
+                                      );
+                                      if (!auth) return;
+
+                                      final dec = await _encryptionService.decrypt(encVal);
+                                      if (dec != null) {
+                                        await Clipboard.setData(ClipboardData(text: dec));
+                                        if (mounted) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('Old password copied')),
+                                          );
+                                        }
+                                      }
+                                    },
+                                  ),
+                                  OutlinedButton(
+                                    style: OutlinedButton.styleFrom(
+                                      visualDensity: VisualDensity.compact,
+                                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                                    ),
+                                    onPressed: () async {
+                                      final confirm = await showDialog<bool>(
+                                        context: context,
+                                        builder: (c) => AlertDialog(
+                                          title: const Text('Restore Password'),
+                                          content: const Text(
+                                              'Restore this previous password as the current password?'),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.pop(c, false),
+                                              child: const Text('Cancel'),
+                                            ),
+                                            ElevatedButton(
+                                              onPressed: () => Navigator.pop(c, true),
+                                              child: const Text('Restore'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                      if (confirm == true) {
+                                        await _storageService.updatePassword(
+                                          password.copyWith(encryptedValue: encVal),
+                                        );
+                                        await _loadPasswords();
+                                        if (mounted) {
+                                          Navigator.pop(ctx);
+                                          _showSuccess('Previous password restored');
+                                        }
+                                      }
+                                    },
+                                    child: const Text('Restore', style: TextStyle(fontSize: 12)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -427,6 +790,55 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
               ),
             ),
           ),
+
+          // Filter Chips (All, Favorites, and Tags)
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: const Text('All'),
+                    selected: _selectedTagFilter == null,
+                    onSelected: (_) {
+                      setState(() => _selectedTagFilter = null);
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    avatar: const Icon(Icons.star, size: 16, color: Colors.amber),
+                    label: const Text('Favorites'),
+                    selected: _selectedTagFilter == 'favorites',
+                    onSelected: (_) {
+                      setState(() {
+                        _selectedTagFilter =
+                            _selectedTagFilter == 'favorites' ? null : 'favorites';
+                      });
+                    },
+                  ),
+                ),
+                ..._allTags.map((tag) => Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: Text(tag),
+                    selected: _selectedTagFilter == tag,
+                    onSelected: (_) {
+                      setState(() {
+                        _selectedTagFilter =
+                            _selectedTagFilter == tag ? null : tag;
+                      });
+                    },
+                  ),
+                )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
 
           // Passwords list
           Expanded(
@@ -490,6 +902,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                           return Card(
                             margin: const EdgeInsets.only(bottom: 12),
                             child: ListTile(
+                              onTap: () => _showPasswordDetails(password),
                               leading: Container(
                                 padding: const EdgeInsets.all(8),
                                 decoration: BoxDecoration(
@@ -509,48 +922,82 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              subtitle: Text(
-                                'Created: ${password.createdAt.toString().split(' ')[0]}',
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Created: ${password.createdAt.toString().split(' ')[0]}',
+                                  ),
+                                  if (password.tags.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Wrap(
+                                        spacing: 4,
+                                        runSpacing: 2,
+                                        children: password.tags.take(3).map((t) => Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(t, style: const TextStyle(fontSize: 10)),
+                                        )).toList(),
+                                      ),
+                                    ),
+                                ],
                               ),
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (value) async {
-                                  if (value == 'rename') {
-                                    await _renamePassword(password);
-                                  } else if (value == 'delete') {
-                                    await _deletePassword(password);
-                                  }
-                                },
-                                itemBuilder:
-                                    (context) => [
-                                      const PopupMenuItem(
-                                        value: 'rename',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.edit),
-                                            SizedBox(width: 8),
-                                            Text('Rename'),
-                                          ],
-                                        ),
-                                      ),
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            Icon(
-                                              Icons.delete,
-                                              color: Colors.red,
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      password.isFavorite ? Icons.star : Icons.star_border,
+                                      color: password.isFavorite ? Colors.amber : null,
+                                    ),
+                                    tooltip: password.isFavorite ? 'Unmark Favorite' : 'Mark Favorite',
+                                    onPressed: () => _toggleFavorite(password),
+                                  ),
+                                  PopupMenuButton<String>(
+                                    onSelected: (value) async {
+                                      if (value == 'rename') {
+                                        await _renamePassword(password);
+                                      } else if (value == 'delete') {
+                                        await _deletePassword(password);
+                                      }
+                                    },
+                                    itemBuilder:
+                                        (context) => [
+                                          const PopupMenuItem(
+                                            value: 'rename',
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.edit),
+                                                SizedBox(width: 8),
+                                                Text('Rename'),
+                                              ],
                                             ),
-                                            SizedBox(width: 8),
-                                            Text(
-                                              'Delete',
-                                              style: TextStyle(
-                                                color: Colors.red,
-                                              ),
+                                          ),
+                                          const PopupMenuItem(
+                                            value: 'delete',
+                                            child: Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.delete,
+                                                  color: Colors.red,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text(
+                                                  'Delete',
+                                                  style: TextStyle(
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
+                                          ),
+                                        ],
+                                  ),
+                                ],
                               ),
                             ),
                           );

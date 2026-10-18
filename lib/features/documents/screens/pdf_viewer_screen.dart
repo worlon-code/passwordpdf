@@ -1,7 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'dart:io';
+import '../../../services/ai/pdf_indexing_coordinator.dart';
 import '../../../services/pdf_tools_service.dart';
 import '../../../services/pdf_password_service.dart';
 import '../widgets/reorder_pages_dialog.dart';
@@ -20,6 +23,10 @@ import '../../../services/document_service.dart';
 import 'file_info_screen.dart';
 import '../../../models/document_item_model.dart';
 import '../../../services/logging_service.dart';
+import '../../../services/pdf_annotation_and_form_service.dart';
+import '../widgets/signature_pad_dialog.dart';
+import '../widgets/pdf_form_fill_dialog.dart';
+import '../widgets/pdf_element_placement_dialog.dart';
 
 class PdfViewerScreen extends StatefulWidget {
   final String filePath;
@@ -29,6 +36,7 @@ class PdfViewerScreen extends StatefulWidget {
   final VoidCallback? onSuccess;
   final bool isExternal;
   final bool deleteOnClose;
+  final int? initialPageNumber;
 
   const PdfViewerScreen({
     super.key,
@@ -39,6 +47,7 @@ class PdfViewerScreen extends StatefulWidget {
     this.onSuccess,
     this.isExternal = false,
     this.deleteOnClose = false,
+    this.initialPageNumber,
   });
 
   @override
@@ -67,10 +76,22 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   bool _isPreloading = false;
   int _preloadedPages = 0;
 
+  // On-Page Placement State
+  bool _isPlacingElement = false;
+  PlacementType _placementType = PlacementType.signature;
+  Uint8List? _placementSignatureBytes;
+  String? _placementNoteText;
+  int _placementTargetPage = 1;
+  double _placementNormX = 0.55;
+  double _placementNormY = 0.78;
+  double _placementNormWidth = 0.35;
+  double _placementNormHeight = 0.12;
+
   @override
   void initState() {
     super.initState();
     _currentPassword = widget.password ?? '';
+    _candidatesLoadFuture = _loadCandidatesOnce();
     _pdfViewerController.addListener(_onViewerStateChanged);
   }
   
@@ -228,6 +249,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
   }
 
   Future<void> _handleBackButton() async {
+    if (_isPlacingElement) {
+      _cancelPlacement();
+      return;
+    }
     if (_isSearching) {
       _stopSearch();
       return;
@@ -320,6 +345,9 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             onSelected: (value) async {
               if (value == 'remove_password') await _handleRemovePassword(context);
               else if (value == 'add_password') await _handleAddPassword(context);
+              else if (value == 'sign_pdf') await _handleSignDocument(context);
+              else if (value == 'fill_form') await _handleFillForm(context);
+              else if (value == 'add_highlight') await _handleAddHighlight(context);
               else if (value == 'reorder') await _handleReorder(context);
               else if (value == 'split') await _handleSplit(context);
               else if (value == 'merge') await _handleMerge(context);
@@ -329,6 +357,19 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
             itemBuilder: (context) {
               final isProtected = _currentPassword.isNotEmpty;
               return [
+                const PopupMenuItem(
+                  value: 'sign_pdf',
+                  child: Row(children: [Icon(Icons.draw), SizedBox(width: 8), Text('Sign Document')]),
+                ),
+                const PopupMenuItem(
+                  value: 'fill_form',
+                  child: Row(children: [Icon(Icons.assignment), SizedBox(width: 8), Text('Fill Form Fields')]),
+                ),
+                const PopupMenuItem(
+                  value: 'add_highlight',
+                  child: Row(children: [Icon(Icons.highlight), SizedBox(width: 8), Text('Add Highlight')]),
+                ),
+                const PopupMenuDivider(),
                 const PopupMenuItem(
                   value: 'go_to_page',
                   child: Row(children: [Icon(Icons.directions), SizedBox(width: 8), Text('Go to Page')]),
@@ -447,10 +488,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   ),
                 ),
               ],
-              // Per-page indicator using pageOverlaysBuilder
+              // Per-page indicator & on-page placement using pageOverlaysBuilder
               pageOverlaysBuilder: (context, pageRect, page) {
                 final totalPages = _pdfViewerController.document?.pages.length ?? 0;
-                return [
+                final overlays = <Widget>[
                   Positioned(
                     bottom: 8,
                     right: 8,
@@ -467,6 +508,20 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                     ),
                   ),
                 ];
+
+                if (_isPlacingElement && page.pageNumber == _placementTargetPage) {
+                  overlays.add(
+                    Positioned(
+                      left: _placementNormX * pageRect.width,
+                      top: _placementNormY * pageRect.height,
+                      width: _placementNormWidth * pageRect.width,
+                      height: _placementNormHeight * pageRect.height,
+                      child: _buildOnPageDraggableElement(pageRect, page),
+                    ),
+                  );
+                }
+
+                return overlays;
               },
               // Search Highlighting
               pagePaintCallbacks: _textSearcher != null ? [
@@ -518,6 +573,20 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 if (_currentPassword.isNotEmpty) {
                    PdfPasswordService().saveDocumentPassword(widget.filePath, _currentPassword);
                 }
+                if (widget.initialPageNumber != null &&
+                    widget.initialPageNumber! >= 1 &&
+                    widget.initialPageNumber! <= document.pages.length) {
+                  controller.goToPage(pageNumber: widget.initialPageNumber!);
+                }
+                // Trigger local background text indexing & vector embedding
+                unawaited(
+                  PdfIndexingCoordinator()
+                      .indexPdfDocument(
+                        filePath: widget.filePath,
+                        password: _currentPassword.isNotEmpty ? _currentPassword : null,
+                      )
+                      .catchError((_) => ''),
+                );
               },
               onPageChanged: (pageNumber) {
                 if (mounted) {
@@ -544,6 +613,10 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                 ),
               ),
             ),
+
+          // Floating placement controls toolbar
+          if (_isPlacingElement)
+            _buildFloatingPlacementControls(),
             
          // Page indicator now handled by PdfPageNumber in viewerOverlayBuilder
         ],
@@ -753,6 +826,435 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
     if (result != null && mounted) {
       _pdfViewerController.goToPage(pageNumber: result);
     }
+  }
+
+  Future<void> _handleSignDocument(BuildContext context) async {
+    final signatureBytes = await showDialog<Uint8List>(
+      context: context,
+      builder: (_) => const SignaturePadDialog(),
+    );
+    if (signatureBytes == null || !mounted) return;
+
+    setState(() {
+      _isPlacingElement = true;
+      _placementType = PlacementType.signature;
+      _placementSignatureBytes = signatureBytes;
+      _placementNoteText = null;
+      _placementTargetPage = _currentPage;
+      _placementNormX = 0.55;
+      _placementNormY = 0.78;
+      _placementNormWidth = 0.35;
+      _placementNormHeight = 0.12;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Drag signature on the actual page to position. Pinch & zoom document freely.'),
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  Future<void> _handleFillForm(BuildContext context) async {
+    final annotService = PdfAnnotationAndFormService();
+    final fields = await annotService.getFormFields(
+      filePath: widget.filePath,
+      password: _currentPassword,
+    );
+
+    if (!mounted) return;
+    if (fields.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No interactive form fields found in this document.')),
+      );
+      return;
+    }
+
+    final filledValues = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => PdfFormFillDialog(fields: fields),
+    );
+
+    if (filledValues == null || !mounted) return;
+
+    try {
+      final outPath = await annotService.fillFormFields(
+        filePath: widget.filePath,
+        password: _currentPassword,
+        fieldValues: filledValues,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Form filled copy created: ${path.basename(outPath)}'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PdfViewerScreen(
+                      filePath: outPath,
+                      fileName: path.basename(outPath),
+                      password: _currentPassword,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to fill form fields: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleAddHighlight(BuildContext context) async {
+    final noteController = TextEditingController();
+    final note = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Add Highlight & Note'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Highlight a note section on Page $_currentPage.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(
+                labelText: 'Note Text (Optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, null), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(c, noteController.text.trim()),
+            child: const Text('Add Highlight'),
+          ),
+        ],
+      ),
+    );
+
+    if (note == null || !mounted) return;
+
+    setState(() {
+      _isPlacingElement = true;
+      _placementType = PlacementType.highlight;
+      _placementSignatureBytes = null;
+      _placementNoteText = note.isNotEmpty ? note : 'Highlighted Section';
+      _placementTargetPage = _currentPage;
+      _placementNormX = 0.08;
+      _placementNormY = 0.15;
+      _placementNormWidth = 0.84;
+      _placementNormHeight = 0.05;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Drag highlight rectangle on the page to position. Pinch & zoom freely.'),
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _cancelPlacement() {
+    setState(() {
+      _isPlacingElement = false;
+      _placementSignatureBytes = null;
+      _placementNoteText = null;
+    });
+  }
+
+  Future<void> _confirmPlacement() async {
+    if (!_isPlacingElement) return;
+
+    try {
+      final annotService = PdfAnnotationAndFormService();
+      final pageSize = await annotService.getPageSize(
+        filePath: widget.filePath,
+        password: _currentPassword,
+        pageNumber: _placementTargetPage,
+      );
+
+      final pdfX = _placementNormX * pageSize.width;
+      final pdfY = _placementNormY * pageSize.height;
+      final pdfWidth = _placementNormWidth * pageSize.width;
+      final pdfHeight = _placementNormHeight * pageSize.height;
+      final placedBounds = Rect.fromLTWH(pdfX, pdfY, pdfWidth, pdfHeight);
+
+      String outPath;
+      if (_placementType == PlacementType.signature && _placementSignatureBytes != null) {
+        outPath = await annotService.stampSignature(
+          filePath: widget.filePath,
+          password: _currentPassword,
+          signaturePngBytes: _placementSignatureBytes!,
+          pageNumber: _placementTargetPage,
+          bounds: placedBounds,
+        );
+      } else {
+        outPath = await annotService.addHighlightAndNote(
+          filePath: widget.filePath,
+          password: _currentPassword,
+          pageNumber: _placementTargetPage,
+          bounds: placedBounds,
+          noteText: _placementNoteText,
+        );
+      }
+
+      setState(() {
+        _isPlacingElement = false;
+        _placementSignatureBytes = null;
+        _placementNoteText = null;
+      });
+
+      if (mounted) {
+        final label = _placementType == PlacementType.signature ? 'Signed' : 'Annotated';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$label copy created: ${path.basename(outPath)}'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () {
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PdfViewerScreen(
+                      filePath: outPath,
+                      fileName: path.basename(outPath),
+                      password: _currentPassword,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to stamp: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Widget _buildOnPageDraggableElement(Rect pageRect, PdfPage page) {
+    final isSig = _placementType == PlacementType.signature;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (details) {
+        setState(() {
+          _placementNormX = (_placementNormX + details.delta.dx / pageRect.width).clamp(0.0, 1.0 - _placementNormWidth);
+          _placementNormY = (_placementNormY + details.delta.dy / pageRect.height).clamp(0.0, 1.0 - _placementNormHeight);
+        });
+      },
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Main Body Box
+          Container(
+            decoration: BoxDecoration(
+              color: isSig ? Colors.blue.withValues(alpha: 0.12) : Colors.yellow.withValues(alpha: 0.38),
+              border: Border.all(
+                color: isSig ? Colors.blue.shade700 : Colors.amber.shade800,
+                width: 2.0,
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: isSig && _placementSignatureBytes != null
+                ? Image.memory(
+                    _placementSignatureBytes!,
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    height: double.infinity,
+                  )
+                : Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Text(
+                        _placementNoteText ?? 'Highlight',
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+          ),
+
+          // Top Drag Label Badge
+          Positioned(
+            left: 0,
+            top: -18,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSig ? Colors.blue.shade700 : Colors.amber.shade800,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.open_with, size: 10, color: Colors.white),
+                  const SizedBox(width: 3),
+                  Text(
+                    isSig ? 'Signature (Drag to move)' : 'Highlight (Drag)',
+                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Bottom-Right Corner Resize Handle
+          Positioned(
+            right: -6,
+            bottom: -6,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanUpdate: (details) {
+                setState(() {
+                  _placementNormWidth = (_placementNormWidth + details.delta.dx / pageRect.width).clamp(0.08, 0.95 - _placementNormX);
+                  _placementNormHeight = (_placementNormHeight + details.delta.dy / pageRect.height).clamp(0.03, 0.95 - _placementNormY);
+                });
+              },
+              child: Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: isSig ? Colors.blue.shade700 : Colors.amber.shade800,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                ),
+                child: const Icon(Icons.open_in_full, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFloatingPlacementControls() {
+    final isSig = _placementType == PlacementType.signature;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 20,
+      child: SafeArea(
+        child: Material(
+          elevation: 10,
+          borderRadius: BorderRadius.circular(16),
+          color: Theme.of(context).cardColor,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(isSig ? Icons.draw : Icons.highlight, color: colorScheme.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        isSig
+                            ? 'Position Signature on Page $_placementTargetPage of $_totalPages'
+                            : 'Position Highlight on Page $_placementTargetPage of $_totalPages',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (_totalPages > 1) ...[
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left),
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Previous Page',
+                        onPressed: _placementTargetPage > 1
+                            ? () {
+                                setState(() => _placementTargetPage--);
+                                _pdfViewerController.goToPage(pageNumber: _placementTargetPage);
+                              }
+                            : null,
+                      ),
+                      Text('$_placementTargetPage', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Next Page',
+                        onPressed: _placementTargetPage < _totalPages
+                            ? () {
+                                setState(() => _placementTargetPage++);
+                                _pdfViewerController.goToPage(pageNumber: _placementTargetPage);
+                              }
+                            : null,
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(Icons.aspect_ratio, size: 16, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    const Text('Size:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    Expanded(
+                      child: Slider(
+                        value: _placementNormWidth,
+                        min: 0.10,
+                        max: 0.85,
+                        onChanged: (val) {
+                          setState(() {
+                            final ratio = _placementNormHeight / _placementNormWidth;
+                            _placementNormWidth = val.clamp(0.10, 1.0 - _placementNormX);
+                            _placementNormHeight = (_placementNormWidth * ratio).clamp(0.03, 1.0 - _placementNormY);
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: _cancelPlacement,
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: colorScheme.onPrimary,
+                      ),
+                      icon: const Icon(Icons.check, size: 18),
+                      label: const Text('Stamp Here'),
+                      onPressed: _confirmPlacement,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleFileInfo(BuildContext context) async {

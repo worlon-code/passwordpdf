@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../core/constants/app_constants.dart';
@@ -6,7 +8,7 @@ import '../models/recent_document_model.dart';
 
 /// Service for local SQLite database operations
 class StorageService {
-  static const int _databaseVersion = 14;
+  static const int _databaseVersion = 16;
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
   StorageService._internal();
@@ -27,9 +29,31 @@ class StorageService {
 
     return await openDatabase(
       path,
-      version: _databaseVersion, // was hardcoded to 8
+      version: _databaseVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      onOpen: (db) async {
+        try {
+          await db.execute('''
+            CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+              chunk_id UNINDEXED,
+              doc_id UNINDEXED,
+              chunk_text,
+              tokenize = 'unicode61 remove_diacritics 2'
+            )
+          ''');
+        } catch (_) {
+          try {
+            await db.execute('''
+              CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+                chunk_id UNINDEXED,
+                doc_id UNINDEXED,
+                chunk_text
+              )
+            ''');
+          } catch (_) {}
+        }
+      },
     );
   }
 
@@ -41,7 +65,9 @@ class StorageService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key_name TEXT NOT NULL UNIQUE,
         encrypted_value TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        is_favorite INTEGER NOT NULL DEFAULT 0,
+        encrypted_tags TEXT
       )
     ''');
 
@@ -109,9 +135,145 @@ class StorageService {
         added_at INTEGER,
         last_synced INTEGER,
         is_imported INTEGER DEFAULT 0,
-        is_imported_file INTEGER DEFAULT 0
+        is_imported_file INTEGER DEFAULT 0,
+        is_favorite INTEGER DEFAULT 0,
+        encrypted_tags TEXT
       )
     ''');
+
+    // Password History table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.passwordHistoryTable} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        password_id INTEGER NOT NULL,
+        encrypted_value TEXT NOT NULL,
+        changed_at INTEGER NOT NULL,
+        FOREIGN KEY (password_id) REFERENCES ${AppConstants.passwordsTable} (id) ON DELETE CASCADE
+      )
+    ''');
+
+    // Encrypted Signatures table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.encryptedSignaturesTable} (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        encrypted_png_bytes TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER
+      )
+    ''');
+
+    // AI Tables
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentIndexTable} (
+        doc_id TEXT PRIMARY KEY,
+        file_path TEXT NOT NULL UNIQUE,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        last_modified INTEGER NOT NULL,
+        total_pages INTEGER NOT NULL DEFAULT 0,
+        indexed_pages INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        index_version INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentPagesTable} (
+        page_id TEXT PRIMARY KEY,
+        doc_id TEXT NOT NULL,
+        page_number INTEGER NOT NULL,
+        extracted_text TEXT NOT NULL,
+        char_count INTEGER NOT NULL,
+        has_ocr INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (doc_id) REFERENCES ${AppConstants.aiDocumentIndexTable} (doc_id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentChunksTable} (
+        chunk_id TEXT PRIMARY KEY,
+        doc_id TEXT NOT NULL,
+        page_number INTEGER NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        chunk_text TEXT NOT NULL,
+        char_length INTEGER NOT NULL,
+        token_estimate INTEGER NOT NULL,
+        FOREIGN KEY (doc_id) REFERENCES ${AppConstants.aiDocumentIndexTable} (doc_id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiChunkEmbeddingsTable} (
+        chunk_id TEXT PRIMARY KEY,
+        embedding_blob BLOB NOT NULL,
+        dimensions INTEGER NOT NULL,
+        model_id TEXT NOT NULL,
+        FOREIGN KEY (chunk_id) REFERENCES ${AppConstants.aiDocumentChunksTable} (chunk_id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiInstalledModelsTable} (
+        model_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        model_type TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL,
+        sha256_hash TEXT NOT NULL,
+        downloaded_at INTEGER NOT NULL,
+        context_window INTEGER NOT NULL,
+        quantization TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiChatSessionsTable} (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        attached_doc_ids TEXT,
+        folder_id TEXT,
+        has_vault_consent INTEGER DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiChatMessagesTable} (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        citations_json TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES ${AppConstants.aiChatSessionsTable} (id) ON DELETE CASCADE
+      )
+    ''');
+
+    try {
+      await db.execute('''
+        CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+          chunk_id UNINDEXED,
+          doc_id UNINDEXED,
+          chunk_text,
+          tokenize = 'unicode61 remove_diacritics 2'
+        )
+      ''');
+    } catch (_) {
+      try {
+        await db.execute('''
+          CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+            chunk_id UNINDEXED,
+            doc_id UNINDEXED,
+            chunk_text
+          )
+        ''');
+      } catch (_) {}
+    }
     
     // Indexes (Robust & Optimized)
     try {
@@ -135,15 +297,11 @@ class StorageService {
       await db.execute('CREATE INDEX IF NOT EXISTS idx_files_is_new ON ${AppConstants.filesIndexTable} (is_new)');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_files_missing ON ${AppConstants.filesIndexTable} (missing_on_device)');
 
-      // Phase 1.10: Trigram Search (Ultra Fast Substring)
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS files_search_trigrams (
-          token TEXT NOT NULL,
-          path TEXT NOT NULL
-        )
-      ''');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_trigram_token ON files_search_trigrams (token)');
-      await db.execute('CREATE INDEX IF NOT EXISTS idx_trigram_path ON files_search_trigrams (path)');
+      // New Indexes for Password History and AI
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_password_history_pid ON ${AppConstants.passwordHistoryTable} (password_id, changed_at DESC)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_doc_path ON ${AppConstants.aiDocumentIndexTable} (file_path)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_pages_doc ON ${AppConstants.aiDocumentPagesTable} (doc_id)');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_chunks_doc ON ${AppConstants.aiDocumentChunksTable} (doc_id)');
     } catch (e) {
       // Ignore
     }
@@ -297,6 +455,182 @@ class StorageService {
         await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_imported_file INTEGER DEFAULT 0');
       } catch (_) {}
     }
+
+    if (oldVersion < 15) {
+      // Phase 2-5: Favorites, Tags, Password History, Encrypted Signatures, and Local AI Indexes
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.passwordsTable} ADD COLUMN is_favorite INTEGER DEFAULT 0');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.passwordsTable} ADD COLUMN encrypted_tags TEXT');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN is_favorite INTEGER DEFAULT 0');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE ${AppConstants.filesIndexTable} ADD COLUMN encrypted_tags TEXT');
+      } catch (_) {}
+
+      // Password History
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.passwordHistoryTable} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            password_id INTEGER NOT NULL,
+            encrypted_value TEXT NOT NULL,
+            changed_at INTEGER NOT NULL,
+            FOREIGN KEY (password_id) REFERENCES ${AppConstants.passwordsTable} (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_password_history_pid ON ${AppConstants.passwordHistoryTable} (password_id, changed_at DESC)');
+      } catch (_) {}
+
+      // Encrypted Signatures
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.encryptedSignaturesTable} (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            encrypted_png_bytes TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_used_at INTEGER
+          )
+        ''');
+      } catch (_) {}
+
+      // AI Tables
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentIndexTable} (
+            doc_id TEXT PRIMARY KEY,
+            file_path TEXT NOT NULL UNIQUE,
+            file_name TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            last_modified INTEGER NOT NULL,
+            total_pages INTEGER NOT NULL DEFAULT 0,
+            indexed_pages INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            index_version INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_doc_path ON ${AppConstants.aiDocumentIndexTable} (file_path)');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentPagesTable} (
+            page_id TEXT PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            page_number INTEGER NOT NULL,
+            extracted_text TEXT NOT NULL,
+            char_count INTEGER NOT NULL,
+            has_ocr INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (doc_id) REFERENCES ${AppConstants.aiDocumentIndexTable} (doc_id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_pages_doc ON ${AppConstants.aiDocumentPagesTable} (doc_id)');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiDocumentChunksTable} (
+            chunk_id TEXT PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            page_number INTEGER NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            char_length INTEGER NOT NULL,
+            token_estimate INTEGER NOT NULL,
+            FOREIGN KEY (doc_id) REFERENCES ${AppConstants.aiDocumentIndexTable} (doc_id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_chunks_doc ON ${AppConstants.aiDocumentChunksTable} (doc_id)');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiChunkEmbeddingsTable} (
+            chunk_id TEXT PRIMARY KEY,
+            embedding_blob BLOB NOT NULL,
+            dimensions INTEGER NOT NULL,
+            model_id TEXT NOT NULL,
+            FOREIGN KEY (chunk_id) REFERENCES ${AppConstants.aiDocumentChunksTable} (chunk_id) ON DELETE CASCADE
+          )
+        ''');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiInstalledModelsTable} (
+            model_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            model_type TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size_bytes INTEGER NOT NULL,
+            sha256_hash TEXT NOT NULL,
+            downloaded_at INTEGER NOT NULL,
+            context_window INTEGER NOT NULL,
+            quantization TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+            chunk_id UNINDEXED,
+            doc_id UNINDEXED,
+            chunk_text,
+            tokenize = 'unicode61 remove_diacritics 2'
+          )
+        ''');
+      } catch (_) {
+        try {
+          await db.execute('''
+            CREATE VIRTUAL TABLE IF NOT EXISTS ${AppConstants.aiChunksFtsTable} USING fts5(
+              chunk_id UNINDEXED,
+              doc_id UNINDEXED,
+              chunk_text
+            )
+          ''');
+        } catch (_) {}
+      }
+    }
+
+    if (oldVersion < 16) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiChatSessionsTable} (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            attached_doc_ids TEXT,
+            folder_id TEXT,
+            has_vault_consent INTEGER DEFAULT 0
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_chat_session_updated ON ${AppConstants.aiChatSessionsTable} (updated_at DESC)');
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiChatMessagesTable} (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            citations_json TEXT,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES ${AppConstants.aiChatSessionsTable} (id) ON DELETE CASCADE
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_chat_msg_session ON ${AppConstants.aiChatMessagesTable} (session_id, created_at ASC)');
+      } catch (_) {}
+    }
   }
 
   // ==================== EXPORT JOBS OPERATIONS ====================
@@ -387,11 +721,60 @@ class StorageService {
   /// Update a password
   Future<int> updatePassword(PasswordModel password) async {
     final db = await database;
+    if (password.id != null) {
+      final oldRows = await db.query(
+        AppConstants.passwordsTable,
+        where: 'id = ?',
+        whereArgs: [password.id],
+      );
+      if (oldRows.isNotEmpty) {
+        final oldCiphertext = oldRows.first['encrypted_value'] as String?;
+        if (oldCiphertext != null && oldCiphertext != password.encryptedValue) {
+          await db.insert(AppConstants.passwordHistoryTable, {
+            'password_id': password.id,
+            'encrypted_value': oldCiphertext,
+            'changed_at': DateTime.now().millisecondsSinceEpoch,
+          });
+
+          // Enforce retention limit: keep at most 5 entries per password
+          final historyRows = await db.query(
+            AppConstants.passwordHistoryTable,
+            columns: ['id'],
+            where: 'password_id = ?',
+            whereArgs: [password.id],
+            orderBy: 'changed_at DESC',
+          );
+          if (historyRows.length > 5) {
+            final toRemove = historyRows.skip(5).map((e) => e['id']).toList();
+            for (final hId in toRemove) {
+              await db.delete(
+                AppConstants.passwordHistoryTable,
+                where: 'id = ?',
+                whereArgs: [hId],
+              );
+            }
+          }
+        }
+      }
+    }
+
     return await db.update(
       AppConstants.passwordsTable,
       password.toMap(),
       where: 'id = ?',
       whereArgs: [password.id],
+    );
+  }
+
+  /// Get password history (last 5 changed passwords)
+  Future<List<Map<String, dynamic>>> getPasswordHistory(int passwordId) async {
+    final db = await database;
+    return await db.query(
+      AppConstants.passwordHistoryTable,
+      where: 'password_id = ?',
+      whereArgs: [passwordId],
+      orderBy: 'changed_at DESC',
+      limit: 5,
     );
   }
 
@@ -414,6 +797,13 @@ class StorageService {
   /// Delete a password
   Future<int> deletePassword(int id) async {
     final db = await database;
+    try {
+      await db.delete(
+        AppConstants.passwordHistoryTable,
+        where: 'password_id = ?',
+        whereArgs: [id],
+      );
+    } catch (_) {}
     return await db.delete(
       AppConstants.passwordsTable,
       where: 'id = ?',
@@ -519,6 +909,349 @@ class StorageService {
     await db.delete(AppConstants.logsTable);
   }
 
+  // ==================== ENCRYPTED SIGNATURE OPERATIONS ====================
+
+  /// Insert or update an encrypted signature
+  Future<int> insertEncryptedSignature(Map<String, dynamic> row) async {
+    final db = await database;
+    return await db.insert(
+      AppConstants.encryptedSignaturesTable,
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get all encrypted signatures
+  Future<List<Map<String, dynamic>>> getAllEncryptedSignatures() async {
+    final db = await database;
+    return await db.query(
+      AppConstants.encryptedSignaturesTable,
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  /// Delete an encrypted signature
+  Future<int> deleteEncryptedSignature(String id) async {
+    final db = await database;
+    return await db.delete(
+      AppConstants.encryptedSignaturesTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Update last used timestamp for an encrypted signature
+  Future<int> touchEncryptedSignature(String id) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.encryptedSignaturesTable,
+      {'last_used_at': DateTime.now().millisecondsSinceEpoch},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Check if an encrypted signature name already exists (case-insensitive)
+  Future<bool> encryptedSignatureNameExists(String name, {String? excludeId}) async {
+    final db = await database;
+    final where = excludeId != null 
+        ? 'LOWER(name) = LOWER(?) AND id != ?' 
+        : 'LOWER(name) = LOWER(?)';
+    final args = excludeId != null 
+        ? [name.trim(), excludeId] 
+        : [name.trim()];
+    final res = await db.query(
+      AppConstants.encryptedSignaturesTable,
+      where: where,
+      whereArgs: args,
+      limit: 1,
+    );
+    return res.isNotEmpty;
+  }
+
+  /// Rename an encrypted signature with new name
+  Future<int> renameEncryptedSignature(String id, String newName) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.encryptedSignaturesTable,
+      {'name': newName.trim()},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // ==================== LOCAL AI INDEX OPERATIONS ====================
+
+  /// Upsert AI document index row
+  Future<int> upsertAiDocument(Map<String, dynamic> docRow) async {
+    final db = await database;
+    return await db.insert(
+      AppConstants.aiDocumentIndexTable,
+      docRow,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get AI document index by docId
+  Future<Map<String, dynamic>?> getAiDocument(String docId) async {
+    final db = await database;
+    final res = await db.query(
+      AppConstants.aiDocumentIndexTable,
+      where: 'doc_id = ?',
+      whereArgs: [docId],
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+
+  /// Get AI document index by file path
+  Future<Map<String, dynamic>?> getAiDocumentByPath(String path) async {
+    final db = await database;
+    final res = await db.query(
+      AppConstants.aiDocumentIndexTable,
+      where: 'file_path = ?',
+      whereArgs: [path],
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+
+  /// Get all AI documents
+  Future<List<Map<String, dynamic>>> getAllAiDocuments() async {
+    final db = await database;
+    return await db.query(
+      AppConstants.aiDocumentIndexTable,
+      orderBy: 'updated_at DESC',
+    );
+  }
+
+  /// Delete an AI document and associated pages/chunks/embeddings/fts
+  Future<int> deleteAiDocument(String docId) async {
+    final db = await database;
+    await db.delete(AppConstants.aiDocumentPagesTable, where: 'doc_id = ?', whereArgs: [docId]);
+    await db.delete(AppConstants.aiDocumentChunksTable, where: 'doc_id = ?', whereArgs: [docId]);
+    try {
+      await db.delete(AppConstants.aiChunksFtsTable, where: 'doc_id = ?', whereArgs: [docId]);
+    } catch (_) {}
+    return await db.delete(
+      AppConstants.aiDocumentIndexTable,
+      where: 'doc_id = ?',
+      whereArgs: [docId],
+    );
+  }
+
+  /// Insert extracted pages for an AI document
+  Future<void> insertAiPages(List<Map<String, dynamic>> pages) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final page in pages) {
+      batch.insert(AppConstants.aiDocumentPagesTable, page, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Insert chunks for an AI document
+  Future<void> insertAiChunks(List<Map<String, dynamic>> chunks) async {
+    final db = await database;
+    final batch = db.batch();
+    for (final chunk in chunks) {
+      batch.insert(AppConstants.aiDocumentChunksTable, chunk, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  /// Insert FTS entry for a chunk
+  Future<void> insertAiChunkFts(String chunkId, String docId, String text) async {
+    final db = await database;
+    try {
+      await db.insert(AppConstants.aiChunksFtsTable, {
+        'chunk_id': chunkId,
+        'doc_id': docId,
+        'chunk_text': text,
+      });
+    } catch (_) {}
+  }
+
+  /// Search FTS chunks scoped to specific document IDs
+  Future<List<Map<String, dynamic>>> searchFtsChunks(
+    String query, {
+    List<String>? docIds,
+    int limit = 30,
+  }) async {
+    final db = await database;
+    if (docIds != null && docIds.isEmpty) return [];
+
+    final cleanQuery = query.replaceAll(RegExp(r'[^a-zA-Z0-9\s]'), ' ').trim();
+    if (cleanQuery.isEmpty) return [];
+
+    const stopwords = {
+      'what', 'is', 'my', 'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'for', 'on', 'with',
+      'as', 'by', 'at', 'from', 'this', 'that', 'it', 'are', 'was', 'were', 'be', 'been',
+      'have', 'has', 'had', 'do', 'does', 'did', 'can', 'could', 'will', 'would', 'shall',
+      'should', 'may', 'might', 'must', 'tell', 'me', 'about', 'show', 'find', 'give', 'how',
+      'why', 'where', 'when', 'who', 'which', 'please', 'any', 'some', 'there', 'their', 'they',
+      'i', 'you', 'he', 'she', 'we', 'us', 'him', 'her', 'them', 'your', 'his', 'our'
+    };
+
+    final allTokens = cleanQuery.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+    final contentTokens = allTokens.where((t) => !stopwords.contains(t.toLowerCase())).toList();
+    final activeTokens = contentTokens.isNotEmpty ? contentTokens : allTokens;
+
+    final hasDocFilter = docIds != null && docIds.isNotEmpty;
+    final docFilter = hasDocFilter ? 'AND doc_id IN (${List.filled(docIds.length, '?').join(',')})' : '';
+    final docArgs = hasDocFilter ? docIds : <dynamic>[];
+
+    final Map<String, Map<String, dynamic>> combined = {};
+
+    // 1. Direct Substring Match for Exact Keyword Hits (e.g. 'cgpa', 'degree')
+    if (activeTokens.isNotEmpty) {
+      final likeClauses = activeTokens.map((_) => 'chunk_text LIKE ?').join(' OR ');
+      final likeArgs = activeTokens.map((t) => '%$t%').toList();
+      final whereClause = hasDocFilter
+          ? '($likeClauses) AND doc_id IN (${List.filled(docIds.length, '?').join(',')})'
+          : '($likeClauses)';
+      final queryArgs = [...likeArgs, ...docArgs, limit];
+      try {
+        final exactRows = await db.rawQuery('''
+          SELECT chunk_id, doc_id, chunk_text, -50.0 as rank
+          FROM ${AppConstants.aiDocumentChunksTable}
+          WHERE $whereClause
+          LIMIT ?
+        ''', queryArgs);
+        for (final r in exactRows) {
+          final id = r['chunk_id'] as String;
+          combined[id] = Map<String, dynamic>.from(r);
+        }
+      } catch (_) {}
+    }
+
+    // 2. FTS5 Keyword Search using OR for token coverage
+    try {
+      final ftsTokens = activeTokens.map((t) => '$t*').join(' OR ');
+      final ftsMatches = await db.rawQuery('''
+        SELECT chunk_id, doc_id, chunk_text, rank
+        FROM ${AppConstants.aiChunksFtsTable}
+        WHERE ${AppConstants.aiChunksFtsTable} MATCH ? $docFilter
+        ORDER BY rank
+        LIMIT ?
+      ''', [ftsTokens, ...docArgs, limit]);
+      for (final r in ftsMatches) {
+        final id = r['chunk_id'] as String;
+        if (!combined.containsKey(id)) {
+          combined[id] = Map<String, dynamic>.from(r);
+        }
+      }
+    } catch (_) {}
+
+    return combined.values.take(limit).toList();
+  }
+
+  /// Insert vector embedding for a chunk
+  Future<void> insertChunkEmbedding(String chunkId, List<double> embedding, int dimensions, String modelId) async {
+    final db = await database;
+    final byteData = ByteData(embedding.length * 4);
+    for (int i = 0; i < embedding.length; i++) {
+      byteData.setFloat32(i * 4, embedding[i], Endian.little);
+    }
+    await db.insert(
+      AppConstants.aiChunkEmbeddingsTable,
+      {
+        'chunk_id': chunkId,
+        'embedding_blob': byteData.buffer.asUint8List(),
+        'dimensions': dimensions,
+        'model_id': modelId,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get chunk embeddings with chunk metadata
+  Future<List<Map<String, dynamic>>> getAllChunkEmbeddings({String? docId, List<String>? docIds}) async {
+    final db = await database;
+    if (docId != null) {
+      return await db.rawQuery('''
+        SELECT e.chunk_id, e.embedding_blob, e.dimensions, e.model_id, c.doc_id, c.page_number, c.chunk_text
+        FROM ${AppConstants.aiChunkEmbeddingsTable} e
+        INNER JOIN ${AppConstants.aiDocumentChunksTable} c ON e.chunk_id = c.chunk_id
+        WHERE c.doc_id = ?
+      ''', [docId]);
+    } else if (docIds != null && docIds.isNotEmpty) {
+      final placeholders = List.filled(docIds.length, '?').join(',');
+      return await db.rawQuery('''
+        SELECT e.chunk_id, e.embedding_blob, e.dimensions, e.model_id, c.doc_id, c.page_number, c.chunk_text
+        FROM ${AppConstants.aiChunkEmbeddingsTable} e
+        INNER JOIN ${AppConstants.aiDocumentChunksTable} c ON e.chunk_id = c.chunk_id
+        WHERE c.doc_id IN ($placeholders)
+      ''', docIds);
+    }
+    return await db.rawQuery('''
+      SELECT e.chunk_id, e.embedding_blob, e.dimensions, e.model_id, c.doc_id, c.page_number, c.chunk_text
+      FROM ${AppConstants.aiChunkEmbeddingsTable} e
+      INNER JOIN ${AppConstants.aiDocumentChunksTable} c ON e.chunk_id = c.chunk_id
+    ''');
+  }
+
+  /// Insert or update an installed AI model
+  Future<int> insertOrUpdateInstalledModel(Map<String, dynamic> model) async {
+    final db = await database;
+    return await db.insert(
+      AppConstants.aiInstalledModelsTable,
+      model,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get all installed AI models (pruning orphaned rows if files no longer exist)
+  Future<List<Map<String, dynamic>>> getInstalledModels() async {
+    final db = await database;
+    final rows = await db.query(
+      AppConstants.aiInstalledModelsTable,
+      orderBy: 'downloaded_at DESC',
+    );
+    final valid = <Map<String, dynamic>>[];
+    for (final r in rows) {
+      final path = r['file_path'] as String?;
+      if (path != null && File(path).existsSync()) {
+        valid.add(Map<String, dynamic>.from(r));
+      } else {
+        // Orphaned record: clean up from database
+        try {
+          await db.delete(
+            AppConstants.aiInstalledModelsTable,
+            where: 'model_id = ?',
+            whereArgs: [r['model_id']],
+          );
+        } catch (_) {}
+      }
+    }
+    return valid;
+  }
+
+  /// Get active model by type
+  Future<Map<String, dynamic>?> getActiveInstalledModel(String type) async {
+    final db = await database;
+    final res = await db.query(
+      AppConstants.aiInstalledModelsTable,
+      where: 'model_type = ? AND is_active = 1',
+      whereArgs: [type],
+      limit: 1,
+    );
+    if (res.isNotEmpty) {
+      final path = res.first['file_path'] as String?;
+      if (path != null && File(path).existsSync()) {
+        return Map<String, dynamic>.from(res.first);
+      } else {
+        // Deactivate orphaned model
+        try {
+          await db.delete(
+            AppConstants.aiInstalledModelsTable,
+            where: 'model_id = ?',
+            whereArgs: [res.first['model_id']],
+          );
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
   // ==================== GENERIC DB OPERATIONS ====================
 
   /// Get all table names
@@ -539,6 +1272,13 @@ class StorageService {
     AppConstants.exportJobsTable,
     AppConstants.logsTable,
     AppConstants.filesIndexTable,
+    AppConstants.passwordHistoryTable,
+    AppConstants.encryptedSignaturesTable,
+    AppConstants.aiDocumentIndexTable,
+    AppConstants.aiDocumentPagesTable,
+    AppConstants.aiDocumentChunksTable,
+    AppConstants.aiChunkEmbeddingsTable,
+    AppConstants.aiInstalledModelsTable,
   };
 
   // A SQL identifier we are willing to interpolate: letters, digits, underscore only.
@@ -582,6 +1322,97 @@ class StorageService {
     final safeColumn = _safeColumn(idColumn);
     final db = await database;
     return await db.delete(safeTable, where: '$safeColumn = ?', whereArgs: [idValue]);
+  }
+
+  // ==================== AI CHAT SESSIONS & MESSAGES ====================
+
+  /// Insert a new AI chat session
+  Future<int> insertAiChatSession(Map<String, dynamic> session) async {
+    final db = await database;
+    return await db.insert(
+      AppConstants.aiChatSessionsTable,
+      session,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Update an AI chat session
+  Future<int> updateAiChatSession(String id, Map<String, dynamic> session) async {
+    final db = await database;
+    return await db.update(
+      AppConstants.aiChatSessionsTable,
+      session,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Get AI chat session by id
+  Future<Map<String, dynamic>?> getAiChatSession(String id) async {
+    final db = await database;
+    final res = await db.query(
+      AppConstants.aiChatSessionsTable,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+
+  /// Get all AI chat sessions
+  Future<List<Map<String, dynamic>>> getAllAiChatSessions() async {
+    final db = await database;
+    final rows = await db.query(
+      AppConstants.aiChatSessionsTable,
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  /// Delete an AI chat session and its messages
+  Future<int> deleteAiChatSession(String id) async {
+    final db = await database;
+    await db.delete(
+      AppConstants.aiChatMessagesTable,
+      where: 'session_id = ?',
+      whereArgs: [id],
+    );
+    return await db.delete(
+      AppConstants.aiChatSessionsTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Insert an AI chat message
+  Future<int> insertAiChatMessage(Map<String, dynamic> message) async {
+    final db = await database;
+    return await db.insert(
+      AppConstants.aiChatMessagesTable,
+      message,
+    );
+  }
+
+  /// Get all messages for a session
+  Future<List<Map<String, dynamic>>> getAiChatMessagesForSession(String sessionId) async {
+    final db = await database;
+    final rows = await db.query(
+      AppConstants.aiChatMessagesTable,
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+      orderBy: 'created_at ASC',
+    );
+    return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  /// Clear all messages for a session
+  Future<int> deleteAiChatMessagesForSession(String sessionId) async {
+    final db = await database;
+    return await db.delete(
+      AppConstants.aiChatMessagesTable,
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+    );
   }
 
   /// Close database

@@ -1,7 +1,7 @@
 name: passwordpdf_manager
 description: "PDF Password Manager - Secure PDF & Password Management"
 publish_to: 'none'
-version: 1.2.8+127
+version: 1.2.10+134
 
 environment:
   sdk: '>=3.7.0 <4.0.0'
@@ -59,6 +59,7 @@ dependencies:
   cryptography: ^2.7.0      # AES-256-GCM (Task 15) + Argon2id (Tasks 16/19)
   package_info_plus: ^8.1.0 # used by UpdateService + main.dart for version string
   excel2003: ^1.0.0
+  image_picker: ^1.2.4
 
 dependency_overrides:
   share_plus: ^10.0.0

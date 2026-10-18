@@ -189,20 +189,30 @@ class PdfPasswordService {
     await initialize();
     final passwords = LinkedHashSet<String>();
     
-    // 1. From document history
-    for (final encrypted in _documentPasswords.values) {
-      if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
-      
-      final decrypted = await _encryptionService.decrypt(encrypted);
-      if (decrypted != null && decrypted.trim().isNotEmpty) {
-        passwords.add(decrypted);
-      }
-    }
-    
-    // 2. From Password Manager
+    // 1. Favorites from Password Manager first
     try {
       final managerPasswords = await _storageService.getAllPasswords();
-      for (final model in managerPasswords) {
+      final favorites = managerPasswords.where((p) => p.isFavorite).toList();
+      for (final model in favorites) {
+        final decrypted = await _encryptionService.decrypt(model.encryptedValue);
+        if (decrypted != null && decrypted.trim().isNotEmpty) {
+          passwords.add(decrypted);
+        }
+      }
+
+      // 2. From document history
+      for (final encrypted in _documentPasswords.values) {
+        if (encrypted == 'NO_PASSWORD' || encrypted.isEmpty) continue;
+        
+        final decrypted = await _encryptionService.decrypt(encrypted);
+        if (decrypted != null && decrypted.trim().isNotEmpty) {
+          passwords.add(decrypted);
+        }
+      }
+
+      // 3. Remaining passwords from Password Manager
+      final nonFavorites = managerPasswords.where((p) => !p.isFavorite).toList();
+      for (final model in nonFavorites) {
         final decrypted = await _encryptionService.decrypt(model.encryptedValue);
         if (decrypted != null && decrypted.trim().isNotEmpty) {
           passwords.add(decrypted);

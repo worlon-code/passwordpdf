@@ -5,6 +5,7 @@ import '../../../services/logging_service.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'package:cryptography/cryptography.dart';
+import '../../../services/window_security_service.dart';
 
 /// Authentication method options
 enum AuthMethod {
@@ -37,6 +38,8 @@ class SettingsService extends ChangeNotifier {
   int _autoLockTimeout = 10; // Default 10 minutes
   int _lastViewedBuildNumber = 0; // For What's New dialog
   bool _autoCheckUpdates = true; // Default true
+  bool _secureScreenEnabled = false;
+  bool _aiAutoVaultPasswordAccess = false;
 
   /// Getters
   ThemeMode get themeMode => _themeMode;
@@ -56,6 +59,8 @@ class SettingsService extends ChangeNotifier {
   int get autoLockTimeout => _autoLockTimeout;
   int get lastViewedBuildNumber => _lastViewedBuildNumber;
   bool get autoCheckUpdates => _autoCheckUpdates;
+  bool get secureScreenEnabled => _secureScreenEnabled;
+  bool get aiAutoVaultPasswordAccess => _aiAutoVaultPasswordAccess;
 
   // ==================== BACKUP (Settings) ====================
   /// Whitelisted, device-portable settings for the Documents+Settings backup.
@@ -69,6 +74,7 @@ class SettingsService extends ChangeNotifier {
     'default_screen_index': _defaultScreenIndex,
     'auto_lock_timeout': _autoLockTimeout,
     'auto_check_updates': _autoCheckUpdates,
+    'secure_screen_enabled': _secureScreenEnabled,
   };
 
   /// Apply a whitelisted settings map from a backup (REPLACE). Each field is
@@ -92,6 +98,8 @@ class SettingsService extends ChangeNotifier {
     if (al is int) await setAutoLockTimeout(al);
     final au = m['auto_check_updates'];
     if (au is bool) await setAutoCheckUpdates(au);
+    final sse = m['secure_screen_enabled'];
+    if (sse is bool) await setSecureScreenEnabled(sse);
   }
 
   /// Initialize settings service
@@ -165,14 +173,39 @@ class SettingsService extends ChangeNotifier {
     // Load auto-update check
     _autoCheckUpdates = _prefs!.getBool('auto_check_updates') ?? true;
 
+    // Load secure screen setting
+    _secureScreenEnabled = _prefs!.getBool('secure_screen_enabled') ?? false;
+    if (_secureScreenEnabled) {
+      await WindowSecurityService().setSecure(true);
+    }
+
+    // Load AI auto vault password access
+    _aiAutoVaultPasswordAccess = _prefs!.getBool('ai_auto_vault_password_access') ?? false;
+
     _log.info(
       'SettingsService',
-      'Settings loaded: autoCheckUpdates=$_autoCheckUpdates',
+      'Settings loaded: autoCheckUpdates=$_autoCheckUpdates, secureScreen=$_secureScreenEnabled, aiVaultPassword=$_aiAutoVaultPasswordAccess',
     );
     notifyListeners();
   }
 
   // ... existing setters ...
+
+  /// Set AI vault password access preference
+  Future<void> setAiAutoVaultPasswordAccess(bool enabled) async {
+    _aiAutoVaultPasswordAccess = enabled;
+    await _prefs?.setBool('ai_auto_vault_password_access', enabled);
+    notifyListeners();
+  }
+
+  /// Set secure screen preference (FLAG_SECURE)
+  Future<void> setSecureScreenEnabled(bool enabled) async {
+    _secureScreenEnabled = enabled;
+    await _prefs?.setBool('secure_screen_enabled', enabled);
+    await WindowSecurityService().setSecure(enabled);
+    _log.info('SettingsService', 'Secure screen (FLAG_SECURE) set to: $enabled');
+    notifyListeners();
+  }
 
   /// Set auto-update check preference
   Future<void> setAutoCheckUpdates(bool enabled) async {

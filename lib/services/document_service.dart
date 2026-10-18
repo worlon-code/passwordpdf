@@ -978,6 +978,24 @@ class DocumentService extends ChangeNotifier {
     _log.info('DocumentService', 'Updated folder source path: $sourcePath (isImported=true)');
   }
 
+  /// Toggle document favorite
+  Future<void> toggleFavorite(String id) async {
+    final idx = _items.indexWhere((item) => item.id == id);
+    if (idx != -1) {
+      _items[idx] = _items[idx].copyWith(isFavorite: !_items[idx].isFavorite);
+      await _saveDocuments();
+    }
+  }
+
+  /// Update document tags
+  Future<void> updateDocumentTags(String id, List<String> tags) async {
+    final idx = _items.indexWhere((item) => item.id == id);
+    if (idx != -1) {
+      _items[idx] = _items[idx].copyWith(tags: tags);
+      await _saveDocuments();
+    }
+  }
+
   /// Delete item (recursively deletes folder contents)
   Future<void> deleteItem(String itemId, {bool deleteFromDevice = false}) async {
     final item = _items.firstWhere(
