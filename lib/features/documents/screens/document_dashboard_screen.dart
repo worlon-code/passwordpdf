@@ -41,6 +41,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:passwordpdf_manager/features/documents/widgets/delete_confirmation_dialog.dart';
 import '../../ai/screens/ai_studio_screen.dart';
 import '../../ai/widgets/ai_sparkle_icon.dart';
+import '../../../core/constants/feature_flags.dart';
 
 
 
@@ -471,7 +472,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             _openDocument(item);
           } else {
             // Fallback: open directly via router
-            openDocument(context, filePath);
+            openDocument(context, filePath, deleteOnClose: isTemp);
           }
         }
         
@@ -2026,7 +2027,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
                 onPressed: _showSortOptions,
                 tooltip: 'Sort items',
               ),
-              if (_currentFolderId != null)
+              if (kAiFeatureEnabled && _currentFolderId != null)
                 IconButton(
                   icon: const AiSparkleIcon(size: 22),
                   tooltip: 'Chat with Folder (AI)',
@@ -2807,7 +2808,7 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
         subtitle: Text(_buildFolderSubtitle(folder.id)),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
-            if (value == 'chat_ai') {
+            if (kAiFeatureEnabled && value == 'chat_ai') {
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -2867,16 +2868,17 @@ class DocumentDashboardScreenState extends State<DocumentDashboardScreen> {
             }
           },
           itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'chat_ai',
-              child: Row(
-                children: [
-                  const AiSparkleIcon(size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Chat with AI'),
-                ],
+            if (kAiFeatureEnabled)
+              const PopupMenuItem(
+                value: 'chat_ai',
+                child: Row(
+                  children: [
+                    const AiSparkleIcon(size: 18),
+                    const SizedBox(width: 8),
+                    const Text('Chat with AI'),
+                  ],
+                ),
               ),
-            ),
             if (folder.isImported)
                 const PopupMenuItem(
                   value: 'sync',

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../services/ai/pdf_indexing_coordinator.dart';
+import '../../../core/constants/feature_flags.dart';
 import '../../../services/pdf_tools_service.dart';
 import '../../../services/pdf_password_service.dart';
 import '../widgets/reorder_pages_dialog.dart';
@@ -323,16 +324,15 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   ),
                 ),
           ] else ...[
-            if (widget.isExternal)
-              IconButton(
-                icon: const Icon(Icons.save_alt),
-                tooltip: 'Save to Folder',
-                onPressed: () => _handleSaveFile(context),
-              ),
             IconButton(
               icon: const Icon(Icons.share),
               tooltip: 'Share File',
               onPressed: () => _handleShareFile(),
+            ),
+            IconButton(
+              icon: const Icon(Icons.save_alt),
+              tooltip: 'Save File',
+              onPressed: () => _handleSaveFile(context),
             ),
             IconButton(
               icon: const Icon(Icons.search),
@@ -579,14 +579,16 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   controller.goToPage(pageNumber: widget.initialPageNumber!);
                 }
                 // Trigger local background text indexing & vector embedding
-                unawaited(
-                  PdfIndexingCoordinator()
-                      .indexPdfDocument(
-                        filePath: widget.filePath,
-                        password: _currentPassword.isNotEmpty ? _currentPassword : null,
-                      )
-                      .catchError((_) => ''),
-                );
+                if (kAiFeatureEnabled) {
+                  unawaited(
+                    PdfIndexingCoordinator()
+                        .indexPdfDocument(
+                          filePath: widget.filePath,
+                          password: _currentPassword.isNotEmpty ? _currentPassword : null,
+                        )
+                        .catchError((_) => ''),
+                  );
+                }
               },
               onPageChanged: (pageNumber) {
                 if (mounted) {
@@ -1321,7 +1323,7 @@ class _PdfViewerScreenState extends State<PdfViewerScreen> {
                   decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(8)),
                   child: Icon(Icons.library_books, color: theme.colorScheme.onPrimaryContainer),
               ),
-              title: const Text('Save to App Library'),
+              title: const Text('Save a Copy to App Library'),
               subtitle: const Text('Organize in App Folders & Sync'),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               onTap: () => Navigator.pop(c, 'library'),

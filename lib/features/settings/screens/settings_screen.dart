@@ -27,6 +27,7 @@ import '../../../main.dart';
 import '../../update/services/update_service.dart';
 import '../../update/widgets/update_dialogs.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../../../core/constants/feature_flags.dart';
 
 /// Settings screen
 class SettingsScreen extends StatefulWidget {
@@ -927,20 +928,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     );
                   },
                 ),
-                const Divider(height: 1),
-                Consumer<SettingsService>(
-                  builder: (context, settings, child) {
-                    return SwitchListTile(
-                      secondary: const Icon(Icons.auto_awesome),
-                      title: const Text('AI Vault Password Access'),
-                      subtitle: const Text('Allow local AI to read passwords from vault for protected PDFs without asking in each chat'),
-                      value: settings.aiAutoVaultPasswordAccess,
-                      onChanged: (value) async {
-                        await settings.setAiAutoVaultPasswordAccess(value);
-                      },
-                    );
-                  },
-                ),
+                if (kAiFeatureEnabled) ...[
+                  const Divider(height: 1),
+                  Consumer<SettingsService>(
+                    builder: (context, settings, child) {
+                      return SwitchListTile(
+                        secondary: const Icon(Icons.auto_awesome),
+                        title: const Text('AI Vault Password Access'),
+                        subtitle: const Text('Allow local AI to read passwords from vault for protected PDFs without asking in each chat'),
+                        value: settings.aiAutoVaultPasswordAccess,
+                        onChanged: (value) async {
+                          await settings.setAiAutoVaultPasswordAccess(value);
+                        },
+                      );
+                    },
+                  ),
+                ],
               ],
             ),
           ),

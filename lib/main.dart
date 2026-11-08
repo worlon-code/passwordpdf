@@ -17,6 +17,7 @@ import 'services/storage_service.dart';
 import 'services/password_migration_service.dart';
 import 'services/pdf_password_service.dart';
 import 'services/ai/ai_notification_service.dart';
+import 'core/constants/feature_flags.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -133,7 +134,7 @@ Context: ${details.context?.toDescription() ?? 'none'}
     exportService.onNotificationTap.listen((payload) {
       log.info('App', 'Notification tapped: $payload');
       
-      if (payload.startsWith('open_ai_chat:')) {
+      if (kAiFeatureEnabled && payload.startsWith('open_ai_chat:')) {
         final sessionId = payload.replaceFirst('open_ai_chat:', '');
         AiNotificationService.pendingSessionId = sessionId;
         navigatorKey.currentState?.pushAndRemoveUntil(
@@ -866,7 +867,7 @@ class _MainScreenState extends State<MainScreen> {
       _currentIndex = 1; // Documents Tab
     }
 
-    AiStudioScreen.isAiTabActive.value = (_currentIndex == 2);
+    AiStudioScreen.isAiTabActive.value = kAiFeatureEnabled && (_currentIndex == 2);
     
     // Check for pending duplicate resolution
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1088,7 +1089,9 @@ class _MainScreenState extends State<MainScreen> {
             handled = await _handleDashboardBack();
             break;
           case 2:
-            handled = await _handleAiStudioBack();
+            handled = kAiFeatureEnabled
+                ? await _handleAiStudioBack()
+                : await _handleSettingsBack();
             break;
           case 3:
             handled = await _handleSettingsBack();
@@ -1134,7 +1137,7 @@ class _MainScreenState extends State<MainScreen> {
           children: [
             AllDocumentsScreen(key: _allDocsKey),
             DocumentDashboardScreen(key: _dashboardKey),
-            const AiStudioScreen(),
+            if (kAiFeatureEnabled) const AiStudioScreen(),
             const SettingsScreen(),
           ],
         ),
@@ -1145,7 +1148,7 @@ class _MainScreenState extends State<MainScreen> {
             setState(() {
               _currentIndex = index;
             });
-            AiStudioScreen.isAiTabActive.value = (index == 2);
+            AiStudioScreen.isAiTabActive.value = kAiFeatureEnabled && (index == 2);
             if (index == 1 && prevIndex != 1) {
               DocumentDashboardScreen.currentState?.reload();
             }
@@ -1161,17 +1164,18 @@ class _MainScreenState extends State<MainScreen> {
               selectedIcon: Icon(Icons.folder),
               label: 'Documents',
             ),
-            NavigationDestination(
-              icon: Badge(
-                label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                child: AiSparkleIcon(size: 24),
+            if (kAiFeatureEnabled)
+              NavigationDestination(
+                icon: Badge(
+                  label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  child: AiSparkleIcon(size: 24),
+                ),
+                selectedIcon: Badge(
+                  label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  child: AiSparkleIcon(size: 26),
+                ),
+                label: 'AI',
               ),
-              selectedIcon: Badge(
-                label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-                child: AiSparkleIcon(size: 26),
-              ),
-              label: 'AI',
-            ),
             NavigationDestination(
               icon: Icon(Icons.settings_outlined),
               selectedIcon: Icon(Icons.settings),
