@@ -10,6 +10,7 @@ import '../../../services/encryption_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/password_backup_service.dart';
 import '../../../services/biometric_service.dart';
+import '../../../services/security_question_service.dart';
 import '../../settings/services/settings_service.dart';
 
 import '../../documents/screens/file_system_browser.dart';
@@ -28,6 +29,7 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
   final StorageService _storageService = StorageService();
   final EncryptionService _encryptionService = EncryptionService();
   final BiometricService _biometricService = BiometricService();
+  final SecurityQuestionService _securityQuestionService = SecurityQuestionService();
 
   Future<bool> _authenticateForSensitiveAction({
     String reason = 'Authenticate to access password',
@@ -47,6 +49,39 @@ class _PasswordManagerScreenState extends State<PasswordManagerScreen> {
         return false;
       }
     }
+
+    // Security Question verification
+    final hasQuestion = await _securityQuestionService.isSecurityQuestionSet();
+    if (!hasQuestion) {
+      if (!mounted) return false;
+      final setOk = await _securityQuestionService.promptSetSecurityQuestion(context);
+      if (!setOk) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Security question required to view or copy passwords'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return false;
+      }
+    }
+
+    if (!mounted) return false;
+    final verified = await _securityQuestionService.promptVerifySecurityQuestion(context);
+    if (!verified) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Security question answer incorrect or cancelled'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return false;
+    }
+
     return true;
   }
 

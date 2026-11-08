@@ -25,6 +25,8 @@ class AppConstants {
   static const String aiInstalledModelsTable = 'ai_installed_models';
   static const String aiChatSessionsTable = 'ai_chat_sessions';
   static const String aiChatMessagesTable = 'ai_chat_messages';
+  static const String aiSystemPromptsTable = 'ai_system_prompts';
+  static const String aiDiagnosticLogsTable = 'ai_diagnostic_logs';
   
   // Encryption
   static const String encryptionKeyName = 'pdf_encryption_key';

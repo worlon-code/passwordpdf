@@ -25,6 +25,7 @@ import '../widgets/ai_model_management_dialog.dart';
 import '../widgets/ai_sparkle_icon.dart';
 import '../widgets/app_library_pdf_picker.dart';
 import 'ai_diagnostics_screen.dart';
+import 'ai_prompt_management_screen.dart';
 
 /// File reference attached to an AI chat session
 class AttachedPdfFile {
@@ -62,6 +63,9 @@ class AiStudioScreen extends StatefulWidget {
   final String? initialFolderId;
   final String? initialFolderName;
 
+  /// Global notifier tracking whether the AI tab is currently active on screen
+  static final ValueNotifier<bool> isAiTabActive = ValueNotifier<bool>(false);
+
   const AiStudioScreen({
     super.key,
     this.initialFolderId,
@@ -79,6 +83,7 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
   final PdfIndexingCoordinator _indexer = PdfIndexingCoordinator();
   final PdfPasswordService _passwordService = PdfPasswordService();
   final TextEditingController _inputController = TextEditingController();
+  final FocusNode _inputFocusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -90,10 +95,13 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
   bool _isLoadingSessions = true;
   bool _isLoadingMessages = false;
   bool _isResponding = false;
+  String _currentRespondingStatus = 'Analyzing question...';
   String? _indexingStatusText;
   bool _isScreenVisible = true;
   bool _showBackgroundNotice = false;
   Timer? _longRunningTimer;
+
+  bool get _isEffectivelyVisible => _isScreenVisible && AiStudioScreen.isAiTabActive.value;
 
   // Model & Capacity
   Map<String, dynamic>? _activeModel;
@@ -105,26 +113,55 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AiNotificationService.onNotificationClicked = _handleNotificationSessionOpen;
+    AiStudioScreen.isAiTabActive.addListener(_onAiTabActiveChanged);
     _initializeStudio();
+  }
+
+  void _onAiTabActiveChanged() {
+    if (!AiStudioScreen.isAiTabActive.value) {
+      _inputFocusNode.unfocus();
+    } else {
+      // Explicitly ensure keyboard does NOT automatically open upon switching to AI tab
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _inputFocusNode.unfocus();
+        }
+      });
+    }
   }
 
   void _handleNotificationSessionOpen(String sessionId) {
     final matches = _sessions.where((s) => s['id'] == sessionId).toList();
     if (matches.isNotEmpty) {
       _switchToSession(matches.first);
+    } else {
+      _storage.getAllAiChatSessions().then((fresh) {
+        if (mounted) {
+          setState(() => _sessions = List<Map<String, dynamic>>.from(fresh));
+          final found = fresh.where((s) => s['id'] == sessionId).toList();
+          if (found.isNotEmpty) {
+            _switchToSession(found.first);
+          }
+        }
+      });
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _isScreenVisible = (state == AppLifecycleState.resumed);
+    if (state != AppLifecycleState.resumed) {
+      _inputFocusNode.unfocus();
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    AiStudioScreen.isAiTabActive.removeListener(_onAiTabActiveChanged);
     _longRunningTimer?.cancel();
     _inputController.dispose();
+    _inputFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -133,7 +170,11 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
     await _loadDeviceAndModelProfile();
     await _loadSessions();
 
-    if (widget.initialFolderId != null) {
+    if (AiNotificationService.pendingSessionId != null) {
+      final pid = AiNotificationService.pendingSessionId;
+      AiNotificationService.pendingSessionId = null;
+      _handleNotificationSessionOpen(pid!);
+    } else if (widget.initialFolderId != null) {
       await _setupFolderSession(widget.initialFolderId!, widget.initialFolderName ?? 'Folder');
     }
   }
@@ -728,6 +769,7 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
         setState(() {
           _messages = List<Map<String, dynamic>>.from(_messages)..add(userMsg);
           _isResponding = true;
+          _currentRespondingStatus = 'Analyzing question...';
           _showBackgroundNotice = false;
         });
         _scrollToBottom();
@@ -751,6 +793,13 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
       final ragResult = await _ragService.answerQuestion(
         question: text,
         targetDocIds: docIds,
+        onStatusUpdate: (status) {
+          if (mounted) {
+            setState(() {
+              _currentRespondingStatus = status;
+            });
+          }
+        },
       );
 
       LoggingService().info('AiStudio', 'RAG response received (${ragResult.answer.length} chars, ${ragResult.citations.length} citations)');
@@ -785,8 +834,8 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
         _scrollToBottom();
       }
 
-      // If user navigated away from chat screen, notify via system notification
-      if (!_isScreenVisible) {
+      // If user navigated away from chat screen or switched tabs, notify via system notification
+      if (!_isEffectivelyVisible) {
         LoggingService().info('AiStudio', 'User not on screen; posting background completion notification');
         await AiNotificationService().showAiResponseNotification(
           sessionId: sessionId,
@@ -833,10 +882,42 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
     });
   }
 
+  void _openAttachedPdf(AttachedPdfFile file) {
+    if (file.path.isEmpty || !File(file.path).existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Document file not found on disk: ${file.name}')),
+      );
+      return;
+    }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PdfViewerScreen(
+          filePath: file.path,
+          fileName: file.name,
+          initialPageNumber: 1,
+          password: file.password,
+        ),
+      ),
+    );
+  }
+
   void _openCitation(Map<String, dynamic> citation) {
-    final filePath = citation['filePath'] as String?;
+    var filePath = citation['filePath'] as String?;
     final fileName = citation['fileName'] as String? ?? 'Document';
     final pageNum = citation['pageNumber'] as int? ?? 1;
+
+    // Check if path is empty or missing, resolve by filename from attached files
+    if (filePath == null || filePath.isEmpty || !File(filePath).existsSync()) {
+      final match = _attachedFiles.where((a) =>
+        a.name.toLowerCase() == fileName.toLowerCase() ||
+        a.path.toLowerCase().endsWith(fileName.toLowerCase())
+      ).firstOrNull;
+
+      if (match != null && match.path.isNotEmpty && File(match.path).existsSync()) {
+        filePath = match.path;
+      }
+    }
 
     if (filePath == null || filePath.isEmpty || !File(filePath).existsSync()) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -845,14 +926,14 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
       return;
     }
 
-    final match = _attachedFiles.where((a) => a.path == filePath).toList();
-    final password = match.isNotEmpty ? match.first.password : null;
+    final match = _attachedFiles.where((a) => a.path == filePath).firstOrNull;
+    final password = match?.password;
 
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => PdfViewerScreen(
-          filePath: filePath,
+          filePath: filePath!,
           fileName: fileName,
           initialPageNumber: pageNum,
           password: password,
@@ -866,98 +947,187 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isTablet = MediaQuery.of(context).size.width >= 720;
     final currentTitle = _currentSession?['title'] as String? ?? 'AI Document Assistant';
     final activeModelName = _activeModel?['display_name'] as String? ?? 'No Model Installed';
+    final isDevMode = Provider.of<SettingsService>(context).developerModeEnabled;
 
-    return Scaffold(
-      key: _scaffoldKey,
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.history),
-          tooltip: 'Chat History',
-          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-        ),
-        title: GestureDetector(
-          onTap: _renameCurrentSession,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  currentTitle,
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.edit_outlined, size: 16, color: colorScheme.primary),
-            ],
-          ),
-        ),
-        actions: [
-          // Model Manager Pill
-          ActionChip(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            avatar: const AiSparkleIcon(size: 14),
-            label: Text(
-              _activeModel != null ? activeModelName.split(' ').take(2).join(' ') : 'Model',
-              style: const TextStyle(fontSize: 11),
-            ),
-            onPressed: () async {
-              await AiModelManagementDialog.show(context);
-              await _loadDeviceAndModelProfile();
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.receipt_long_outlined),
-            tooltip: 'AI Logs & Diagnostics',
-            visualDensity: VisualDensity.compact,
-            onPressed: () => AiDiagnosticsScreen.show(context),
-          ),
-          IconButton(
-            icon: const Icon(Icons.add_comment_outlined),
-            tooltip: 'New Chat',
-            visualDensity: VisualDensity.compact,
-            onPressed: () => _createNewSession(),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      drawer: _buildSessionsDrawer(),
-      body: Column(
-        children: [
-          // Attached Documents Strip
-          _buildAttachedDocumentsBar(),
+    final chatColumn = Column(
+      children: [
+        // Attached Documents Strip
+        _buildAttachedDocumentsBar(),
 
-          // Indexing status progress bar
-          if (_indexingStatusText != null)
-            LinearProgressIndicator(
-              backgroundColor: colorScheme.surfaceContainerHighest,
-            ),
+        // Indexing status progress bar
+        if (_indexingStatusText != null)
+          LinearProgressIndicator(
+            backgroundColor: colorScheme.surfaceContainerHighest,
+          ),
 
-          // Chat Messages View
-          Expanded(
-            child: _isLoadingMessages
-                ? const Center(child: CircularProgressIndicator())
-                : _messages.isEmpty
-                    ? _buildEmptyState()
-                    : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        itemCount: _messages.length + (_isResponding ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index == _messages.length && _isResponding) {
-                            return _buildThinkingBubble();
-                          }
-                          return _buildMessageItem(_messages[index]);
-                        },
+        // Chat Messages View
+        Expanded(
+          child: _isLoadingMessages
+              ? const Center(child: CircularProgressIndicator())
+              : _messages.isEmpty
+                  ? _buildEmptyState()
+                  : Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 860),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          itemCount: _messages.length + (_isResponding ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (index == _messages.length && _isResponding) {
+                              return _buildThinkingBubble();
+                            }
+                            return _buildMessageItem(_messages[index]);
+                          },
+                        ),
                       ),
-          ),
+                    ),
+        ),
 
-          // Bottom Input Bar
-          _buildInputBar(),
-        ],
+        // Bottom Input Bar
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 860),
+            child: _buildInputBar(),
+          ),
+        ),
+      ],
+    );
+
+    return GestureDetector(
+      onTap: () => _inputFocusNode.unfocus(),
+      behavior: HitTestBehavior.translucent,
+      child: Scaffold(
+        key: _scaffoldKey,
+        appBar: AppBar(
+          titleSpacing: isTablet ? 16 : 4,
+          leading: isTablet
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.history),
+                  tooltip: 'Chat History',
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                ),
+          title: GestureDetector(
+            onTap: _renameCurrentSession,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    currentTitle,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                Icon(Icons.edit_outlined, size: 14, color: colorScheme.primary),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [colorScheme.primary, colorScheme.tertiary],
+                    ),
+                    borderRadius: BorderRadius.circular(5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.primary.withValues(alpha: 0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: const Text(
+                    'BETA',
+                    style: TextStyle(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.6,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            // Model Manager Pill
+            ActionChip(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              avatar: const AiSparkleIcon(size: 13),
+              label: Text(
+                _activeModel != null ? activeModelName.split(' ').first : 'Model',
+                style: const TextStyle(fontSize: 11),
+              ),
+              onPressed: () async {
+                await AiModelManagementDialog.show(context);
+                await _loadDeviceAndModelProfile();
+              },
+            ),
+            if (isDevMode)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, size: 20),
+                tooltip: 'Developer Tools',
+                padding: EdgeInsets.zero,
+                onSelected: (val) {
+                  if (val == 'prompt') AiPromptManagementScreen.show(context);
+                  if (val == 'diagnostics') AiDiagnosticsScreen.show(context);
+                },
+                itemBuilder: (ctx) => [
+                  const PopupMenuItem(
+                    value: 'prompt',
+                    child: Row(
+                      children: [
+                        Icon(Icons.tune, size: 18),
+                        SizedBox(width: 8),
+                        Text('Master System Prompt'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'diagnostics',
+                    child: Row(
+                      children: [
+                        Icon(Icons.receipt_long_outlined, size: 18),
+                        SizedBox(width: 8),
+                        Text('AI Logs & Diagnostics'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            IconButton(
+              icon: const Icon(Icons.add_comment_outlined, size: 20),
+              tooltip: 'New Chat',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _createNewSession(),
+            ),
+            const SizedBox(width: 2),
+          ],
+        ),
+        drawer: isTablet ? null : _buildSessionsDrawer(),
+        body: isTablet
+            ? Row(
+                children: [
+                  SizedBox(
+                    width: 290,
+                    child: Material(
+                      color: Theme.of(context).cardColor.withValues(alpha: 0.5),
+                      child: SafeArea(
+                        child: _buildSessionsContent(isDrawer: false),
+                      ),
+                    ),
+                  ),
+                  const VerticalDivider(width: 1),
+                  Expanded(child: chatColumn),
+                ],
+              )
+            : chatColumn,
       ),
     );
   }
@@ -1008,7 +1178,7 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
                   final file = _attachedFiles[index];
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
-                    child: Chip(
+                    child: InputChip(
                       avatar: Icon(
                         file.isEncrypted ? Icons.lock : Icons.picture_as_pdf,
                         size: 16,
@@ -1019,6 +1189,8 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
                         style: const TextStyle(fontSize: 12),
                         overflow: TextOverflow.ellipsis,
                       ),
+                      tooltip: 'Tap to preview PDF',
+                      onPressed: () => _openAttachedPdf(file),
                       deleteIcon: const Icon(Icons.close, size: 14),
                       onDeleted: () => _removeAttachedFile(index),
                     ),
@@ -1117,20 +1289,18 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        'AI is thinking',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: colorScheme.onSurfaceVariant,
+                      Flexible(
+                        child: Text(
+                          _currentRespondingStatus,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                      _ThreePulsingDots(color: colorScheme.primary),
                     ],
                   ),
                   if (_showBackgroundNotice) ...[
@@ -1294,6 +1464,8 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
             Expanded(
               child: TextField(
                 controller: _inputController,
+                focusNode: _inputFocusNode,
+                autofocus: false,
                 minLines: 1,
                 maxLines: 4,
                 textInputAction: TextInputAction.send,
@@ -1326,80 +1498,154 @@ class _AiStudioScreenState extends State<AiStudioScreen> with WidgetsBindingObse
   Widget _buildSessionsDrawer() {
     return Drawer(
       child: SafeArea(
-        child: Column(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.chat_bubble_outline),
-              title: const Text('Chat History', style: TextStyle(fontWeight: FontWeight.bold)),
-              trailing: IconButton(
-                icon: const Icon(Icons.add),
-                tooltip: 'New Chat',
-                onPressed: () {
-                  Navigator.pop(context);
-                  _createNewSession();
-                },
-              ),
-            ),
-            const Divider(height: 1),
-            Expanded(
-              child: _isLoadingSessions
-                  ? const Center(child: CircularProgressIndicator())
-                  : _sessions.isEmpty
-                      ? const Center(child: Text('No saved chats'))
-                      : ListView.separated(
-                          itemCount: _sessions.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final session = _sessions[index];
-                            final isSelected = session['id'] == _currentSession?['id'];
-                            final title = session['title'] as String? ?? 'New Chat';
-                            final isFolder = session['folder_id'] != null;
-
-                            return ListTile(
-                              selected: isSelected,
-                              leading: Icon(
-                                isFolder ? Icons.folder : Icons.chat_outlined,
-                                size: 20,
-                              ),
-                              title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline, size: 18),
-                                onPressed: () => _deleteSession(session['id'] as String),
-                              ),
-                              onTap: () {
-                                Navigator.pop(context);
-                                _switchToSession(session);
-                              },
-                            );
-                          },
-                        ),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.memory),
-              title: const Text('Manage AI Models'),
-              subtitle: Text(
-                _activeModel != null ? _activeModel!['display_name'] as String : 'Download Models',
-                style: const TextStyle(fontSize: 11),
-              ),
-              onTap: () async {
-                Navigator.pop(context);
-                await AiModelManagementDialog.show(context);
-                await _loadDeviceAndModelProfile();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
-              title: const Text('AI Logs & Diagnostics'),
-              subtitle: const Text('Inspect queries, search tokens & model prompts', style: TextStyle(fontSize: 11)),
-              onTap: () {
-                Navigator.pop(context);
-                AiDiagnosticsScreen.show(context);
-              },
-            ),
-          ],
-        ),
+        child: _buildSessionsContent(isDrawer: true),
       ),
     );
   }
+
+  Widget _buildSessionsContent({required bool isDrawer}) {
+    final isDevMode = Provider.of<SettingsService>(context, listen: false).developerModeEnabled;
+
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.chat_bubble_outline),
+          title: const Text('Chat History', style: TextStyle(fontWeight: FontWeight.bold)),
+          trailing: IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'New Chat',
+            onPressed: () {
+              if (isDrawer) Navigator.pop(context);
+              _createNewSession();
+            },
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: _isLoadingSessions
+              ? const Center(child: CircularProgressIndicator())
+              : _sessions.isEmpty
+                  ? const Center(child: Text('No saved chats'))
+                  : ListView.separated(
+                      itemCount: _sessions.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final session = _sessions[index];
+                        final isSelected = session['id'] == _currentSession?['id'];
+                        final title = session['title'] as String? ?? 'New Chat';
+                        final isFolder = session['folder_id'] != null;
+
+                        return ListTile(
+                          selected: isSelected,
+                          leading: Icon(
+                            isFolder ? Icons.folder : Icons.chat_outlined,
+                            size: 20,
+                          ),
+                          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            onPressed: () => _deleteSession(session['id'] as String),
+                          ),
+                          onTap: () {
+                            if (isDrawer) Navigator.pop(context);
+                            _switchToSession(session);
+                          },
+                        );
+                      },
+                    ),
+        ),
+        const Divider(height: 1),
+        ListTile(
+          leading: const Icon(Icons.memory),
+          title: const Text('Manage AI Models'),
+          subtitle: Text(
+            _activeModel != null ? _activeModel!['display_name'] as String : 'Download Models',
+            style: const TextStyle(fontSize: 11),
+          ),
+          onTap: () async {
+            if (isDrawer) Navigator.pop(context);
+            await AiModelManagementDialog.show(context);
+            await _loadDeviceAndModelProfile();
+          },
+        ),
+        if (isDevMode) ...[
+          ListTile(
+            leading: const Icon(Icons.tune),
+            title: const Text('Master System Prompt'),
+            subtitle: const Text('Edit instructions, prompt versions & rollback', style: TextStyle(fontSize: 11)),
+            onTap: () {
+              if (isDrawer) Navigator.pop(context);
+              AiPromptManagementScreen.show(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.receipt_long_outlined),
+            title: const Text('AI Logs & Diagnostics'),
+            subtitle: const Text('Inspect queries, search tokens & model prompts', style: TextStyle(fontSize: 11)),
+            onTap: () {
+              if (isDrawer) Navigator.pop(context);
+              AiDiagnosticsScreen.show(context);
+            },
+          ),
+        ],
+      ],
+    );
+  }
 }
+
+/// Three animated pulsing dots for smooth loading feedback
+class _ThreePulsingDots extends StatefulWidget {
+  final Color color;
+  const _ThreePulsingDots({required this.color});
+
+  @override
+  State<_ThreePulsingDots> createState() => _ThreePulsingDotsState();
+}
+
+class _ThreePulsingDotsState extends State<_ThreePulsingDots> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (index) {
+            final delay = index * 0.2;
+            final progress = (_controller.value - delay) % 1.0;
+            final opacity = (progress < 0.5 ? progress * 2 : (1.0 - progress) * 2).clamp(0.2, 1.0);
+            final scale = 0.6 + 0.4 * opacity;
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 2),
+              width: 5,
+              height: 5,
+              transform: Matrix4.diagonal3Values(scale, scale, 1.0),
+              decoration: BoxDecoration(
+                color: widget.color.withValues(alpha: opacity),
+                shape: BoxShape.circle,
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+

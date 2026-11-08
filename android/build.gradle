@@ -32,6 +32,15 @@ gradle.afterProject { project ->
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
             }
+            if (project.name == "flutter_llama") {
+                defaultConfig {
+                    externalNativeBuild {
+                        cmake {
+                            arguments "-DFLUTTER_LLAMA_ANDROID_VULKAN=OFF"
+                        }
+                    }
+                }
+            }
         }
     }
 }

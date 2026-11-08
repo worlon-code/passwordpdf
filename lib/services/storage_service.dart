@@ -8,7 +8,7 @@ import '../models/recent_document_model.dart';
 
 /// Service for local SQLite database operations
 class StorageService {
-  static const int _databaseVersion = 16;
+  static const int _databaseVersion = 17;
   static final StorageService _instance = StorageService._internal();
   factory StorageService() => _instance;
   StorageService._internal();
@@ -53,6 +53,50 @@ class StorageService {
             ''');
           } catch (_) {}
         }
+        try {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS ${AppConstants.aiSystemPromptsTable} (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              version INTEGER NOT NULL UNIQUE,
+              title TEXT NOT NULL,
+              description TEXT,
+              prompt_text TEXT NOT NULL,
+              is_active INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            )
+          ''');
+        } catch (_) {}
+        try {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS ${AppConstants.aiDiagnosticLogsTable} (
+              id TEXT PRIMARY KEY,
+              timestamp INTEGER NOT NULL,
+              raw_query TEXT NOT NULL,
+              detected_intent TEXT,
+              extracted_keywords TEXT,
+              stopwords_removed TEXT,
+              fts_query_string TEXT,
+              attached_doc_names TEXT,
+              fts_matches_count INTEGER DEFAULT 0,
+              fts_matches TEXT,
+              vector_matches_count INTEGER DEFAULT 0,
+              vector_matches TEXT,
+              selected_evidence TEXT,
+              active_chat_model_id TEXT,
+              active_chat_model_name TEXT,
+              active_chat_model_path TEXT,
+              active_chat_model_size_bytes INTEGER,
+              active_embedding_model_id TEXT,
+              active_embedding_model_name TEXT,
+              prompt_sent_to_llm TEXT,
+              llm_execution_status TEXT,
+              llm_raw_response TEXT,
+              final_answer TEXT,
+              execution_time_ms INTEGER DEFAULT 0
+            )
+          ''');
+          await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_diag_ts ON ${AppConstants.aiDiagnosticLogsTable} (timestamp DESC)');
+        } catch (_) {}
       },
     );
   }
@@ -253,6 +297,39 @@ class StorageService {
         FOREIGN KEY (session_id) REFERENCES ${AppConstants.aiChatSessionsTable} (id) ON DELETE CASCADE
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS ${AppConstants.aiDiagnosticLogsTable} (
+        id TEXT PRIMARY KEY,
+        timestamp INTEGER NOT NULL,
+        raw_query TEXT NOT NULL,
+        detected_intent TEXT,
+        extracted_keywords TEXT,
+        stopwords_removed TEXT,
+        fts_query_string TEXT,
+        attached_doc_names TEXT,
+        fts_matches_count INTEGER DEFAULT 0,
+        fts_matches TEXT,
+        vector_matches_count INTEGER DEFAULT 0,
+        vector_matches TEXT,
+        selected_evidence TEXT,
+        active_chat_model_id TEXT,
+        active_chat_model_name TEXT,
+        active_chat_model_path TEXT,
+        active_chat_model_size_bytes INTEGER,
+        active_embedding_model_id TEXT,
+        active_embedding_model_name TEXT,
+        prompt_sent_to_llm TEXT,
+        llm_execution_status TEXT,
+        llm_raw_response TEXT,
+        final_answer TEXT,
+        execution_time_ms INTEGER DEFAULT 0
+      )
+    ''');
+
+    try {
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_diag_ts ON ${AppConstants.aiDiagnosticLogsTable} (timestamp DESC)');
+    } catch (_) {}
 
     try {
       await db.execute('''
@@ -629,6 +706,40 @@ class StorageService {
           )
         ''');
         await db.execute('CREATE INDEX IF NOT EXISTS idx_chat_msg_session ON ${AppConstants.aiChatMessagesTable} (session_id, created_at ASC)');
+      } catch (_) {}
+    }
+
+    if (oldVersion < 17) {
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS ${AppConstants.aiDiagnosticLogsTable} (
+            id TEXT PRIMARY KEY,
+            timestamp INTEGER NOT NULL,
+            raw_query TEXT NOT NULL,
+            detected_intent TEXT,
+            extracted_keywords TEXT,
+            stopwords_removed TEXT,
+            fts_query_string TEXT,
+            attached_doc_names TEXT,
+            fts_matches_count INTEGER DEFAULT 0,
+            fts_matches TEXT,
+            vector_matches_count INTEGER DEFAULT 0,
+            vector_matches TEXT,
+            selected_evidence TEXT,
+            active_chat_model_id TEXT,
+            active_chat_model_name TEXT,
+            active_chat_model_path TEXT,
+            active_chat_model_size_bytes INTEGER,
+            active_embedding_model_id TEXT,
+            active_embedding_model_name TEXT,
+            prompt_sent_to_llm TEXT,
+            llm_execution_status TEXT,
+            llm_raw_response TEXT,
+            final_answer TEXT,
+            execution_time_ms INTEGER DEFAULT 0
+          )
+        ''');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_ai_diag_ts ON ${AppConstants.aiDiagnosticLogsTable} (timestamp DESC)');
       } catch (_) {}
     }
   }
@@ -1413,6 +1524,120 @@ class StorageService {
       where: 'session_id = ?',
       whereArgs: [sessionId],
     );
+  }
+
+  /// Insert or update an AI diagnostic log entry
+  Future<void> insertOrUpdateAiDiagnosticLog(Map<String, dynamic> log) async {
+    final db = await database;
+    await db.insert(
+      AppConstants.aiDiagnosticLogsTable,
+      log,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Get recent AI diagnostic logs ordered by timestamp DESC
+  Future<List<Map<String, dynamic>>> getAllAiDiagnosticLogs({int limit = 100}) async {
+    final db = await database;
+    return await db.query(
+      AppConstants.aiDiagnosticLogsTable,
+      orderBy: 'timestamp DESC',
+      limit: limit,
+    );
+  }
+
+  /// Delete all AI diagnostic logs
+  Future<int> clearAiDiagnosticLogs() async {
+    final db = await database;
+    return await db.delete(AppConstants.aiDiagnosticLogsTable);
+  }
+
+  /// Get detailed list of indexed documents with chunk count
+  Future<List<Map<String, dynamic>>> getDetailedIndexedDocuments() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        d.doc_id,
+        d.file_name,
+        d.file_path,
+        d.total_pages,
+        d.indexed_pages,
+        d.updated_at,
+        d.updated_at as indexed_at,
+        d.status,
+        COALESCE(SUM(c.char_length), 0) as char_count,
+        COUNT(c.chunk_id) as chunk_count
+      FROM ${AppConstants.aiDocumentIndexTable} d
+      LEFT JOIN ${AppConstants.aiDocumentChunksTable} c ON d.doc_id = c.doc_id
+      GROUP BY d.doc_id
+      ORDER BY d.updated_at DESC
+    ''');
+  }
+
+  /// Get detailed list of text chunks for inspection (optionally filtered by doc or search)
+  Future<List<Map<String, dynamic>>> getDetailedChunks({
+    String? docId,
+    String? searchFilter,
+    int limit = 150,
+  }) async {
+    final db = await database;
+    String query = '''
+      SELECT 
+        c.chunk_id,
+        c.doc_id,
+        c.page_number,
+        c.chunk_index,
+        c.chunk_text,
+        c.char_length,
+        d.file_name,
+        e.dimensions,
+        (e.chunk_id IS NOT NULL) as has_embedding
+      FROM ${AppConstants.aiDocumentChunksTable} c
+      LEFT JOIN ${AppConstants.aiDocumentIndexTable} d ON c.doc_id = d.doc_id
+      LEFT JOIN ${AppConstants.aiChunkEmbeddingsTable} e ON c.chunk_id = e.chunk_id
+    ''';
+    final whereClauses = <String>[];
+    final whereArgs = <dynamic>[];
+
+    if (docId != null && docId.isNotEmpty) {
+      whereClauses.add('c.doc_id = ?');
+      whereArgs.add(docId);
+    }
+    if (searchFilter != null && searchFilter.trim().isNotEmpty) {
+      whereClauses.add('(c.chunk_text LIKE ? OR d.file_name LIKE ?)');
+      whereArgs.add('%${searchFilter.trim()}%');
+      whereArgs.add('%${searchFilter.trim()}%');
+    }
+
+    if (whereClauses.isNotEmpty) {
+      query += ' WHERE ${whereClauses.join(' AND ')}';
+    }
+
+    query += ' ORDER BY d.file_name ASC, c.page_number ASC, c.chunk_index ASC LIMIT ?';
+    whereArgs.add(limit);
+
+    return await db.rawQuery(query, whereArgs);
+  }
+
+  /// Get detailed embeddings for inspection
+  Future<List<Map<String, dynamic>>> getDetailedEmbeddings({int limit = 100}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        e.chunk_id,
+        e.dimensions,
+        e.model_id,
+        e.embedding_blob,
+        c.page_number,
+        c.chunk_index,
+        c.chunk_text,
+        d.file_name
+      FROM ${AppConstants.aiChunkEmbeddingsTable} e
+      LEFT JOIN ${AppConstants.aiDocumentChunksTable} c ON e.chunk_id = c.chunk_id
+      LEFT JOIN ${AppConstants.aiDocumentIndexTable} d ON c.doc_id = d.doc_id
+      ORDER BY d.file_name ASC, c.page_number ASC, c.chunk_index ASC
+      LIMIT ?
+    ''', [limit]);
   }
 
   /// Close database

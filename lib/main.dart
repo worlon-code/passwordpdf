@@ -16,6 +16,7 @@ import 'services/encryption_service.dart';
 import 'services/storage_service.dart';
 import 'services/password_migration_service.dart';
 import 'services/pdf_password_service.dart';
+import 'services/ai/ai_notification_service.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -132,7 +133,15 @@ Context: ${details.context?.toDescription() ?? 'none'}
     exportService.onNotificationTap.listen((payload) {
       log.info('App', 'Notification tapped: $payload');
       
-      if (payload.startsWith('open_folder:')) {
+      if (payload.startsWith('open_ai_chat:')) {
+        final sessionId = payload.replaceFirst('open_ai_chat:', '');
+        AiNotificationService.pendingSessionId = sessionId;
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 2)), // Switch to AI Studio Tab
+          (route) => false,
+        );
+        AiNotificationService.onNotificationClicked?.call(sessionId);
+      } else if (payload.startsWith('open_folder:')) {
         // Navigate to specific folder in Dashboard
         final folderId = payload.replaceFirst('open_folder:', '');
         
@@ -856,6 +865,8 @@ class _MainScreenState extends State<MainScreen> {
     if (DashboardFolderNavigation.pendingFolderId != null) {
       _currentIndex = 1; // Documents Tab
     }
+
+    AiStudioScreen.isAiTabActive.value = (_currentIndex == 2);
     
     // Check for pending duplicate resolution
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1134,6 +1145,7 @@ class _MainScreenState extends State<MainScreen> {
             setState(() {
               _currentIndex = index;
             });
+            AiStudioScreen.isAiTabActive.value = (index == 2);
             if (index == 1 && prevIndex != 1) {
               DocumentDashboardScreen.currentState?.reload();
             }
@@ -1150,8 +1162,14 @@ class _MainScreenState extends State<MainScreen> {
               label: 'Documents',
             ),
             NavigationDestination(
-              icon: const AiSparkleIcon(size: 24),
-              selectedIcon: const AiSparkleIcon(size: 26),
+              icon: Badge(
+                label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                child: AiSparkleIcon(size: 24),
+              ),
+              selectedIcon: Badge(
+                label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                child: AiSparkleIcon(size: 26),
+              ),
               label: 'AI',
             ),
             NavigationDestination(

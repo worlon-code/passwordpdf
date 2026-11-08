@@ -294,6 +294,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "5.0.0"
+  flutter_llama:
+    dependency: "direct main"
+    description:
+      name: flutter_llama
+      sha256: cbdda3aaee0179a99a5339925ef1aa91c37c0aafaa5703e4e5fda96f1a37d6d5
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.1"
   flutter_local_notifications:
     dependency: "direct main"
     description:
@@ -400,6 +408,22 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.2"
+  google_mlkit_commons:
+    dependency: transitive
+    description:
+      name: google_mlkit_commons
+      sha256: c7fc384bdb66c3b83e24e3a41818e61d7a378d900f65f5e775344fbca95a0917
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.12.0"
+  google_mlkit_text_recognition:
+    dependency: "direct main"
+    description:
+      name: google_mlkit_text_recognition
+      sha256: "8324fdc2628ebeb63568ad06437b984b716d938d87e4ce63ab24dfd3eeebf08a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.16.0"
   html:
     dependency: transitive
     description:
@@ -425,7 +449,7 @@ packages:
     source: hosted
     version: "4.0.2"
   image:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: image
       sha256: "1976370a4df3091bb0f72409c187ad1f9132a818bc6b95ca59c0bae1c75c688e"

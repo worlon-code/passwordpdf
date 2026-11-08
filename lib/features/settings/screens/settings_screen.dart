@@ -14,6 +14,7 @@ import '../../documents/screens/file_system_browser.dart';
 import '../../documents/screens/document_dashboard_screen.dart';
 import '../services/settings_service.dart';
 import '../../../services/biometric_service.dart';
+import '../../../services/security_question_service.dart';
 import '../../../services/logging_service.dart';
 import '../../../services/encryption_service.dart';
 import '../../authentication/screens/pin_entry_screen.dart';
@@ -853,6 +854,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 onPressed: () => _setupPin(context),
                                 child: const Text('Set PIN'),
                               ),
+                    );
+                  },
+                ),
+
+                const Divider(height: 1),
+
+                // Security Question option
+                FutureBuilder<bool>(
+                  future: SecurityQuestionService().isSecurityQuestionSet(),
+                  builder: (context, snapshot) {
+                    final isSet = snapshot.data ?? false;
+                    return ListTile(
+                      leading: const Icon(Icons.security),
+                      title: const Text('Security Question'),
+                      subtitle: Text(
+                        isSet
+                            ? 'Required to reveal passwords'
+                            : 'Not set (will prompt on password reveal)',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () async {
+                          final ok = await SecurityQuestionService().promptSetSecurityQuestion(context);
+                          if (ok && context.mounted) {
+                            setState(() {});
+                          }
+                        },
+                        child: Text(isSet ? 'Change' : 'Set Question'),
+                      ),
                     );
                   },
                 ),

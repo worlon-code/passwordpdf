@@ -10,12 +10,17 @@ class AiNotificationService {
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   bool _initialized = false;
   static void Function(String sessionId)? onNotificationClicked;
+  static String? pendingSessionId;
 
   Future<void> init() async {
     if (_initialized) return;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const darwinSettings = DarwinInitializationSettings();
+    const darwinSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
     const initSettings = InitializationSettings(
       android: androidSettings,
       iOS: darwinSettings,
@@ -24,11 +29,20 @@ class AiNotificationService {
     await _notifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (response) {
-        if (response.payload != null && response.payload!.isNotEmpty) {
-          onNotificationClicked?.call(response.payload!);
+        final payload = response.payload;
+        if (payload != null && payload.isNotEmpty) {
+          final sId = payload.startsWith('open_ai_chat:')
+              ? payload.replaceFirst('open_ai_chat:', '')
+              : payload;
+          pendingSessionId = sId;
+          onNotificationClicked?.call(sId);
         }
       },
     );
+
+    // Request runtime permission on Android 13+ (POST_NOTIFICATIONS)
+    final androidImpl = _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidImpl?.requestNotificationsPermission();
 
     _initialized = true;
   }
@@ -46,9 +60,11 @@ class AiNotificationService {
         'ai_chat_channel',
         'AI Document Intelligence',
         channelDescription: 'Notifications when offline AI finishes analyzing documents',
-        importance: Importance.high,
+        importance: Importance.max,
         priority: Priority.high,
         showWhen: true,
+        playSound: true,
+        enableVibration: true,
       );
 
       const darwinDetails = DarwinNotificationDetails();
@@ -68,7 +84,7 @@ class AiNotificationService {
         'AI: $chatTitle',
         body,
         details,
-        payload: sessionId,
+        payload: 'open_ai_chat:$sessionId',
       );
     } catch (_) {
       // Fallback silently if platform notifications are unavailable
