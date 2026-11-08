@@ -33,7 +33,7 @@ OfficeOpenTarget routeForPath(String path, {int? sizeBytes}) {
 }
 
 /// Open a document via the right in-app screen, or hand off to an external app.
-Future<void> openDocument(BuildContext context, String filePath) async {
+Future<void> openDocument(BuildContext context, String filePath, {bool deleteOnClose = false}) async {
   final fileName = filePath.split(Platform.pathSeparator).last;
   int? size;
   try {
@@ -47,7 +47,10 @@ Future<void> openDocument(BuildContext context, String filePath) async {
       if (!context.mounted) return;
       await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => PdfViewerScreen(
-            filePath: filePath, fileName: fileName, password: stored),
+            filePath: filePath,
+            fileName: fileName,
+            password: stored,
+            deleteOnClose: deleteOnClose),
       ));
       break;
     case OfficeOpenTarget.excelInApp:

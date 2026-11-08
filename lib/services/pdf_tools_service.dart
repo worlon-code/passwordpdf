@@ -1,8 +1,12 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' show Size, Rect;
+import 'package:image/image.dart' as img;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:path/path.dart' as path;
 import '../core/extensions/pdf_document_extensions.dart';
 import '../services/logging_service.dart';
+import 'ocr_service.dart';
 
 /// Service for advanced PDF operations: Split, Merge, Reorder, Remove Password
 class PdfToolsService {
@@ -386,4 +390,254 @@ class PdfToolsService {
       return false;
     }
   }
+
+  /// Convert an ordered list of image files to a single PDF document.
+  Future<String> convertImagesToPdf({
+    required List<String> imagePaths,
+    required String outputPath,
+    List<String?>? pageTexts,
+    List<OcrResult?>? pageOcrResults,
+    ImageToPdfOptions options = const ImageToPdfOptions(),
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (imagePaths.isEmpty) {
+      throw ArgumentError('imagePaths cannot be empty');
+    }
+
+    final document = PdfDocument();
+    try {
+      final total = imagePaths.length;
+      for (int i = 0; i < total; i++) {
+        onProgress?.call(i + 1, total);
+        final imagePath = imagePaths[i];
+        final file = File(imagePath);
+        if (!file.existsSync()) continue;
+
+        Uint8List imageBytes = await file.readAsBytes();
+
+        // Handle compression if requested and not original
+        if (options.quality != ImageCompressionQuality.original) {
+          try {
+            final decoded = img.decodeImage(imageBytes);
+            if (decoded != null) {
+              int jpegQuality = 90;
+              if (options.quality == ImageCompressionQuality.low) {
+                jpegQuality = 50;
+              } else if (options.quality == ImageCompressionQuality.medium) {
+                jpegQuality = 75;
+              }
+              imageBytes = Uint8List.fromList(img.encodeJpg(decoded, quality: jpegQuality));
+            }
+          } catch (_) {
+            // If re-encode fails, fallback to original bytes
+          }
+        }
+
+        final PdfBitmap bitmap = PdfBitmap(imageBytes);
+
+        // Determine page size in points (72 DPI)
+        Size pageSize;
+        switch (options.preset) {
+          case PageFitPreset.fitImage:
+            double w = bitmap.width.toDouble();
+            double h = bitmap.height.toDouble();
+            // Clamp max dimension to 2880pt to avoid gigantic memory usage
+            if (w > 2880 || h > 2880) {
+              if (w > h) {
+                h = h * (2880 / w);
+                w = 2880;
+              } else {
+                w = w * (2880 / h);
+                h = 2880;
+              }
+            }
+            pageSize = Size(w + (options.margin * 2), h + (options.margin * 2));
+            break;
+          case PageFitPreset.a4Portrait:
+            pageSize = const Size(595.28, 841.89);
+            break;
+          case PageFitPreset.a4Landscape:
+            pageSize = const Size(841.89, 595.28);
+            break;
+          case PageFitPreset.letterPortrait:
+            pageSize = const Size(612.0, 792.0);
+            break;
+        }
+
+        final section = document.sections!.add();
+        section.pageSettings.size = pageSize;
+        section.pageSettings.margins.all = 0;
+        final page = section.pages.add();
+
+        final availW = pageSize.width - (options.margin * 2);
+        final availH = pageSize.height - (options.margin * 2);
+
+        final imgRatio = bitmap.width / bitmap.height;
+        final availRatio = availW / availH;
+        double drawW, drawH;
+        if (imgRatio > availRatio) {
+          drawW = availW;
+          drawH = availW / imgRatio;
+        } else {
+          drawH = availH;
+          drawW = availH * imgRatio;
+        }
+
+        final drawX = options.margin + (availW - drawW) / 2;
+        final drawY = options.margin + (availH - drawH) / 2;
+
+        page.graphics.drawImage(bitmap, Rect.fromLTWH(drawX, drawY, drawW, drawH));
+
+        // Apply invisible, selectable, and searchable OCR text layer directly over the page image (Sandwich PDF)
+        final OcrResult? ocrRes = (pageOcrResults != null && i < pageOcrResults.length)
+            ? pageOcrResults[i]
+            : null;
+        final String? pageText = (pageTexts != null && i < pageTexts.length)
+            ? pageTexts[i]
+            : null;
+
+        if (ocrRes != null && ocrRes.textLines.isNotEmpty) {
+          try {
+            page.graphics.save();
+            // Transparency 0.0 creates invisible text layer (Mode 3 in PDF spec),
+            // making text completely hidden from sight but 100% interactive, selectable, and searchable.
+            page.graphics.setTransparency(0.0, alphaBrush: 0.0);
+
+            final double imgPixelW = (ocrRes.imageWidth > 0 ? ocrRes.imageWidth : bitmap.width).toDouble();
+            final double imgPixelH = (ocrRes.imageHeight > 0 ? ocrRes.imageHeight : bitmap.height).toDouble();
+            final double scaleX = drawW / imgPixelW;
+            final double scaleY = drawH / imgPixelH;
+
+            for (final line in ocrRes.textLines) {
+              final trimmed = line.text.trim();
+              if (trimmed.isEmpty) continue;
+              final r = line.boundingBox;
+              final double lineX = drawX + (r.left * scaleX);
+              final double lineY = drawY + (r.top * scaleY);
+              final double lineW = (r.width * scaleX).clamp(1.0, availW);
+              final double lineH = (r.height * scaleY).clamp(1.0, availH);
+              // Scaled font size proportionally matching detected text line height
+              final double fontSize = (lineH * 0.82).clamp(4.0, 72.0);
+              final ocrFont = PdfStandardFont(PdfFontFamily.helvetica, fontSize);
+
+              page.graphics.drawString(
+                trimmed,
+                ocrFont,
+                bounds: Rect.fromLTWH(lineX, lineY, lineW, lineH),
+              );
+            }
+            page.graphics.restore();
+          } catch (_) {
+            try {
+              page.graphics.restore();
+            } catch (_) {}
+          }
+        } else if (pageText != null && pageText.trim().isNotEmpty) {
+          try {
+            page.graphics.save();
+            page.graphics.setTransparency(0.0, alphaBrush: 0.0);
+            final ocrFont = PdfStandardFont(PdfFontFamily.helvetica, 10);
+            final textElement = PdfTextElement(
+              text: pageText,
+              font: ocrFont,
+            );
+            textElement.draw(
+              page: page,
+              bounds: Rect.fromLTWH(drawX, drawY, drawW, drawH),
+            );
+            page.graphics.restore();
+          } catch (_) {
+            try {
+              page.graphics.restore();
+            } catch (_) {}
+          }
+        }
+
+        // If OCR transcript page is requested, append a clean formatted transcript page
+        final transcriptText = (pageText != null && pageText.trim().isNotEmpty)
+            ? pageText
+            : (ocrRes != null && ocrRes.fullText.trim().isNotEmpty ? ocrRes.fullText : null);
+
+        if (options.includeOcrTranscript && transcriptText != null && transcriptText.trim().isNotEmpty) {
+          try {
+            final ocrSection = document.sections!.add();
+            ocrSection.pageSettings.size = pageSize;
+            ocrSection.pageSettings.margins.all = 0;
+            final ocrPage = ocrSection.pages.add();
+
+            final titleFont = PdfStandardFont(PdfFontFamily.helvetica, 14, style: PdfFontStyle.bold);
+            final bodyFont = PdfStandardFont(PdfFontFamily.helvetica, 10);
+            final headerText = 'Page ${i + 1} — Extracted Text (OCR)';
+
+            ocrPage.graphics.drawString(
+              headerText,
+              titleFont,
+              bounds: Rect.fromLTWH(options.margin, options.margin + 10, availW, 22),
+            );
+
+            final textElement = PdfTextElement(
+              text: transcriptText,
+              font: bodyFont,
+              brush: PdfSolidBrush(PdfColor(40, 40, 40)),
+            );
+
+            textElement.draw(
+              page: ocrPage,
+              bounds: Rect.fromLTWH(options.margin, options.margin + 40, availW, availH - 50),
+            );
+          } catch (_) {
+            // Ignore font rendering issues for non-standard symbols
+          }
+        }
+      }
+
+      if (options.password != null && options.password!.isNotEmpty) {
+        document.security.userPassword = options.password!;
+        document.security.algorithm = PdfEncryptionAlgorithm.aesx256Bit;
+      }
+
+      final outputBytes = await document.save();
+      final outputFile = File(outputPath);
+      if (!outputFile.parent.existsSync()) {
+        outputFile.parent.createSync(recursive: true);
+      }
+      await outputFile.writeAsBytes(outputBytes);
+      return outputPath;
+    } finally {
+      document.dispose();
+    }
+  }
+}
+
+/// Presets for page sizing in Images-to-PDF
+enum PageFitPreset {
+  fitImage,
+  a4Portrait,
+  a4Landscape,
+  letterPortrait,
+}
+
+/// Compression presets
+enum ImageCompressionQuality {
+  low,
+  medium,
+  high,
+  original,
+}
+
+/// Options for Images-to-PDF conversion
+class ImageToPdfOptions {
+  final PageFitPreset preset;
+  final double margin;
+  final ImageCompressionQuality quality;
+  final String? password;
+  final bool includeOcrTranscript;
+
+  const ImageToPdfOptions({
+    this.preset = PageFitPreset.a4Portrait,
+    this.margin = 18.0,
+    this.quality = ImageCompressionQuality.high,
+    this.password,
+    this.includeOcrTranscript = false,
+  });
 }

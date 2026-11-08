@@ -17,12 +17,14 @@ class _AddPasswordDialogState extends State<AddPasswordDialog> {
   final _keyNameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _tagsController = TextEditingController();
   final StorageService _storageService = StorageService();
   final EncryptionService _encryptionService = EncryptionService();
   
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _isLoading = false;
+  bool _isFavorite = false;
   String? _keyNameError; // For real-time key name validation
 
   @override
@@ -105,11 +107,25 @@ class _AddPasswordDialogState extends State<AddPasswordDialog> {
         return;
       }
 
+      final tagsList = _tagsController.text
+          .split(',')
+          .map((t) => t.trim())
+          .where((t) => t.isNotEmpty)
+          .toList();
+
+      String? encryptedTags;
+      if (tagsList.isNotEmpty) {
+        encryptedTags = await _encryptionService.encrypt(tagsList.join(','));
+      }
+
       // Save to database
       final passwordModel = PasswordModel(
         keyName: _keyNameController.text.trim(),
         encryptedValue: encryptedPassword,
         createdAt: DateTime.now(),
+        tags: tagsList,
+        isFavorite: _isFavorite,
+        encryptedTags: encryptedTags,
       );
 
       await _storageService.insertPassword(passwordModel);
@@ -224,6 +240,35 @@ class _AddPasswordDialogState extends State<AddPasswordDialog> {
                     return null;
                   },
                 ),
+                const SizedBox(height: 16),
+
+                // Tags
+                TextFormField(
+                  controller: _tagsController,
+                  decoration: InputDecoration(
+                    labelText: 'Tags (comma-separated)',
+                    hintText: 'e.g., Banking, Work, Tax',
+                    prefixIcon: const Icon(Icons.tag),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Favorite Switch
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Icon(
+                    _isFavorite ? Icons.star : Icons.star_border,
+                    color: _isFavorite ? Colors.amber : null,
+                  ),
+                  title: const Text('Mark as Favorite'),
+                  value: _isFavorite,
+                  onChanged: (val) {
+                    setState(() => _isFavorite = val);
+                  },
+                ),
                 const SizedBox(height: 24),
                 
                 // Buttons
@@ -261,6 +306,7 @@ class _AddPasswordDialogState extends State<AddPasswordDialog> {
     _keyNameController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _tagsController.dispose();
     super.dispose();
   }
 }

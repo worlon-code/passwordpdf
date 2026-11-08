@@ -1,8 +1,11 @@
-$ErrorActionPreference = 'Continue'
-$ts = Get-Date -Format 'yyyyMMdd_HHmmss'
-$logDir = Join-Path $PSScriptRoot 'logs'
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
-$log = Join-Path $logDir ("build_" + $ts + ".txt")
-Set-Location (Join-Path $PSScriptRoot 'android')
-cmd /c "gradlew.bat assembleDebug" 2>&1 | Out-File -FilePath $log -Encoding utf8
-Write-Host "LOG: $log"; Get-Content $log -Tail 25
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logPath = "D:\Repos\passwordpdf\logs\build_$timestamp.txt"
+Write-Host "Starting debug build. Output logging to $logPath"
+cmd.exe /c "cd /d D:\Repos\passwordpdf\android && gradlew.bat assembleDebug" 2>&1 | Out-File -FilePath $logPath -Encoding utf8
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "BUILD SUCCESSFUL. Log saved to: $logPath"
+    exit 0
+} else {
+    Write-Host "BUILD FAILED with exit code $LASTEXITCODE. Log saved to: $logPath"
+    exit $LASTEXITCODE
+}

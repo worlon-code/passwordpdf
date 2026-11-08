@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'features/settings/services/settings_service.dart';
 import 'features/settings/screens/settings_screen.dart';
 import 'features/documents/screens/document_dashboard_screen.dart';
+import 'features/ai/screens/ai_studio_screen.dart';
+import 'features/ai/widgets/ai_sparkle_icon.dart';
 import 'features/documents/screens/folder_navigation_screen.dart';
 import 'features/authentication/screens/biometric_lock_screen.dart';
 import 'services/logging_service.dart';
@@ -14,6 +16,8 @@ import 'services/encryption_service.dart';
 import 'services/storage_service.dart';
 import 'services/password_migration_service.dart';
 import 'services/pdf_password_service.dart';
+import 'services/ai/ai_notification_service.dart';
+import 'core/constants/feature_flags.dart';
 
 import 'features/documents/screens/export_progress_screen.dart';
 import 'services/export_queue_service.dart';
@@ -130,7 +134,15 @@ Context: ${details.context?.toDescription() ?? 'none'}
     exportService.onNotificationTap.listen((payload) {
       log.info('App', 'Notification tapped: $payload');
       
-      if (payload.startsWith('open_folder:')) {
+      if (kAiFeatureEnabled && payload.startsWith('open_ai_chat:')) {
+        final sessionId = payload.replaceFirst('open_ai_chat:', '');
+        AiNotificationService.pendingSessionId = sessionId;
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const MainScreen(initialIndex: 2)), // Switch to AI Studio Tab
+          (route) => false,
+        );
+        AiNotificationService.onNotificationClicked?.call(sessionId);
+      } else if (payload.startsWith('open_folder:')) {
         // Navigate to specific folder in Dashboard
         final folderId = payload.replaceFirst('open_folder:', '');
         
@@ -854,6 +866,8 @@ class _MainScreenState extends State<MainScreen> {
     if (DashboardFolderNavigation.pendingFolderId != null) {
       _currentIndex = 1; // Documents Tab
     }
+
+    AiStudioScreen.isAiTabActive.value = kAiFeatureEnabled && (_currentIndex == 2);
     
     // Check for pending duplicate resolution
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1048,6 +1062,11 @@ class _MainScreenState extends State<MainScreen> {
     return false;
   }
   
+  /// Back handler for AI Studio screen
+  Future<bool> _handleAiStudioBack() async {
+    return false;
+  }
+
   /// Back handler for Settings screen
   Future<bool> _handleSettingsBack() async {
     return false;
@@ -1070,6 +1089,11 @@ class _MainScreenState extends State<MainScreen> {
             handled = await _handleDashboardBack();
             break;
           case 2:
+            handled = kAiFeatureEnabled
+                ? await _handleAiStudioBack()
+                : await _handleSettingsBack();
+            break;
+          case 3:
             handled = await _handleSettingsBack();
             break;
         }
@@ -1113,6 +1137,7 @@ class _MainScreenState extends State<MainScreen> {
           children: [
             AllDocumentsScreen(key: _allDocsKey),
             DocumentDashboardScreen(key: _dashboardKey),
+            if (kAiFeatureEnabled) const AiStudioScreen(),
             const SettingsScreen(),
           ],
         ),
@@ -1123,6 +1148,7 @@ class _MainScreenState extends State<MainScreen> {
             setState(() {
               _currentIndex = index;
             });
+            AiStudioScreen.isAiTabActive.value = kAiFeatureEnabled && (index == 2);
             if (index == 1 && prevIndex != 1) {
               DocumentDashboardScreen.currentState?.reload();
             }
@@ -1138,6 +1164,18 @@ class _MainScreenState extends State<MainScreen> {
               selectedIcon: Icon(Icons.folder),
               label: 'Documents',
             ),
+            if (kAiFeatureEnabled)
+              NavigationDestination(
+                icon: Badge(
+                  label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  child: AiSparkleIcon(size: 24),
+                ),
+                selectedIcon: Badge(
+                  label: Text('BETA', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  child: AiSparkleIcon(size: 26),
+                ),
+                label: 'AI',
+              ),
             NavigationDestination(
               icon: Icon(Icons.settings_outlined),
               selectedIcon: Icon(Icons.settings),

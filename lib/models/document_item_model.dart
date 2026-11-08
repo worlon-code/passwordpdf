@@ -15,6 +15,9 @@ class DocumentItem {
   final bool missingOnDevice; // For "Removed" files
   final DateTime? addedAt;
   final DateTime? lastSynced;
+  final List<String> tags;
+  final bool isFavorite;
+  final String? encryptedTags;
 
   DocumentItem({
     required this.id,
@@ -32,6 +35,9 @@ class DocumentItem {
     this.missingOnDevice = false,
     this.addedAt,
     this.lastSynced,
+    this.tags = const [],
+    this.isFavorite = false,
+    this.encryptedTags,
   })  : fileIds = fileIds ?? [],
         createdAt = createdAt ?? DateTime.now(),
         modifiedAt = modifiedAt ?? DateTime.now();
@@ -53,6 +59,9 @@ class DocumentItem {
     bool? missingOnDevice,
     DateTime? addedAt,
     DateTime? lastSynced,
+    List<String>? tags,
+    bool? isFavorite,
+    String? encryptedTags,
   }) {
     return DocumentItem(
       id: id,
@@ -70,6 +79,9 @@ class DocumentItem {
       missingOnDevice: missingOnDevice ?? this.missingOnDevice,
       addedAt: addedAt ?? this.addedAt,
       lastSynced: lastSynced ?? this.lastSynced,
+      tags: tags ?? this.tags,
+      isFavorite: isFavorite ?? this.isFavorite,
+      encryptedTags: encryptedTags ?? this.encryptedTags,
     );
   }
 
@@ -91,6 +103,9 @@ class DocumentItem {
       'missingOnDevice': missingOnDevice,
       'addedAt': addedAt?.toIso8601String(),
       'lastSynced': lastSynced?.toIso8601String(),
+      'tags': tags,
+      'isFavorite': isFavorite,
+      'encryptedTags': encryptedTags,
     };
   }
 
@@ -142,6 +157,9 @@ class DocumentItem {
       missingOnDevice: json['missingOnDevice'] as bool? ?? false,
       addedAt: parseNullableDate(json['addedAt']),
       lastSynced: parseNullableDate(json['lastSynced']),
+      tags: (json['tags'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? const [],
+      isFavorite: json['isFavorite'] as bool? ?? false,
+      encryptedTags: json['encryptedTags'] as String?,
     );
   }
 }
